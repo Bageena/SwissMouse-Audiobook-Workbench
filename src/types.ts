@@ -287,6 +287,7 @@ export interface AudiobookJob {
     duration: number;
     bitrate: number;
     sizeBytes: number;
+    fullPath?: string;
   } | null;
 
   transcription?: {
@@ -297,6 +298,10 @@ export interface AudiobookJob {
     wordsCount: number;
     completedAt: string;
   } | null;
+
+  // Persisted word-level timestamps from completed WhisperX output. Chapter
+  // Review renders these actual words and never invents transcript text.
+  transcriptWords?: AlignedWord[];
 
   candidates: ChapterCandidate[];
   chapters: ChapterEntry[];

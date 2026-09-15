@@ -307,6 +307,21 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
             </div>
           )}
 
+          {progressState && !progressState.isActive && progressState.phase === 'error' && (
+            <div className="p-3 bg-red-50 border border-red-300 text-red-900 rounded-lg flex items-start justify-between gap-3">
+              <div className="flex items-start space-x-2">
+                <XCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <span className="font-medium">{progressState.error || 'Installation did not pass verification. See the execution log for details.'}</span>
+              </div>
+              <button
+                onClick={() => setProgressState(null)}
+                className="text-xs text-red-700 hover:text-red-900 underline shrink-0"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           {/* Error Message if any */}
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start space-x-2">
@@ -397,13 +412,24 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
           {/* Diagnostic Execution Logs Toggle */}
           {progressState && progressState.logs.length > 0 && (
             <div className="space-y-1.5">
-              <button
-                onClick={() => setShowFullLogs(!showFullLogs)}
-                className="flex items-center space-x-1 text-xs text-stone-600 hover:text-stone-900 font-medium cursor-pointer"
-              >
-                <Terminal className="w-3.5 h-3.5 text-stone-500" />
-                <span>{showFullLogs ? 'Hide detailed execution log' : `View execution log (${progressState.logs.length} events)`}</span>
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowFullLogs(!showFullLogs)}
+                  className="flex items-center space-x-1 text-xs text-stone-600 hover:text-stone-900 font-medium cursor-pointer"
+                >
+                  <Terminal className="w-3.5 h-3.5 text-stone-500" />
+                  <span>{showFullLogs ? 'Hide detailed execution log' : `View execution log (${progressState.logs.length} recent events)`}</span>
+                </button>
+                <a
+                  href="/api/requirements/diagnostic-log"
+                  download
+                  className="flex items-center space-x-1 text-xs text-amber-800 hover:text-amber-950 font-semibold"
+                  title="Download the complete persistent installer log"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Download full log</span>
+                </a>
+              </div>
 
               {showFullLogs && (
                 <div className="bg-stone-900 text-stone-200 p-3 rounded-lg font-mono text-[11px] max-h-40 overflow-y-auto space-y-1 border border-stone-800">

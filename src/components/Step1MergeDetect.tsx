@@ -546,7 +546,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   // Speech Models Handlers
   // ----------------------------------------------------
 
-  const handleInstallModel = async (model: SpeechModelInfo) => {
+  const handleInstallModel = async (model: SpeechModelInfo, force = false) => {
     // If GPU required model in CPU mode, show the required modal!
     if (model.requiresGpu && hardware.mode === 'cpu') {
       setBlockedModelName(model.name);
@@ -555,10 +555,10 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     }
 
     try {
-      const res = await fetch(`/api/models/${model.id}/install`, { method: 'POST' });
+      const res = await fetch(`/api/models/${model.id}/prepare${force ? '?force=true' : ''}`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
-        if (data.error === 'NVIDIA GPU Required') {
+        if (data.error?.includes('NVIDIA GPU')) {
           setBlockedModelName(model.name);
           setShowGpuRequiredModal(true);
         } else {
@@ -655,15 +655,14 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   const hasAudioFiles = discoveredFiles.length > 0;
   const isOutputValid = isOutputWritable && !outputFolderError;
 
-  // If WhisperX is selected: must have a compatible installed model selected
+  // WhisperX downloads the selected Faster-Whisper model into the app-local cache
+  // on first use, so a previous manual model download is not a prerequisite.
   const selectedModel = models.find((m) => m.id === selectedModelId);
   const isSelectedModelCompatible = selectedModel
     ? hardware.mode === 'gpu' || !selectedModel.requiresGpu
     : false;
-  const isSelectedModelInstalled = selectedModel ? selectedModel.isInstalled : false;
-
   const isWhisperXValid =
-    chapterSource !== 'whisperx' || (isSelectedModelCompatible && isSelectedModelInstalled);
+    chapterSource !== 'whisperx' || isSelectedModelCompatible;
 
   const canRunStep1 = hasSourceFolder && hasAudioFiles && isOutputValid && isWhisperXValid;
 
@@ -957,7 +956,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
               </div>
             </div>
 
-            {/* Optional Path Scanner input (for desktop local filesystem paths or sample directories) */}
+            {/* Optional path scanner for local desktop filesystem paths. */}
             {showPathInput && (
               <div className="p-3.5 bg-stone-50 rounded-lg border border-stone-200 space-y-2 text-xs">
                 <div className="font-medium text-stone-700">Scan Local Desktop Filesystem Path:</div>
@@ -966,7 +965,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                     type="text"
                     value={customPathInput}
                     onChange={(e) => setCustomPathInput(e.target.value)}
-                    placeholder="e.g. audiobooks/Dune or audiobooks/Project_Hail_Mary/Chapters"
+                    placeholder="Paste a local folder path containing audio files"
                     className="flex-1 px-3 py-2 bg-white border border-stone-300 rounded-md font-mono text-stone-800 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
                   />
                   <button
@@ -975,28 +974,6 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                     className="px-3 py-2 bg-stone-900 text-white rounded-md font-semibold hover:bg-stone-800 disabled:opacity-50 cursor-pointer"
                   >
                     {isScanningFolder ? 'Scanning...' : 'Scan Directory'}
-                  </button>
-                </div>
-                <div className="flex items-center space-x-2 text-stone-500 text-[11px]">
-                  <span>Sample folders:</span>
-                  <button
-                    onClick={() => {
-                      setCustomPathInput('audiobooks/Dune');
-                      handleScanLocalPath('audiobooks/Dune');
-                    }}
-                    className="underline hover:text-amber-800 cursor-pointer"
-                  >
-                    audiobooks/Dune
-                  </button>
-                  <span>•</span>
-                  <button
-                    onClick={() => {
-                      setCustomPathInput('audiobooks/Project_Hail_Mary/Chapters');
-                      handleScanLocalPath('audiobooks/Project_Hail_Mary/Chapters');
-                    }}
-                    className="underline hover:text-amber-800 cursor-pointer"
-                  >
-                    audiobooks/Project_Hail_Mary/Chapters
                   </button>
                 </div>
               </div>
@@ -1021,7 +998,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
         {!hasAudioFiles && !folderScanError && inputMethod === 'folder' && (
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 flex items-center space-x-2">
             <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
-            <span>No audio files loaded. Please click &ldquo;Import Audio Folder&rdquo; or select sample files to continue.</span>
+            <span>No audio files loaded. Please click &ldquo;Import Audio Folder&rdquo; to continue.</span>
           </div>
         )}
 
@@ -1588,7 +1565,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                       if (isUnavailableGpu) {
                         setBlockedModelName(model.name);
                         setShowGpuRequiredModal(true);
-                      } else if (model.isInstalled) {
+                      } else {
                         setSelectedModelId(model.id);
                         notifyJobUpdate({ selectedModelId: model.id });
                       }
@@ -1610,7 +1587,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                             name="selectedModel"
                             value={model.id}
                             checked={isSelected}
-                            disabled={isUnavailableGpu || !model.isInstalled}
+                            disabled={isUnavailableGpu}
                             onChange={() => {
                               setSelectedModelId(model.id);
                               notifyJobUpdate({ selectedModelId: model.id });
@@ -1737,17 +1714,30 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                             <span>Cancel Download</span>
                           </button>
                         ) : model.isInstalled ? (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleUninstallModel(model.id);
-                            }}
-                            className="px-2.5 py-1 rounded text-xs font-medium text-stone-500 hover:text-rose-700 hover:bg-rose-50 border border-stone-200 transition-colors cursor-pointer flex items-center space-x-1"
-                            title="Removes only downloaded weights; never touches user audiobooks or settings"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Uninstall</span>
-                          </button>
+                          <>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleInstallModel(model, true);
+                              }}
+                              className="px-2.5 py-1 rounded text-xs font-medium text-stone-600 hover:text-stone-950 hover:bg-stone-100 border border-stone-200 transition-colors cursor-pointer flex items-center space-x-1"
+                              title="Download a fresh copy of this model into the application cache"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              <span>Reinstall</span>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUninstallModel(model.id);
+                              }}
+                              className="px-2.5 py-1 rounded text-xs font-medium text-stone-500 hover:text-rose-700 hover:bg-rose-50 border border-stone-200 transition-colors cursor-pointer flex items-center space-x-1"
+                              title="Removes only downloaded weights; never touches user audiobooks or settings"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Uninstall</span>
+                            </button>
+                          </>
                         ) : (
                           <button
                             onClick={(e) => {
@@ -1789,13 +1779,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
               {!hasAudioFiles && <li>No supported audio files were found in the selected folder.</li>}
               {!isOutputValid && <li>The selected output folder cannot be written to.</li>}
               {chapterSource === 'whisperx' && !selectedModel && (
-                <li>Select or install a compatible Whisper model to continue.</li>
-              )}
-              {chapterSource === 'whisperx' && selectedModel && !isSelectedModelInstalled && (
-                <li>
-                  The selected Whisper model ({selectedModel.name}) is not installed. Click &ldquo;Install&rdquo;
-                  or choose an installed model.
-                </li>
+                <li>Select a compatible WhisperX model to continue.</li>
               )}
               {chapterSource === 'whisperx' && selectedModel && !isSelectedModelCompatible && (
                 <li>

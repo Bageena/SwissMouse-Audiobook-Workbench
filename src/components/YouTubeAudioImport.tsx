@@ -396,7 +396,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
               Confirm yt-dlp Removal
             </div>
             <p className="text-stone-300">
-              This will safely remove only the local executable in <code className="text-red-300 font-mono">tools/yt-dlp</code>. Your downloaded audio files, Whisper models, and audiobook jobs will remain completely untouched.
+              This will safely remove only the optional local executable in <code className="text-red-300 font-mono">runtime/bin/yt-dlp.exe</code>. Your downloaded audio files, Whisper models, and audiobook jobs will remain completely untouched.
             </p>
             <div className="flex gap-2 pt-1">
               <button

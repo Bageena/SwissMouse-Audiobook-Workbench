@@ -587,7 +587,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                     onChange={(e) =>
                       setFormData((prev) => ({ ...prev, title: e.target.value }))
                     }
-                    placeholder="e.g. Dune"
+                    placeholder="e.g. The Example Book"
                     className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs text-stone-900 font-medium focus:outline-none focus:ring-1 focus:ring-amber-500"
                   />
                 </div>
@@ -607,7 +607,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                     onChange={(e) =>
                       setFormData((prev) => ({ ...prev, subtitle: e.target.value }))
                     }
-                    placeholder="e.g. Book 1 of the Dune Chronicles"
+                    placeholder="e.g. Book 1 of a series"
                     className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
                   />
                 </div>
@@ -771,7 +771,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                     onChange={(e) =>
                       setFormData((prev) => ({ ...prev, series: e.target.value }))
                     }
-                    placeholder="e.g. Dune Chronicles"
+                    placeholder="e.g. Series name"
                     className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
                   />
                 </div>

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { AudiobookJob, ChapterCandidate, ChapterEntry } from '../types';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AlignedWord, AudiobookJob, ChapterCandidate, ChapterEntry } from '../types';
 import { ChapterAudioPlayer, ActiveAudioTrack } from './ChapterAudioPlayer';
 import { buildAlignedWords } from '../utils/wordAlignment';
 import {
@@ -53,6 +53,23 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
   const [activeTrack, setActiveTrack] = useState<ActiveAudioTrack | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [wordUpdateNotification, setWordUpdateNotification] = useState<string | null>(null);
+  const [transcriptSearch, setTranscriptSearch] = useState('');
+  const [transcriptOffset, setTranscriptOffset] = useState(0);
+  const transcriptPageSize = 1200;
+  const transcriptWords = job.transcriptWords || [];
+  const matchingTranscriptWords = useMemo(() => {
+    const query = transcriptSearch.trim().toLowerCase();
+    return query ? transcriptWords.filter(word => word.word.toLowerCase().includes(query)) : transcriptWords;
+  }, [transcriptWords, transcriptSearch]);
+  const visibleTranscriptWords = matchingTranscriptWords.slice(transcriptOffset, transcriptOffset + transcriptPageSize);
+
+  useEffect(() => setTranscriptOffset(0), [transcriptSearch, job.id]);
+
+  useEffect(() => {
+    if (!activeTrack) return;
+    const wordId = `transcript-word-${Math.round(activeTrack.seconds * 1000)}`;
+    document.getElementById(wordId)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [activeTrack?.seconds]);
 
   // Helper: Format seconds to HH:MM:SS.mmm
   const formatTs = (seconds: number): string => {
@@ -266,10 +283,8 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     if (targetIdx !== undefined && targetIdx >= 0) {
       handleUpdateChapter(targetIdx, 'start', timestamp);
       const chapterTitle = chapters[targetIdx].title;
-      const isFirst = targetIdx === 0;
-      const deadAirNote = isFirst && parseMs(timestamp) > 0 ? ` (trimming dead air before ${timestamp})` : '';
       setWordUpdateNotification(
-        `✓ Snapped ${chapterTitle} start timestamp to ${timestamp} from clicked word "${word}"${deadAirNote}`
+        `✓ Snapped ${chapterTitle} start timestamp to ${timestamp} from clicked word "${word}"`
       );
       setTimeout(() => setWordUpdateNotification(null), 4000);
 
@@ -290,6 +305,27 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
       setTimeout(() => setWordUpdateNotification(null), 4000);
       setActiveTrack(prev => (prev ? { ...prev, start: timestamp, seconds } : null));
     }
+  };
+
+  const handleTranscriptWordSelect = (word: AlignedWord) => {
+    let targetIdx = 0;
+    chapters.forEach((chapter, index) => {
+      if (parseMs(chapter.start) / 1000 <= word.startSeconds) targetIdx = index;
+    });
+    handleUpdateChapter(targetIdx, 'start', word.start);
+    const nearbyWords = transcriptWords.filter(item => Math.abs(item.startSeconds - word.startSeconds) <= 25);
+    setActiveTrack({
+      id: 'transcript-word',
+      chapterIndex: targetIdx,
+      title: chapters[targetIdx]?.title || 'Chapter boundary',
+      start: word.start,
+      seconds: word.startSeconds,
+      words: nearbyWords,
+      sourceType: 'chapter',
+    });
+    setIsPlaying(true);
+    setWordUpdateNotification(`✓ Snapped ${chapters[targetIdx]?.title || 'chapter'} to ${word.start} from actual transcript word "${word.word}"`);
+    setTimeout(() => setWordUpdateNotification(null), 4000);
   };
 
   // Save changes
@@ -371,8 +407,8 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
               </h2>
             </div>
             <p className="text-sm text-stone-600 mt-1 max-w-3xl">
-              Listen to chapter markers, adjust start timestamps, prune false-positives, or snap timestamps to any spoken word.
-              You can start Chapter 1 later than <code>00:00:00.000</code> to cut out any introductory dead air or silence.
+              Listen to the real merged audiobook, adjust chapter markers, prune false-positives, or snap timestamps to any spoken word.
+              Chapter markers never remove opening or ending audio; the full source timeline is preserved.
             </p>
           </div>
 
@@ -460,11 +496,12 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
         }}
         onWordClick={handleWordTimestampSelect}
         totalDurationSeconds={job.totalDurationSeconds}
+        audioSrc={`/api/jobs/${job.id}/audio-preview`}
       />
 
-      {/* Main Split Workbench: Left Candidates, Right Chapters Editor */}
+      {/* Main Split Workbench: Left transcript, Right Chapters Editor */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Col (5 cols): AI Detected Candidates */}
+        {/* Left Col (5 cols): complete persisted WhisperX transcript */}
         <div className="lg:col-span-5 space-y-4">
           <div className="bg-white rounded-xl border border-stone-200/80 shadow-xs overflow-hidden flex flex-col h-[750px]">
             <div className="p-4 border-b border-stone-200 bg-stone-50/70 flex items-center justify-between">
@@ -472,27 +509,53 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                 <div className="flex items-center space-x-2">
                   <Sparkles className="w-4 h-4 text-amber-600" />
                   <h3 className="font-semibold text-sm text-stone-900">
-                    Detected Chapters ({candidates.length})
+                    Full Transcript ({matchingTranscriptWords.length.toLocaleString()} words)
                   </h3>
                 </div>
                 <p className="text-xs text-stone-500 mt-0.5 font-mono">
-                  {job.name}-candidates.csv
+                  Actual WhisperX word timestamps · searchable
                 </p>
               </div>
 
-              <a
-                href={`/api/jobs/${job.id}/export/candidates-csv`}
-                download
-                className="flex items-center space-x-1 px-2.5 py-1 text-xs rounded border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 shadow-2xs font-medium"
-                title="Download candidates.csv"
-              >
-                <Download className="w-3.5 h-3.5 text-stone-500" />
-                <span>CSV</span>
-              </a>
+              <input
+                value={transcriptSearch}
+                onChange={(event) => setTranscriptSearch(event.target.value)}
+                placeholder="Search words…"
+                className="w-36 px-2 py-1 text-xs rounded border border-stone-300 bg-white"
+              />
             </div>
 
-            {/* Candidates Scroll Area */}
-            <div className="divide-y divide-stone-100 overflow-y-auto flex-1 p-3 space-y-3">
+            <div className="flex flex-wrap content-start gap-1 overflow-y-auto flex-1 p-3 text-xs leading-relaxed">
+              {visibleTranscriptWords.map((word, index) => {
+                const isHeading = candidates.some(candidate => word.startSeconds >= parseMs(candidate.candidate_start) / 1000 && word.startSeconds <= parseMs(candidate.candidate_end) / 1000);
+                const isActive = Math.abs((activeTrack?.seconds ?? -1) - word.startSeconds) < 0.001;
+                return (
+                  <button
+                    id={`transcript-word-${Math.round(word.startSeconds * 1000)}`}
+                    key={`${word.startSeconds}-${index}`}
+                    type="button"
+                    onClick={() => handleTranscriptWordSelect(word)}
+                    title={`Seek to ${word.start}`}
+                    className={`px-1 py-0.5 rounded cursor-pointer transition-colors ${isActive ? 'bg-amber-500 text-stone-950 font-bold' : isHeading ? 'bg-amber-100 text-amber-950 font-semibold ring-1 ring-amber-300' : 'text-stone-700 hover:bg-stone-200'}`}
+                  >
+                    {word.word}
+                  </button>
+                );
+              })}
+              {visibleTranscriptWords.length === 0 && <p className="p-6 text-stone-500">No saved word-level transcript is available yet. Complete Step 1 once to create it.</p>}
+            </div>
+            {matchingTranscriptWords.length > transcriptPageSize && (
+              <div className="px-3 py-2 border-t border-stone-200 bg-stone-50 flex items-center justify-between text-[11px] text-stone-600">
+                <span>Words {transcriptOffset + 1}–{Math.min(transcriptOffset + transcriptPageSize, matchingTranscriptWords.length)} of {matchingTranscriptWords.length}</span>
+                <div className="flex gap-1">
+                  <button type="button" disabled={transcriptOffset === 0} onClick={() => setTranscriptOffset(Math.max(0, transcriptOffset - transcriptPageSize))} className="px-2 py-1 border rounded bg-white disabled:opacity-40">Earlier</button>
+                  <button type="button" disabled={transcriptOffset + transcriptPageSize >= matchingTranscriptWords.length} onClick={() => setTranscriptOffset(transcriptOffset + transcriptPageSize)} className="px-2 py-1 border rounded bg-white disabled:opacity-40">Later</button>
+                </div>
+              </div>
+            )}
+
+            {/* Retained candidate controls are hidden: the transcript above is now the review source. */}
+            {false && <div className="divide-y divide-stone-100 overflow-y-auto flex-1 p-3 space-y-3">
               {candidates.map((cand) => {
                 const isAdded = chapters.some(c => c.start === cand.candidate_start);
                 const confNum = parseFloat(cand.confidence) || 0.9;
@@ -644,7 +707,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                   No candidates generated yet. Run Step 1 to detect chapter markers.
                 </div>
               )}
-            </div>
+            </div>}
           </div>
         </div>
 
@@ -724,7 +787,6 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                     const chapMs = parseMs(chap.start);
                     const isValidTime = chapMs !== -1;
                     const isNonNegative = isValidTime && chapMs >= 0;
-                    const isTrimmingDeadAir = isFirst && chapMs > 0;
                     const isThisTrack = activeTrack?.id === (chap.id || `chap-${idx}`);
                     const isThisPlaying = isThisTrack && isPlaying;
                     
@@ -781,12 +843,6 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                               }`}
                               placeholder="00:00:00.000"
                             />
-                            {isTrimmingDeadAir && (
-                              <div className="flex items-center space-x-1 text-[10px] text-amber-700 font-medium font-mono pl-0.5">
-                                <Scissors className="w-3 h-3 text-amber-600 shrink-0" />
-                                <span>Trims leading dead air</span>
-                              </div>
-                            )}
                           </div>
                         </td>
 
@@ -845,12 +901,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                 </span>
               </div>
               <div className="flex items-center space-x-2 text-[11px] text-stone-400 font-mono">
-                {parseMs(chapters[0]?.start) > 0 && (
-                  <span className="text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded border border-amber-300 font-sans font-medium flex items-center space-x-1">
-                    <Scissors className="w-3 h-3 text-amber-700" />
-                    <span>Dead air cut: 00:00:00 to {chapters[0].start}</span>
-                  </span>
-                )}
+                <span>Full audio preserved: 00:00:00 to {formatTs(job.totalDurationSeconds)}</span>
                 <span>{chapters.length} {chapters.length === 1 ? 'chapter' : 'chapters'}</span>
               </div>
             </div>

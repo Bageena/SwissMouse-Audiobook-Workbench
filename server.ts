@@ -4,7 +4,9 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import https from 'https';
-import { execSync, exec, execFile, spawn } from 'child_process';
+import { execSync, exec, execFile, execFileSync, spawn } from 'child_process';
+import { createHash } from 'crypto';
+import AdmZip from 'adm-zip';
 import { promisify } from 'util';
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -16,9 +18,12 @@ function downloadFile(url: string, dest: string): Promise<void> {
     
     const request = (currentUrl: string) => {
       https.get(currentUrl, (response) => {
-        if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 307 || response.statusCode === 308) {
+        if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 303 || response.statusCode === 307 || response.statusCode === 308) {
           if (response.headers.location) {
-            request(response.headers.location);
+            // Providers may return a relative redirect; resolve it against the
+            // URL we requested before following it.
+            response.resume();
+            request(new URL(response.headers.location, currentUrl).toString());
           } else {
             reject(new Error(`Redirected without location header: ${response.statusCode}`));
           }
@@ -47,28 +52,17 @@ function downloadFile(url: string, dest: string): Promise<void> {
 
 function runSpawnCmd(cmd: string, args: string[], onLog: (msg: string) => void): Promise<void> {
   return new Promise((resolve, reject) => {
-    const isWin = os.platform() === 'win32';
-    
-    // On Windows, when using shell: true, it's often more reliable to pass a single command string
-    // especially when paths contain spaces.
-    let child;
-    if (isWin) {
-        const processedArgs = args.map(arg => {
-            // Quote arguments that have spaces and aren't already quoted
-            if (arg.includes(' ') && !arg.startsWith('"')) {
-                return `"${arg}"`;
-            }
-            return arg;
-        });
-        const processedCmd = (cmd.includes(' ') && !cmd.startsWith('"')) ? `"${cmd}"` : cmd;
-        const fullCommandLine = `${processedCmd} ${processedArgs.join(' ')}`;
-        
-        console.log(`[Spawn:Win] ${fullCommandLine}`);
-        child = spawn(fullCommandLine, [], { shell: true });
-    } else {
-        console.log(`[Spawn:Posix] ${cmd} ${args.join(' ')}`);
-        child = spawn(cmd, args, { shell: false });
-    }
+    // spawn accepts executable paths with spaces when shell is false. Running
+    // through cmd.exe can leave the wrapper open after pip has finished.
+    onLog(`$ ${cmd} ${args.join(' ')}`);
+    const child = spawn(cmd, args, { shell: false, windowsHide: true });
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolve();
+    };
     
     child.stdout.on('data', (data) => {
       const str = data.toString();
@@ -92,14 +86,14 @@ function runSpawnCmd(cmd: string, args: string[], onLog: (msg: string) => void):
     
     child.on('close', (code) => {
       if (code !== 0) {
-        reject(new Error(`Command failed with exit code ${code}`));
+        finish(new Error(`Command failed with exit code ${code ?? 'unknown'}`));
       } else {
-        resolve();
+        finish();
       }
     });
     
     child.on('error', (err) => {
-        reject(err);
+        finish(new Error(`Could not start '${cmd}': ${err.message}`));
     });
   });
 }
@@ -107,26 +101,166 @@ import { createServer as createViteServer } from 'vite';
 import multer from 'multer';
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
-const RUNTIME_DIR = path.join(process.cwd(), 'runtime');
+// The launcher sets APP_ROOT to its own folder so shortcuts and removable
+// drives never turn the caller's current directory into the application root.
+const APP_ROOT = path.resolve(process.env.APP_ROOT || process.cwd());
+const appPath = (...segments: string[]) => path.join(APP_ROOT, ...segments);
+const RUNTIME_DIR = appPath('runtime');
 const PORTABLE_PYTHON_DIR = path.join(RUNTIME_DIR, 'python');
 const isWin = os.platform() === 'win32';
 const PORTABLE_PYTHON_EXE = isWin ? path.join(PORTABLE_PYTHON_DIR, 'tools', 'python.exe') : path.join(PORTABLE_PYTHON_DIR, 'bin', 'python3');
+const RUNTIME_BIN_DIR = appPath('runtime', 'bin');
+const MANAGED_FFMPEG_PATH = path.join(RUNTIME_BIN_DIR, isWin ? 'ffmpeg.exe' : 'ffmpeg');
+const MANAGED_FFPROBE_PATH = path.join(RUNTIME_BIN_DIR, isWin ? 'ffprobe.exe' : 'ffprobe');
+
+// FFmpeg.org links Windows users to this build provider. The installer verifies
+// the published SHA-256 before extracting its two application-local binaries.
+const WINDOWS_FFMPEG_ARCHIVE_URL = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip';
+const WINDOWS_FFMPEG_ARCHIVE_SHA256_URL = `${WINDOWS_FFMPEG_ARCHIVE_URL}.sha256`;
+const WHISPERX_VERSION = '3.7.4';
+const TORCH_VERSION = '2.8.0';
+const TORCHAUDIO_VERSION = '2.8.0';
+const TORCHVISION_VERSION = '0.23.0';
+const WHISPERX_MODEL_CACHE_DIR = appPath('models', 'whisperx');
+const TORCH_CACHE_DIR = appPath('models', 'torch');
+const MATPLOTLIB_CACHE_DIR = appPath('runtime', 'cache', 'matplotlib');
+const FASTER_WHISPER_REPOSITORIES: Record<string, string> = {
+  tiny: 'Systran/faster-whisper-tiny',
+  base: 'Systran/faster-whisper-base',
+  small: 'Systran/faster-whisper-small',
+  medium: 'Systran/faster-whisper-medium',
+  'large-v3': 'Systran/faster-whisper-large-v3',
+  // This is the repository Faster-Whisper resolves for the CLI model name.
+  // Keeping this mapping identical prevents a second surprise model download.
+  'large-v3-turbo': 'mobiuslabsgmbh/faster-whisper-large-v3-turbo',
+};
 const PORTABLE_PYTHON_URL = isWin 
     ? 'https://www.nuget.org/api/v2/package/python/3.10.11' 
     : 'https://github.com/indygreg/python-build-standalone/releases/download/20241016/cpython-3.10.15+20241016-x86_64-unknown-linux-gnu-install_only.tar.gz';
 
-const VENV_DIR = path.join(process.cwd(), '.venv');
+// Keep the private environment inside the portable application tree.
+const VENV_DIR = appPath('runtime', 'venv');
 const getVenvPython = () => {
     const isWin = os.platform() === 'win32';
     return isWin ? path.join(VENV_DIR, 'Scripts', 'python.exe') : path.join(VENV_DIR, 'bin', 'python');
 };
-const getVenvPip = () => {
-    const isWin = os.platform() === 'win32';
-    return isWin ? path.join(VENV_DIR, 'Scripts', 'pip.exe') : path.join(VENV_DIR, 'bin', 'pip');
-};
 
+// PyTorch 2.6 changed torch.load's default to `weights_only=True`. WhisperX
+// 3.7.4 ships a trusted Pyannote VAD checkpoint that contains legacy OmegaConf
+// metadata, so that one bundled file needs the old loader behavior. This
+// startup hook is intentionally limited to that exact app-installed file; all
+// user files and every other model retain PyTorch's safer default.
+function ensureWhisperxVadCompatibility(): void {
+  const sitePackages = isWin
+    ? path.join(VENV_DIR, 'Lib', 'site-packages')
+    : path.join(VENV_DIR, 'lib', 'python3.10', 'site-packages');
+  if (!fs.existsSync(sitePackages)) return;
+
+  const siteCustomizePath = path.join(sitePackages, 'sitecustomize.py');
+  const marker = '# Audiobook Workbench WhisperX VAD compatibility shim';
+  const shim = [
+    marker,
+    'import os',
+    'import torch',
+    '',
+    '_awb_original_torch_load = torch.load',
+    'def _awb_torch_load(file, *args, **kwargs):',
+    '    try:',
+    '        _awb_candidate = getattr(file, "name", file)',
+    "        _awb_path = os.path.normcase(os.fspath(_awb_candidate)).replace('/', '\\\\')",
+    '    except TypeError:',
+    "        _awb_path = ''",
+    "    if _awb_path.endswith(r'whisperx\\assets\\pytorch_model.bin'):",
+    "        if kwargs.get('weights_only') is None:",
+    "            kwargs['weights_only'] = False",
+    '    return _awb_original_torch_load(file, *args, **kwargs)',
+    'torch.load = _awb_torch_load',
+    '',
+  ].join('\n');
+
+  try {
+    const existing = fs.existsSync(siteCustomizePath) ? fs.readFileSync(siteCustomizePath, 'utf8') : '';
+    const beforeShim = existing.includes(marker) ? existing.slice(0, existing.indexOf(marker)) : existing;
+    fs.writeFileSync(siteCustomizePath, `${beforeShim}${beforeShim && !beforeShim.endsWith('\n') ? '\n' : ''}${shim}`, 'utf8');
+  } catch (error) {
+    console.warn('[WhisperX] Could not write the local VAD compatibility shim:', error);
+  }
+}
+
+function getManagedBinaryVersion(executablePath: string): string | null {
+  if (!fs.existsSync(executablePath)) return null;
+  try {
+    return execFileSync(executablePath, ['-version'], {
+      encoding: 'utf8',
+      timeout: 3000,
+      stdio: ['pipe', 'pipe', 'ignore'],
+    }).trim().split(/\r?\n/)[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+async function installManagedFfmpeg(onLog: (message: string) => void): Promise<void> {
+  if (!isWin) {
+    throw new Error('Automatic FFmpeg setup is currently implemented for Windows only.');
+  }
+
+  fs.mkdirSync(RUNTIME_BIN_DIR, { recursive: true });
+  const archivePath = path.join(RUNTIME_DIR, 'ffmpeg-release-essentials.zip');
+  const checksumPath = `${archivePath}.sha256`;
+  let installSucceeded = false;
+
+  try {
+    const hasVerifiedArchive = fs.existsSync(archivePath) && fs.existsSync(checksumPath) &&
+      fs.readFileSync(checksumPath, 'utf8').match(/\b[a-fA-F0-9]{64}\b/)?.[0]?.toLowerCase() ===
+      createHash('sha256').update(fs.readFileSync(archivePath)).digest('hex');
+    if (hasVerifiedArchive) {
+      onLog('Using the previously verified FFmpeg archive from the interrupted repair.');
+    } else {
+      onLog('Downloading the FFmpeg Essentials archive...');
+      await downloadFile(WINDOWS_FFMPEG_ARCHIVE_URL, archivePath);
+      await downloadFile(WINDOWS_FFMPEG_ARCHIVE_SHA256_URL, checksumPath);
+    }
+
+    const expected = fs.readFileSync(checksumPath, 'utf8').match(/\b[a-fA-F0-9]{64}\b/)?.[0]?.toLowerCase();
+    const actual = createHash('sha256').update(fs.readFileSync(archivePath)).digest('hex');
+    if (!expected || expected !== actual) {
+      throw new Error('FFmpeg archive checksum verification failed. The download was not installed.');
+    }
+    onLog('FFmpeg archive checksum verified. Unpacking application-local binaries...');
+
+    // Do not invoke Windows tar.exe or PowerShell here. In some Windows setups
+    // those extractors can terminate the parent server during a large ZIP
+    // operation. The archive is checksum-verified above, then this pure
+    // JavaScript reader writes only the two required application-local files.
+    const zip = new AdmZip(archivePath);
+    const entries = zip.getEntries();
+    const ffmpegEntry = entries.find((entry) => /(^|\/)bin\/ffmpeg\.exe$/i.test(entry.entryName));
+    const ffprobeEntry = entries.find((entry) => /(^|\/)bin\/ffprobe\.exe$/i.test(entry.entryName));
+    if (!ffmpegEntry || !ffprobeEntry) {
+      throw new Error('The downloaded FFmpeg archive did not contain both ffmpeg.exe and ffprobe.exe.');
+    }
+    onLog('Writing FFmpeg and FFprobe to runtime/bin...');
+    fs.writeFileSync(MANAGED_FFMPEG_PATH, ffmpegEntry.getData());
+    fs.writeFileSync(MANAGED_FFPROBE_PATH, ffprobeEntry.getData());
+    installSucceeded = true;
+  } finally {
+    if (installSucceeded) {
+      try { fs.rmSync(archivePath, { force: true }); } catch {}
+      try { fs.rmSync(checksumPath, { force: true }); } catch {}
+    } else {
+      onLog('FFmpeg archive was preserved for diagnostics or a retry.');
+    }
+  }
+
+  if (!getManagedBinaryVersion(MANAGED_FFMPEG_PATH) || !getManagedBinaryVersion(MANAGED_FFPROBE_PATH)) {
+    throw new Error('Downloaded FFmpeg binaries could not be executed from runtime/bin.');
+  }
+}
+
+console.log(`[Startup] App root: ${APP_ROOT}`);
 console.log(`[Startup] CWD: ${process.cwd()}`);
 console.log(`[Startup] VENV_DIR: ${VENV_DIR}`);
 console.log(`[Startup] Expected Python: ${getVenvPython()}`);
@@ -138,7 +272,7 @@ if (fs.existsSync(VENV_DIR)) {
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-const uploadDir = path.join(process.cwd(), 'inputs');
+const uploadDir = appPath('inputs');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -203,8 +337,8 @@ app.post('/api/upload-audio', upload.array('files'), (req, res) => {
 
 // Initial workbench configuration matching config.json from original Python app
 let currentConfig: WorkbenchConfig = {
-  ffmpeg_path: "ffmpeg",
-  ffprobe_path: "ffprobe",
+  ffmpeg_path: MANAGED_FFMPEG_PATH,
+  ffprobe_path: MANAGED_FFPROBE_PATH,
   whisper_profile: "turbo",
   profiles: {
     turbo: {
@@ -336,7 +470,7 @@ function generateFFMetaContent(chapters: ChapterEntry[], totalDurationSeconds: n
   return content;
 }
 
-const JOBS_FILE = path.join(process.cwd(), 'jobs.json');
+const JOBS_FILE = appPath('jobs.json');
 
 function saveJobs() {
     try {
@@ -358,99 +492,32 @@ function loadJobs() {
     return null;
 }
 
-// In-Memory store initialized with realistic sample jobs to demonstrate the exact workbench pipeline
-let jobs: AudiobookJob[] = loadJobs() || [
-  {
-    id: "dune-part-1",
-    name: "Dune",
-    author: "Frank Herbert",
-    narrator: "Scott Brick, Orson Scott Card",
-    metadata: {
-      title: "Dune",
-      subtitle: "Dune Chronicles, Book 1",
-      author: "Frank Herbert",
-      narrator: "Scott Brick, Orson Scott Card",
-      series: "Dune Chronicles",
-      seriesSequence: "1",
-      genres: ["Science Fiction", "Space Opera", "Audiobook"],
-      publishedYear: "1965",
-      releaseDate: "1965-08-01",
-      publisher: "Chilton Books / Macmillan Audio",
-      language: "eng",
-      isbn: "9780441013593",
-      asin: "B000R34YKC",
-      description: "Set on the desert planet Arrakis, Dune is the story of the boy Paul Atreides, heir to a noble family tasked with ruling an inhospitable world where the only thing of value is the 'spice' melange, a drug capable of extending life and enhancing consciousness.",
-      abridged: false,
-      explicit: false,
-      copyright: "© 1965 Frank Herbert, ℗ 2007 Macmillan Audio",
-      cover: {
-        source: 'local',
-        filename: 'cover.jpg',
-        url: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?q=80&w=800&auto=format&fit=crop',
-        mimeType: 'image/jpeg',
-        width: 1400,
-        height: 1400,
-      }
-    },
-    createdAt: new Date(Date.now() - 3600000 * 24).toISOString(),
-    parts: [
-      { id: "p1", name: "01 - Dune Part 1.mp3", sizeBytes: 52428800, durationSeconds: 2700, bitrate: 128, order: 1 },
-      { id: "p2", name: "02 - Dune Part 2.mp3", sizeBytes: 48234496, durationSeconds: 2480, bitrate: 128, order: 2 },
-      { id: "p3", name: "03 - Dune Part 3.mp3", sizeBytes: 51380224, durationSeconds: 2650, bitrate: 128, order: 3 },
-    ],
-    totalDurationSeconds: 7830,
-    totalSizeBytes: 152043520,
-    status: 'transcribed',
-    mergedMp3: {
-      filename: "Dune.mp3",
-      duration: 7830,
-      bitrate: 128,
-      sizeBytes: 151900000,
-    },
-    transcription: {
-      model: "large-v3-turbo",
-      profile: "turbo",
-      language: "en",
-      segmentsCount: 840,
-      wordsCount: 19420,
-      completedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-    },
-    candidates: [
-      {
-        candidate_id: 1,
-        candidate_start: "00:00:00.000",
-        candidate_end: "00:00:01.000",
-        matched_text: "[START]",
-        context_before: "",
-        context_after: "A beginning is the time for taking the most delicate care...",
-        confidence: "1.00",
-        proposed_title: "Prologue / Beginning",
-        status: "approved",
-        notes: "Automatic opening chapter boundary",
-      },
-      {
-        candidate_id: 2,
-        candidate_start: "00:14:22.500",
-        candidate_end: "00:14:25.100",
-        matched_text: "Chapter 1",
-        context_before: "The old woman said let us begin with the Gom Jabbar test.",
-        context_after: "A beginning is very delicate, my son Paul.",
-        confidence: "0.97",
-        proposed_title: "Chapter 1",
-        status: "approved",
-        notes: "Clear spoken chapter heading",
-      },
-    ],
-    chapters: [
-      { id: "c1", start: "00:00:00.000", title: "Prologue / Beginning" },
-      { id: "c2", start: "00:14:22.500", title: "Chapter 1: The Gom Jabbar" },
-    ],
-    logs: [
-      { timestamp: "2026-09-12 14:10:02", level: "INFO", message: "Initial job created with 3 MP3 source pieces." },
-      { timestamp: "2026-09-12 14:11:00", level: "INFO", message: "WhisperX transcription completed. 840 segments, 6 candidate chapter markers extracted." },
-    ],
-  },
-];
+// Fresh installations start with no project data. Jobs are created only by the user.
+let jobs: AudiobookJob[] = loadJobs() || [];
+
+// Stream the app-owned merged master for Chapter Review. Range support lets
+// the browser seek directly to a word timestamp without loading a full book.
+app.get('/api/jobs/:id/audio-preview', (req, res) => {
+  const job = jobs.find(job => job.id === req.params.id);
+  const audioPath = job?.mergedMp3?.fullPath;
+  if (!audioPath || !fs.existsSync(audioPath)) {
+    return res.status(404).json({ error: 'Merged review audio is unavailable. Run Step 1 first.' });
+  }
+  const stat = fs.statSync(audioPath);
+  const ext = path.extname(audioPath).toLowerCase();
+  const contentType = ext === '.wav' ? 'audio/wav' : ext === '.flac' ? 'audio/flac' : ext === '.m4a' || ext === '.m4b' ? 'audio/mp4' : 'audio/mpeg';
+  const range = req.headers.range;
+  if (!range) {
+    res.writeHead(200, { 'Content-Type': contentType, 'Content-Length': stat.size, 'Accept-Ranges': 'bytes' });
+    return fs.createReadStream(audioPath).pipe(res);
+  }
+  const [startText, endText] = range.replace(/bytes=/, '').split('-');
+  const start = Math.max(0, parseInt(startText, 10) || 0);
+  const end = Math.min(stat.size - 1, endText ? parseInt(endText, 10) : start + 1024 * 1024);
+  if (start > end) return res.status(416).end();
+  res.writeHead(206, { 'Content-Type': contentType, 'Content-Length': end - start + 1, 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Accept-Ranges': 'bytes' });
+  fs.createReadStream(audioPath, { start, end }).pipe(res);
+});
 
 // ----------------------------------------------------
 // Local Desktop Processing: Hardware, Models & Folder Utilities
@@ -548,7 +615,7 @@ const WHISPER_MODEL_SOURCES: Record<string, { url: string; fileName: string; siz
 };
 
 // Ensure models directory exists
-const modelsBaseDir = path.join(process.cwd(), 'models');
+const modelsBaseDir = appPath('models');
 if (!fs.existsSync(modelsBaseDir)) {
   try {
     fs.mkdirSync(modelsBaseDir, { recursive: true });
@@ -563,46 +630,30 @@ function getModelInstallationStatus(modelId: string): {
   installedFile?: string;
   modelDirPath: string;
 } {
-  const modelDir = path.join(process.cwd(), 'models', modelId);
-  const source = WHISPER_MODEL_SOURCES[modelId];
+  // Faster-Whisper uses Hugging Face snapshots. `--model_dir` directs these to
+  // the portable application directory instead of the user's profile.
+  const repository = FASTER_WHISPER_REPOSITORIES[modelId];
+  const modelDir = repository
+    ? path.join(WHISPERX_MODEL_CACHE_DIR, `models--${repository.replace('/', '--')}`)
+    : path.join(WHISPERX_MODEL_CACHE_DIR, `models--Systran--faster-whisper-${modelId}`);
 
-  // Check 1: App models directory (models/<modelId>/)
   if (fs.existsSync(modelDir)) {
     try {
-      const files = fs.readdirSync(modelDir);
       let weightFile: string | undefined;
       let weightFileSize = 0;
-
-      // Prefer designated source filename if present
-      if (source && files.includes(source.fileName)) {
-        try {
-          const stat = fs.statSync(path.join(modelDir, source.fileName));
-          if (stat.isFile() && stat.size > 10 * 1024 * 1024) {
-            weightFile = source.fileName;
-            weightFileSize = stat.size;
+      const findWeight = (directory: string) => {
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+          const entryPath = path.join(directory, entry.name);
+          if (entry.isDirectory()) findWeight(entryPath);
+          if (!entry.isFile() || entry.name.endsWith('.downloading')) continue;
+          const stat = fs.statSync(entryPath);
+          if ((entry.name.endsWith('.bin') || entry.name.endsWith('.safetensors')) && stat.size > 10 * 1024 * 1024) {
+            weightFile ??= path.relative(modelDir, entryPath);
+            weightFileSize += stat.size;
           }
-        } catch (e) {}
-      }
-
-      // Otherwise look for any recognized model weight formats > 10MB
-      if (!weightFile) {
-        for (const file of files) {
-          if (file.endsWith('.downloading')) continue;
-          const filePath = path.join(modelDir, file);
-          try {
-            const stat = fs.statSync(filePath);
-            if (
-              stat.isFile() &&
-              (file.endsWith('.pt') || file.endsWith('.bin') || file.endsWith('.safetensors')) &&
-              stat.size > 10 * 1024 * 1024
-            ) {
-              weightFile = file;
-              weightFileSize = stat.size;
-              break;
-            }
-          } catch (e) {}
         }
-      }
+      };
+      findWeight(modelDir);
 
       if (weightFile && weightFileSize > 10 * 1024 * 1024) {
         return {
@@ -614,25 +665,6 @@ function getModelInstallationStatus(modelId: string): {
         };
       }
     } catch (e) {}
-  }
-
-  // Check 2: Standard Python OpenAI Whisper cache (~/.cache/whisper/<source.fileName>)
-  if (source) {
-    const homeCacheFile = path.join(os.homedir(), '.cache', 'whisper', source.fileName);
-    if (fs.existsSync(homeCacheFile)) {
-      try {
-        const stat = fs.statSync(homeCacheFile);
-        if (stat.size > 10 * 1024 * 1024) {
-          return {
-            isInstalled: true,
-            sizeOnDiskBytes: stat.size,
-            sizeOnDiskLabel: formatBytes(stat.size),
-            installedFile: source.fileName,
-            modelDirPath: modelDir,
-          };
-        }
-      } catch (e) {}
-    }
   }
 
   return {
@@ -732,9 +764,10 @@ interface ActiveModelDownloadTask {
 }
 
 const activeModelDownloads = new Map<string, ActiveModelDownloadTask>();
+const activeFasterWhisperInstalls = new Map<string, ReturnType<typeof spawn>>();
 
 // Local Output Folder State
-let currentOutputFolder = path.join(process.cwd(), 'output');
+let currentOutputFolder = appPath('output');
 if (!fs.existsSync(currentOutputFolder)) {
   try {
     fs.mkdirSync(currentOutputFolder, { recursive: true });
@@ -747,12 +780,12 @@ if (!fs.existsSync(currentOutputFolder)) {
 
 // Required base directories for Audiobook Workbench
 const REQUIRED_APP_DIRECTORIES = [
-  { id: 'output', name: 'Default Output Folder', path: path.join(process.cwd(), 'output'), purpose: 'Final chaptered .m4b audiobooks and exports' },
-  { id: 'cache', name: 'Temporary Cache Folder', path: path.join(process.cwd(), '.cache'), purpose: 'Intermediate processing cache and temporary work files' },
-  { id: 'temp_work', name: 'PCM Working Directory', path: path.join(process.cwd(), '.cache', 'work'), purpose: 'Uncompressed raw audio PCM workspace' },
-  { id: 'logs', name: 'Application Logs Folder', path: path.join(process.cwd(), 'logs'), purpose: 'Persistent diagnostic and workbench execution logs' },
-  { id: 'models_root', name: 'Models Storage Directory', path: path.join(process.cwd(), 'models'), purpose: 'Local storage location for Whisper model weights' },
-  { id: 'tools_root', name: 'Application Tools Directory', path: path.join(process.cwd(), 'tools'), purpose: 'Managed directory for local helper utilities' },
+  { id: 'output', name: 'Default Output Folder', path: appPath('output'), purpose: 'Final chaptered .m4b audiobooks and exports' },
+  { id: 'cache', name: 'Temporary Cache Folder', path: appPath('.cache'), purpose: 'Intermediate processing cache and temporary work files' },
+  { id: 'temp_work', name: 'PCM Working Directory', path: appPath('.cache', 'work'), purpose: 'Uncompressed raw audio PCM workspace' },
+  { id: 'logs', name: 'Application Logs Folder', path: appPath('logs'), purpose: 'Persistent diagnostic and workbench execution logs' },
+  { id: 'models_root', name: 'Models Storage Directory', path: appPath('models'), purpose: 'Local storage location for Whisper model weights' },
+  { id: 'tools_root', name: 'Application Tools Directory', path: appPath('tools'), purpose: 'Managed directory for local helper utilities' },
 ];
 
 // Ensure required app directories exist on startup
@@ -773,6 +806,21 @@ let activeInstallProgress: InstallRepairProgress = {
   logs: [],
   canCancel: false,
 };
+const INSTALL_DIAGNOSTIC_LOG = appPath('logs', 'install-repair.log');
+
+function appendInstallDiagnostic(message: string, includeInUi = true) {
+  const line = `[${new Date().toLocaleTimeString()}] ${message}`;
+  try {
+    fs.mkdirSync(path.dirname(INSTALL_DIAGNOSTIC_LOG), { recursive: true });
+    fs.appendFileSync(INSTALL_DIAGNOSTIC_LOG, `${line}\n`, 'utf8');
+  } catch (error) {
+    console.error('Failed to write installation diagnostic log:', error);
+  }
+  if (includeInUi) {
+    activeInstallProgress.logs.push(line);
+    if (activeInstallProgress.logs.length > 50) activeInstallProgress.logs.shift();
+  }
+}
 
 // Global active Step 1 processing progress state
 let jobIdForStep1: string | null = null;
@@ -879,25 +927,12 @@ function checkBaseRequirements(): RequirementsReport {
     let pyBin = '';
     let ver = '';
 
-    // Check portable first
+    // A portable project must never report a machine-wide Python install as
+    // usable. Step 1 always runs the bundled interpreter through this path.
     if (fs.existsSync(PORTABLE_PYTHON_EXE)) {
       pyBin = PORTABLE_PYTHON_EXE;
       const out = execSync(`"${pyBin}" --version`, { encoding: 'utf8', timeout: 2000 }).trim();
       ver = out.replace('Python ', '');
-    } else {
-      // Check system path
-      const pyVersionOut = execSync('python3 --version 2>&1 || python --version 2>&1', {
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'ignore'],
-        timeout: 3000,
-      }).trim();
-      const verMatch = pyVersionOut.match(/Python\s+([\d.]+)/i);
-      if (verMatch) {
-        ver = verMatch[1];
-        try {
-          pyBin = execSync(isWin ? 'where python 2>&1' : 'which python3 2>&1 || which python 2>&1', { encoding: 'utf8', timeout: 2000 }).trim().split('\n')[0];
-        } catch (e) {}
-      }
     }
 
     if (ver) {
@@ -908,7 +943,7 @@ function checkBaseRequirements(): RequirementsReport {
       const majorMinor = ver.split('.').slice(0, 2).map(Number);
       if (majorMinor[0] === 3 && majorMinor[1] >= 10 && majorMinor[1] <= 12) {
         pythonStatus.status = 'ready';
-        pythonStatus.diagnosticDetails = `${pyBin.includes('runtime') ? 'Isolated' : 'System'} Python ${ver} detected. Fully optimized.`;
+        pythonStatus.diagnosticDetails = `Portable Python ${ver} verified at ${pyBin}.`;
       } else if (majorMinor[0] === 3 && majorMinor[1] >= 8 && majorMinor[1] < 10) {
         pythonStatus.status = 'ready';
         pythonStatus.diagnosticDetails = `Python ${ver} is functional, but 3.10 is recommended for better performance.`;
@@ -917,13 +952,13 @@ function checkBaseRequirements(): RequirementsReport {
         pythonStatus.error = `Python ${ver} detected. 3.10.x is the recommended "Gold Standard" for WhisperX stability.`;
       }
 
-      // Ensure ensurepip is available if using system Python (required for venv)
-      if (pythonStatus.status === 'ready' && !pyBin.includes('runtime')) {
+      // The bundled interpreter must be able to create the application venv.
+      if (pythonStatus.status === 'ready') {
         try {
           execSync(`"${pyBin}" -c "import ensurepip"`, { stdio: 'ignore' });
         } catch (e) {
           pythonStatus.status = 'broken';
-          pythonStatus.error = `Python ${ver} is installed but the 'ensurepip' module is missing (common on Ubuntu/Debian without python3-venv). Click Install/Repair to deploy portable Python.`;
+          pythonStatus.error = `Portable Python ${ver} is missing ensurepip and cannot create the private application environment.`;
         }
       }
     } else {
@@ -951,7 +986,7 @@ function checkBaseRequirements(): RequirementsReport {
   const venvPythonPath = getVenvPython();
   const venvConfigPath = path.join(VENV_DIR, 'pyvenv.cfg');
   
-  if ((pythonStatus.status === 'ready' || pythonStatus.installedVersion) && fs.existsSync(venvPythonPath) && fs.existsSync(venvConfigPath)) {
+  if (pythonStatus.status === 'ready' && fs.existsSync(venvPythonPath) && fs.existsSync(venvConfigPath)) {
     try {
       const torchOut = execSync(`"${venvPythonPath}" -c "import torch; print(torch.__version__, torch.cuda.is_available())" 2>&1`, {
         encoding: 'utf8',
@@ -964,7 +999,7 @@ function checkBaseRequirements(): RequirementsReport {
         const cudaOk = parts[1] === 'True';
         torchInstalled = true;
         pytorchStatus.installedVersion = torchVer;
-        pytorchStatus.availableVersion = '2.3.1';
+        pytorchStatus.availableVersion = TORCH_VERSION;
         pytorchStatus.installLocation = 'Python site-packages';
 
         if (hw.hasNvidiaGpu && !cudaOk) {
@@ -980,13 +1015,13 @@ function checkBaseRequirements(): RequirementsReport {
 
   if (!torchInstalled) {
     // Check app-managed venv or tools folder
-    const appVenvTorch = path.join(process.cwd(), '.venv');
+    const appVenvTorch = VENV_DIR;
     if (fs.existsSync(appVenvTorch)) {
       pytorchStatus.installLocation = appVenvTorch;
     }
     pytorchStatus.status = 'missing';
-    pytorchStatus.availableVersion = hw.hasNvidiaGpu ? '2.3.1+cu121' : '2.3.1+cpu';
-    pytorchStatus.error = `PyTorch is not installed. Recommended build: ${hw.recommendedPyTorchFlavor === 'cuda' ? 'GPU (CUDA 12.1)' : 'CPU-compatible'}.`;
+    pytorchStatus.availableVersion = hw.hasNvidiaGpu ? `${TORCH_VERSION}+cu128` : `${TORCH_VERSION}+cpu`;
+    pytorchStatus.error = `PyTorch is not installed. Recommended build: ${hw.recommendedPyTorchFlavor === 'cuda' ? 'GPU (CUDA 12.8)' : 'CPU-compatible'}.`;
   }
   components.push(pytorchStatus);
 
@@ -1001,7 +1036,7 @@ function checkBaseRequirements(): RequirementsReport {
   };
 
   let torchaudioInstalled = false;
-  if ((pythonStatus.status === 'ready' || pythonStatus.installedVersion) && fs.existsSync(venvPythonPath) && fs.existsSync(venvConfigPath)) {
+  if (pythonStatus.status === 'ready' && fs.existsSync(venvPythonPath) && fs.existsSync(venvConfigPath)) {
     try {
       const taOut = execSync(`"${venvPythonPath}" -c "import torchaudio; print(torchaudio.__version__)" 2>&1`, {
         encoding: 'utf8',
@@ -1011,7 +1046,7 @@ function checkBaseRequirements(): RequirementsReport {
       if (taOut && !taOut.includes('ModuleNotFoundError') && !taOut.includes('Traceback')) {
         torchaudioInstalled = true;
         torchaudioStatus.installedVersion = taOut;
-        torchaudioStatus.availableVersion = '2.3.1';
+        torchaudioStatus.availableVersion = TORCHAUDIO_VERSION;
         torchaudioStatus.status = 'ready';
         torchaudioStatus.diagnosticDetails = `Torchaudio ${taOut} verified and ready.`;
       }
@@ -1019,7 +1054,7 @@ function checkBaseRequirements(): RequirementsReport {
   }
   if (!torchaudioInstalled) {
     torchaudioStatus.status = 'missing';
-    torchaudioStatus.availableVersion = '2.3.1';
+    torchaudioStatus.availableVersion = TORCHAUDIO_VERSION;
     torchaudioStatus.error = 'Torchaudio package not found in active Python environment.';
   }
   components.push(torchaudioStatus);
@@ -1035,9 +1070,11 @@ function checkBaseRequirements(): RequirementsReport {
   };
 
   let wxInstalled = false;
-  if ((pythonStatus.status === 'ready' || pythonStatus.installedVersion) && fs.existsSync(venvPythonPath) && fs.existsSync(venvConfigPath)) {
+  if (pythonStatus.status === 'ready' && fs.existsSync(venvPythonPath) && fs.existsSync(venvConfigPath)) {
     try {
-      const wxOut = execSync(`"${venvPythonPath}" -c "import whisperx; print(whisperx.__version__)" 2>&1`, {
+      // WhisperX 3.7.4 does not expose __version__. Read the installed package
+      // metadata instead so a successful installation is never reported as missing.
+      const wxOut = execSync(`"${venvPythonPath}" -c "import whisperx; from importlib.metadata import version; print(version('whisperx'))" 2>&1`, {
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'ignore'],
         timeout: 4000,
@@ -1045,27 +1082,15 @@ function checkBaseRequirements(): RequirementsReport {
       if (wxOut && !wxOut.includes('ModuleNotFoundError') && !wxOut.includes('Traceback')) {
         wxInstalled = true;
         whisperxStatus.installedVersion = wxOut;
-        whisperxStatus.availableVersion = '3.1.2';
+        whisperxStatus.availableVersion = WHISPERX_VERSION;
         whisperxStatus.status = 'ready';
         whisperxStatus.diagnosticDetails = `WhisperX ${wxOut} verified. Note: Whisper model weights are managed separately.`;
       }
     } catch (e) {}
   }
   if (!wxInstalled) {
-    // Check if whisper CLI is available as fallback
-    try {
-      const whisperCliOut = execSync('whisper --help 2>&1', { encoding: 'utf8', timeout: 2000 });
-      if (whisperCliOut.includes('usage: whisper')) {
-        whisperxStatus.installedVersion = 'CLI Whisper';
-        whisperxStatus.status = 'ready';
-        whisperxStatus.diagnosticDetails = 'Standard Whisper CLI available.';
-        wxInstalled = true;
-      }
-    } catch (e) {}
-  }
-  if (!wxInstalled) {
     whisperxStatus.status = 'missing';
-    whisperxStatus.availableVersion = '3.1.2';
+    whisperxStatus.availableVersion = WHISPERX_VERSION;
     whisperxStatus.error = 'WhisperX application package is not installed. Click Install / Repair to set up.';
   }
   components.push(whisperxStatus);
@@ -1077,27 +1102,26 @@ function checkBaseRequirements(): RequirementsReport {
     purpose: 'Local audio inspection, PCM decoding, audio merging, AAC-LC re-encoding, and M4B compilation.',
     classification: 'required',
     status: 'missing',
-    isAppManaged: false,
+    isAppManaged: true,
   };
 
   try {
-    const ffOut = execSync('ffmpeg -version', { encoding: 'utf8', timeout: 3000 });
-    const ffMatch = ffOut.match(/ffmpeg version\s+([^\s]+)/i);
-    let binPath = 'ffmpeg';
-    try {
-      binPath = execSync('which ffmpeg 2>&1 || where ffmpeg 2>&1', { encoding: 'utf8', timeout: 2000 }).trim().split('\n')[0];
-    } catch (e) {}
+    const ffOut = getManagedBinaryVersion(MANAGED_FFMPEG_PATH);
+    const ffMatch = ffOut?.match(/ffmpeg version\s+([^\s]+)/i);
 
     if (ffMatch) {
       ffmpegStatus.installedVersion = ffMatch[1];
       ffmpegStatus.availableVersion = '6.1+';
-      ffmpegStatus.installLocation = binPath;
+      ffmpegStatus.installLocation = MANAGED_FFMPEG_PATH;
       ffmpegStatus.status = 'ready';
-      ffmpegStatus.diagnosticDetails = `FFmpeg binary executable and responsive (${ffMatch[1]}).`;
+      ffmpegStatus.diagnosticDetails = `Application-managed FFmpeg is executable (${ffMatch[1]}).`;
+    } else {
+      throw new Error('Application-managed ffmpeg.exe was not found or could not be executed.');
     }
   } catch (e: any) {
     ffmpegStatus.status = 'missing';
-    ffmpegStatus.error = 'FFmpeg binary not found in PATH or not executable.';
+    ffmpegStatus.installLocation = MANAGED_FFMPEG_PATH;
+    ffmpegStatus.error = 'FFmpeg is not installed in runtime/bin. Click Install / Repair to download it for this application.';
   }
   components.push(ffmpegStatus);
 
@@ -1108,27 +1132,26 @@ function checkBaseRequirements(): RequirementsReport {
     purpose: 'Audio metadata, duration probing, stream-copy compatibility analysis, and container validation.',
     classification: 'required',
     status: 'missing',
-    isAppManaged: false,
+    isAppManaged: true,
   };
 
   try {
-    const ffpOut = execSync('ffprobe -version', { encoding: 'utf8', timeout: 3000 });
-    const ffpMatch = ffpOut.match(/ffprobe version\s+([^\s]+)/i);
-    let binPath = 'ffprobe';
-    try {
-      binPath = execSync('which ffprobe 2>&1 || where ffprobe 2>&1', { encoding: 'utf8', timeout: 2000 }).trim().split('\n')[0];
-    } catch (e) {}
+    const ffpOut = getManagedBinaryVersion(MANAGED_FFPROBE_PATH);
+    const ffpMatch = ffpOut?.match(/ffprobe version\s+([^\s]+)/i);
 
     if (ffpMatch) {
       ffprobeStatus.installedVersion = ffpMatch[1];
       ffprobeStatus.availableVersion = '6.1+';
-      ffprobeStatus.installLocation = binPath;
+      ffprobeStatus.installLocation = MANAGED_FFPROBE_PATH;
       ffprobeStatus.status = 'ready';
-      ffprobeStatus.diagnosticDetails = `FFprobe stream inspector operational (${ffpMatch[1]}).`;
+      ffprobeStatus.diagnosticDetails = `Application-managed FFprobe is executable (${ffpMatch[1]}).`;
+    } else {
+      throw new Error('Application-managed ffprobe.exe was not found or could not be executed.');
     }
   } catch (e: any) {
     ffprobeStatus.status = 'missing';
-    ffprobeStatus.error = 'FFprobe binary not found in PATH or not executable.';
+    ffprobeStatus.installLocation = MANAGED_FFPROBE_PATH;
+    ffprobeStatus.error = 'FFprobe is not installed in runtime/bin. Click Install / Repair to download it for this application.';
   }
   components.push(ffprobeStatus);
 
@@ -1224,6 +1247,15 @@ app.get('/api/requirements/install-progress', (req, res) => {
   res.json(activeInstallProgress);
 });
 
+// The in-dialog log stays compact; this download contains the full installer
+// transcript, including pip stdout/stderr and the final exception.
+app.get('/api/requirements/diagnostic-log', (req, res) => {
+  if (!fs.existsSync(INSTALL_DIAGNOSTIC_LOG)) {
+    return res.status(404).json({ error: 'No installation diagnostic log has been created yet.' });
+  }
+  res.download(INSTALL_DIAGNOSTIC_LOG, 'audiobook-workbench-install-repair.log');
+});
+
 // 3. Install / Repair Required Base Components
 app.post('/api/requirements/install-repair', async (req, res) => {
   if (activeInstallProgress.isActive) {
@@ -1255,6 +1287,12 @@ app.post('/api/requirements/install-repair', async (req, res) => {
     ],
     canCancel: true,
   };
+  try {
+    fs.mkdirSync(path.dirname(INSTALL_DIAGNOSTIC_LOG), { recursive: true });
+    fs.appendFileSync(INSTALL_DIAGNOSTIC_LOG, `\n========== Install / Repair started ${new Date().toISOString()} ==========\n`, 'utf8');
+  } catch (error) {
+    console.error('Failed to initialize installation diagnostic log:', error);
+  }
 
   res.json({
     status: 'started',
@@ -1267,6 +1305,8 @@ app.post('/api/requirements/install-repair', async (req, res) => {
     try {
       const stepWeight = 85 / Math.max(1, componentsToFix.length);
       let currentProgress = 10;
+      let pythonEnvironmentConfigured = false;
+      let mediaBinariesConfigured = false;
 
       for (let i = 0; i < componentsToFix.length; i++) {
         if (!activeInstallProgress.isActive || activeInstallProgress.phase === 'cancelled') {
@@ -1297,8 +1337,7 @@ app.post('/api/requirements/install-repair', async (req, res) => {
           }
         } else if (comp.id === 'python') {
           activeInstallProgress.currentActivity = 'Deploying Isolated Python Runtime...';
-          activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] No system Python 3.10-3.12 detected.`);
-          activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Downloading isolated Python 3.12.7 distribution...`);
+          activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Downloading the application-managed Python 3.10.11 runtime...`);
 
           try {
             if (!fs.existsSync(RUNTIME_DIR)) fs.mkdirSync(RUNTIME_DIR, { recursive: true });
@@ -1328,90 +1367,87 @@ app.post('/api/requirements/install-repair', async (req, res) => {
             throw err;
           }
         } else if (comp.id === 'pytorch' || comp.id === 'torchaudio' || comp.id === 'whisperx') {
+          if (pythonEnvironmentConfigured) {
+            activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Private transcription runtime already configured during this repair.`);
+            currentProgress += stepWeight;
+            activeInstallProgress.overallProgress = Math.min(95, Math.round(currentProgress));
+            continue;
+          }
+
           const hw = report.hardware;
-          const flavor = hw.recommendedPyTorchFlavor === 'cuda' ? 'GPU (CUDA 11.8)' : 'CPU-only';
+          const flavor = hw.recommendedPyTorchFlavor === 'cuda' ? 'GPU (CUDA 12.8)' : 'CPU-only';
           activeInstallProgress.currentActivity = `Configuring Private Transcription Runtime (${flavor})...`;
-          
-          try {
-             const logFn = (msg: string) => {
-                 // only keep last 50 logs to prevent memory leaks in the UI
-                 activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
-                 if (activeInstallProgress.logs.length > 50) activeInstallProgress.logs.shift();
-             };
 
-             // Create venv if it doesn't exist or is invalid
-             const venvPythonExec = getVenvPython();
-             const venvConfigPath = path.join(VENV_DIR, "pyvenv.cfg");
-             if (!fs.existsSync(VENV_DIR) || !fs.existsSync(venvPythonExec) || !fs.existsSync(venvConfigPath)) {
-                 logFn(`Creating isolated application runtime at ${VENV_DIR}...`);
-                 let pyExe = fs.existsSync(PORTABLE_PYTHON_EXE) ? PORTABLE_PYTHON_EXE : 'python';
-                 if (pyExe === 'python') {
-                     try {
-                      execSync('python --version');
-                    } catch (e) {
-                     try {
-                         execSync('python3 --version');
-                         pyExe = 'python3';
-                     } catch (e2) {
-                         try {
-                             execSync('py --version');
-                             pyExe = 'py';
-                         } catch (e3) {
-                             throw new Error("Could not find python, python3, or py on this system. Please install Python 3.10+.");
-                         }
-                     }
-                 }
-                 }
-                 await runSpawnCmd(pyExe, ['-m', 'venv', VENV_DIR], logFn);
-             }
-             
-             const finalPythonExec = getVenvPython();
-             const finalPipExec = getVenvPip();
-             
-             // 1. Upgrade pip first
-             logFn("Upgrading private pip instance...");
-             await runSpawnCmd(finalPythonExec, ['-m', 'pip', 'install', '--upgrade', 'pip'], logFn);
-
-             // 2. Base dependencies + PyTorch (CUDA 12.4 for modern Windows support)
-             const flavor = hw.recommendedPyTorchFlavor;
-             let torchArgs = ['install', 'torch', 'torchvision', 'torchaudio'];
-             if (flavor === 'cuda') {
-                 torchArgs.push('--index-url', 'https://download.pytorch.org/whl/cu124');
-             }
-             
-             logFn(`Installing PyTorch backend (${flavor})... This may take several minutes.`);
-             try {
-                await runSpawnCmd(finalPipExec, torchArgs, logFn);
-             } catch (err: any) {
-                logFn(`Warning: GPU-optimized install failed (likely version mismatch). Falling back to standard install...`);
-                await runSpawnCmd(finalPipExec, ['install', 'torch', 'torchvision', 'torchaudio'], logFn);
-             }
-             
-             // 3. WhisperX
-             logFn(`Installing WhisperX into private runtime...`);
-             try {
-                await runSpawnCmd(finalPipExec, ['install', 'whisperx'], logFn);
-             } catch (err: any) {
-                if (report.hardware.pythonVersion?.includes('3.14')) {
-                    logFn(`CRITICAL ERROR: WhisperX / ctranslate2 does not yet support Python 3.14.`);
-                    logFn(`ACTION REQUIRED: Please uninstall Python 3.14 and install Python 3.12 (64-bit) from python.org.`);
-                    throw new Error("Python 3.14 Incompatibility Detected. Please use Python 3.10, 3.11, or 3.12.");
-                }
-                throw err;
-             }
-             
-             activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Successfully configured private transcription engine.`);
-          } catch (err: any) {
-             activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Setup Error: ${err.message}`);
+          if (!fs.existsSync(PORTABLE_PYTHON_EXE)) {
+            throw new Error('Portable Python is unavailable. Install/Repair must finish the bundled Python runtime before setting up WhisperX.');
           }
+
+          const logFn = (msg: string) => {
+            appendInstallDiagnostic(msg);
+          };
+
+          const venvPythonExec = getVenvPython();
+          const venvConfigPath = path.join(VENV_DIR, 'pyvenv.cfg');
+          if (!fs.existsSync(VENV_DIR) || !fs.existsSync(venvPythonExec) || !fs.existsSync(venvConfigPath)) {
+            logFn(`Creating private application environment at ${VENV_DIR}...`);
+            await runSpawnCmd(PORTABLE_PYTHON_EXE, ['-m', 'venv', VENV_DIR], logFn);
+          }
+
+          const finalPythonExec = getVenvPython();
+          if (!fs.existsSync(finalPythonExec)) {
+            throw new Error(`Private Python environment was not created at ${finalPythonExec}.`);
+          }
+
+          logFn('Upgrading pip in the private application environment...');
+          await runSpawnCmd(finalPythonExec, ['-m', 'pip', 'install', '--upgrade', 'pip'], logFn);
+
+          const torchArgs = ['-m', 'pip', 'install', `torch==${TORCH_VERSION}`, `torchvision==${TORCHVISION_VERSION}`, `torchaudio==${TORCHAUDIO_VERSION}`];
+          if (hw.recommendedPyTorchFlavor === 'cuda') {
+            torchArgs.push('--index-url', 'https://download.pytorch.org/whl/cu128');
+          } else {
+            torchArgs.push('--index-url', 'https://download.pytorch.org/whl/cpu');
+          }
+          // PyTorch hosts its GPU/CPU wheels on a separate index, but ordinary
+          // Python dependencies (for example Jinja2 and flit_core) belong on
+          // PyPI. Without this fallback, pip can fail before Torch is installed.
+          torchArgs.push('--extra-index-url', 'https://pypi.org/simple');
+          logFn(`Installing PyTorch backend (${flavor}) into the private runtime... This may take several minutes.`);
+          await runSpawnCmd(finalPythonExec, torchArgs, logFn);
+
+          logFn(`Installing WhisperX ${WHISPERX_VERSION} into the private runtime...`);
+          await runSpawnCmd(finalPythonExec, ['-m', 'pip', 'install', `whisperx==${WHISPERX_VERSION}`], logFn);
+          ensureWhisperxVadCompatibility();
+
+          const verification = execFileSync(
+            finalPythonExec,
+            ['-c', 'import importlib.metadata, torch, torchaudio; print(torch.__version__); print(torchaudio.__version__); print(importlib.metadata.version("whisperx"))'],
+            { encoding: 'utf8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'] },
+          ).trim().split(/\r?\n/);
+          if (verification.length < 3) {
+            throw new Error('Private runtime verification returned incomplete package version information.');
+          }
+          if (!verification[0].startsWith(TORCH_VERSION) || !verification[1].startsWith(TORCHAUDIO_VERSION) || verification[2] !== WHISPERX_VERSION) {
+            throw new Error(`Private runtime installed unexpected versions: PyTorch ${verification[0]}, Torchaudio ${verification[1]}, WhisperX ${verification[2]}.`);
+          }
+
+          pythonEnvironmentConfigured = true;
+          logFn(`Verified private runtime: PyTorch ${verification[0]}, Torchaudio ${verification[1]}, WhisperX ${verification[2]}.`);
         } else if (comp.id === 'ffmpeg' || comp.id === 'ffprobe') {
-          activeInstallProgress.currentActivity = `Verifying ${comp.name}...`;
-          try {
-            const ver = execSync(`${comp.id} -version`, { encoding: 'utf8' }).split('\n')[0];
-            activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Verified ${comp.name}: ${ver}`);
-          } catch (e: any) {
-            activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Note: ${comp.name} should be installed in the system PATH or container.`);
+          if (mediaBinariesConfigured) {
+            activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Application-local FFmpeg and FFprobe were already configured during this repair.`);
+            currentProgress += stepWeight;
+            activeInstallProgress.overallProgress = Math.min(95, Math.round(currentProgress));
+            continue;
           }
+
+          activeInstallProgress.currentActivity = 'Installing application-local FFmpeg and FFprobe...';
+          const logFn = (message: string) => {
+            appendInstallDiagnostic(message);
+          };
+          await installManagedFfmpeg(logFn);
+          mediaBinariesConfigured = true;
+          logFn(`Verified application-local FFmpeg: ${getManagedBinaryVersion(MANAGED_FFMPEG_PATH)}.`);
+          logFn(`Verified application-local FFprobe: ${getManagedBinaryVersion(MANAGED_FFPROBE_PATH)}.`);
         }
 
         currentProgress += stepWeight;
@@ -1428,22 +1464,29 @@ app.post('/api/requirements/install-repair', async (req, res) => {
 
       const updatedReport = checkBaseRequirements();
       activeInstallProgress.overallProgress = 100;
-      activeInstallProgress.phase = 'completed';
       activeInstallProgress.canCancel = false;
-      activeInstallProgress.currentActivity = 'Installation and repair complete.';
 
       if (updatedReport.allReady) {
+        activeInstallProgress.isActive = false;
+        activeInstallProgress.phase = 'completed';
+        activeInstallProgress.currentActivity = 'Installation and repair complete.';
         activeInstallProgress.successMessage = 'All required base components have been successfully installed and verified.';
         activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] All required base components are ready. Speech models remain separately managed.`);
       } else {
         const remaining = updatedReport.components.filter(c => c.classification === 'required' && c.status !== 'ready');
-        activeInstallProgress.successMessage = `Installation finished. ${remaining.length} item(s) may require host system configuration (e.g. system PATH).`;
-        activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Post-check complete: ${remaining.length} items still need attention.`);
+        activeInstallProgress.isActive = false;
+        activeInstallProgress.phase = 'error';
+        activeInstallProgress.currentActivity = 'Installation did not pass verification.';
+        activeInstallProgress.error = `Verification failed: ${remaining.map(component => component.name).join(', ')} still need attention.`;
+        activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] ${activeInstallProgress.error}`);
       }
     } catch (err: any) {
+      activeInstallProgress.isActive = false;
+      activeInstallProgress.canCancel = false;
       activeInstallProgress.phase = 'error';
       activeInstallProgress.error = err.message || 'Installation error occurred.';
       activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] ERROR: ${err.message}`);
+      appendInstallDiagnostic(`ERROR: ${err.stack || err.message}`, false);
     }
   })();
 });
@@ -1555,8 +1598,9 @@ function probeAudioFile(filePath: string): {
 } {
   const ext = path.extname(filePath).toLowerCase().replace('.', '');
   try {
-    const out = execSync(
-      `ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate,channels,bit_rate:format=duration,format_name -of json "${filePath.replace(/"/g, '\\"')}"`,
+    const out = execFileSync(
+      MANAGED_FFPROBE_PATH,
+      ['-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=codec_name,sample_rate,channels,bit_rate:format=duration,format_name', '-of', 'json', filePath],
       {
         encoding: 'utf-8',
         timeout: 4000,
@@ -1733,18 +1777,16 @@ function scanLocalFolder(folderPath: string): FolderScanResult {
 // yt-dlp & FFmpeg Local Dependency Management
 // ----------------------------------------------------
 
-const TOOLS_DIR = path.join(process.cwd(), 'tools');
-if (!fs.existsSync(TOOLS_DIR)) {
-  try { fs.mkdirSync(TOOLS_DIR, { recursive: true }); } catch (e) {}
-}
-const LOCAL_YT_DLP_PATH = path.join(TOOLS_DIR, 'yt-dlp');
+const LOCAL_YT_DLP_PATH = path.join(RUNTIME_BIN_DIR, isWin ? 'yt-dlp.exe' : 'yt-dlp');
+const WINDOWS_YT_DLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
+const WINDOWS_YT_DLP_SHA256_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS';
 
 let isYtDlpInstalling = false;
 let ytDlpInstallError: string | null = null;
 
-function checkBinaryVersion(cmd: string): string | null {
+function checkBinaryVersion(executablePath: string, args: string[] = ['--version']): string | null {
   try {
-    const out = execSync(cmd, { encoding: 'utf-8', timeout: 3000, stdio: ['pipe', 'pipe', 'ignore'] });
+    const out = execFileSync(executablePath, args, { encoding: 'utf-8', timeout: 3000, stdio: ['pipe', 'pipe', 'ignore'] });
     const firstLine = out.trim().split('\n')[0];
     return firstLine.trim();
   } catch (e) {
@@ -1755,41 +1797,14 @@ function checkBinaryVersion(cmd: string): string | null {
 function getYtDlpStatus(): YtDlpStatusInfo {
   // Check local managed yt-dlp first
   let executablePath = LOCAL_YT_DLP_PATH;
-  let isSystemInstalled = false;
+  const isSystemInstalled = false;
   let version: string | undefined;
 
-  if (fs.existsSync(LOCAL_YT_DLP_PATH)) {
-    try {
-      const ver = execSync(`"${LOCAL_YT_DLP_PATH}" --version`, {
-        encoding: 'utf-8',
-        timeout: 3000,
-        stdio: ['pipe', 'pipe', 'ignore'],
-      }).trim();
-      if (ver) {
-        version = ver;
-      }
-    } catch (e) {}
-  }
-
-  // If local not available, check system
-  if (!version) {
-    try {
-      const sysVer = execSync('yt-dlp --version', {
-        encoding: 'utf-8',
-        timeout: 3000,
-        stdio: ['pipe', 'pipe', 'ignore'],
-      }).trim();
-      if (sysVer) {
-        version = sysVer;
-        executablePath = 'yt-dlp';
-        isSystemInstalled = true;
-      }
-    } catch (e) {}
-  }
+  version = checkBinaryVersion(LOCAL_YT_DLP_PATH);
 
   // Check FFmpeg and FFprobe
-  const ffmpegVerLine = checkBinaryVersion('ffmpeg -version');
-  const ffprobeVerLine = checkBinaryVersion('ffprobe -version');
+  const ffmpegVerLine = getManagedBinaryVersion(MANAGED_FFMPEG_PATH);
+  const ffprobeVerLine = getManagedBinaryVersion(MANAGED_FFPROBE_PATH);
   const ffmpegAvailable = Boolean(ffmpegVerLine);
   const ffprobeAvailable = Boolean(ffprobeVerLine);
 
@@ -1817,27 +1832,27 @@ function getYtDlpStatus(): YtDlpStatusInfo {
   };
 }
 
-function installLocalYtDlp(): YtDlpStatusInfo {
+async function installLocalYtDlp(): Promise<YtDlpStatusInfo> {
   isYtDlpInstalling = true;
   ytDlpInstallError = null;
 
   try {
-    if (!fs.existsSync(TOOLS_DIR)) {
-      fs.mkdirSync(TOOLS_DIR, { recursive: true });
+    if (!isWin) throw new Error('Automatic yt-dlp setup is currently implemented for Windows only.');
+    fs.mkdirSync(RUNTIME_BIN_DIR, { recursive: true });
+    const downloadPath = `${LOCAL_YT_DLP_PATH}.downloading`;
+    const checksumPath = path.join(RUNTIME_BIN_DIR, 'yt-dlp-sha256sums.txt');
+    try {
+      await downloadFile(WINDOWS_YT_DLP_URL, downloadPath);
+      await downloadFile(WINDOWS_YT_DLP_SHA256_URL, checksumPath);
+      const expected = fs.readFileSync(checksumPath, 'utf8').split(/\r?\n/).find(line => /\byt-dlp\.exe\b/i.test(line))?.match(/\b[a-fA-F0-9]{64}\b/)?.[0]?.toLowerCase();
+      const actual = createHash('sha256').update(fs.readFileSync(downloadPath)).digest('hex');
+      if (!expected || expected !== actual) throw new Error('yt-dlp checksum verification failed. The download was not installed.');
+      fs.copyFileSync(downloadPath, LOCAL_YT_DLP_PATH);
+    } finally {
+      try { fs.rmSync(downloadPath, { force: true }); } catch {}
+      try { fs.rmSync(checksumPath, { force: true }); } catch {}
     }
-
-    // Download standalone binary from official release via curl or wget
-    execSync(
-      `curl -sL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o "${LOCAL_YT_DLP_PATH}" && chmod 755 "${LOCAL_YT_DLP_PATH}"`,
-      { encoding: 'utf-8', timeout: 30000 }
-    );
-
-    // Verify
-    const ver = execSync(`"${LOCAL_YT_DLP_PATH}" --version`, {
-      encoding: 'utf-8',
-      timeout: 5000,
-      stdio: ['pipe', 'pipe', 'ignore'],
-    }).trim();
+    if (!checkBinaryVersion(LOCAL_YT_DLP_PATH)) throw new Error('Downloaded yt-dlp.exe could not be executed from runtime/bin.');
 
     isYtDlpInstalling = false;
     return getYtDlpStatus();
@@ -1862,8 +1877,7 @@ function updateLocalYtDlp(): YtDlpStatusInfo {
         stdio: ['pipe', 'pipe', 'ignore'],
       });
     } else {
-      // Re-download latest
-      installLocalYtDlp();
+      throw new Error('The application-local yt-dlp executable is missing. Use Install yt-dlp instead.');
     }
     return getYtDlpStatus();
   } catch (err: any) {
@@ -1931,7 +1945,7 @@ app.post('/api/models/refresh', (req, res) => {
 // Get local models directory info and disk usage
 app.get('/api/models/info', (req, res) => {
   refreshModelsFromDisk();
-  const modelsDir = path.join(process.cwd(), 'models');
+  const modelsDir = appPath('models');
   let totalDiskBytes = 0;
   const installedList: any[] = [];
 
@@ -1959,7 +1973,87 @@ app.get('/api/models/info', (req, res) => {
   });
 });
 
-// Install / Download model (Real streaming download of official model weights)
+// Download a Faster-Whisper model snapshot into the portable app cache. This is
+// separate from Runtime Repair because model weights are installed only when a
+// user explicitly chooses one in Step 1.
+app.post('/api/models/:id/prepare', (req, res) => {
+  const modelId = req.params.id;
+  const model = speechModels.find(m => m.id === modelId);
+  if (!model) return res.status(404).json({ error: 'Model not found' });
+
+  const hw = getHardwareInfo();
+  if (model.requiresGpu && hw.mode === 'cpu') {
+    return res.status(400).json({ error: 'This model requires an NVIDIA GPU.' });
+  }
+  const repository = FASTER_WHISPER_REPOSITORIES[modelId];
+  if (!repository) return res.status(400).json({ error: `No Faster-Whisper repository is configured for '${modelId}'.` });
+  const venvPython = getVenvPython();
+  if (!fs.existsSync(venvPython)) {
+    return res.status(400).json({ error: 'WhisperX runtime is not installed. Run Install / Repair first.' });
+  }
+  if (activeFasterWhisperInstalls.has(modelId)) {
+    return res.status(409).json({ error: 'This model download is already in progress.' });
+  }
+
+  const force = req.query.force === 'true';
+  const cachePath = getModelInstallationStatus(modelId).modelDirPath;
+  if (force && fs.existsSync(cachePath)) {
+    fs.rmSync(cachePath, { recursive: true, force: true });
+  } else if (!force && getModelInstallationStatus(modelId).isInstalled) {
+    return res.json({ status: 'already_installed', model });
+  }
+
+  fs.mkdirSync(WHISPERX_MODEL_CACHE_DIR, { recursive: true });
+  const pythonScript = [
+    'from huggingface_hub import snapshot_download',
+    `snapshot_download(repo_id=${JSON.stringify(repository)}, cache_dir=${JSON.stringify(WHISPERX_MODEL_CACHE_DIR)})`,
+    "print('Model download complete.')",
+  ].join('\n');
+  const logPath = appPath('logs', `model-${modelId}-download.log`);
+  const writeLog = (text: string) => {
+    try { fs.appendFileSync(logPath, text, 'utf8'); } catch {}
+  };
+
+  model.isDownloading = true;
+  model.downloadProgress = 0;
+  model.downloadSpeed = 'Preparing download...';
+  model.downloadError = undefined;
+  writeLog(`\n========== ${new Date().toISOString()} ${force ? 'Reinstall' : 'Install'} ${model.name} ==========\n`);
+  const child = spawn(venvPython, ['-c', pythonScript], { shell: false, windowsHide: true });
+  activeFasterWhisperInstalls.set(modelId, child);
+
+  const receiveOutput = (data: Buffer) => {
+    const text = data.toString();
+    writeLog(text);
+    const lastLine = text.trim().split(/\r?\n/).filter(Boolean).pop();
+    if (lastLine) model.downloadSpeed = lastLine.slice(0, 120);
+  };
+  child.stdout.on('data', receiveOutput);
+  child.stderr.on('data', receiveOutput);
+  child.on('error', (error) => {
+    model.downloadError = `Could not start model download: ${error.message}`;
+    model.isDownloading = false;
+    activeFasterWhisperInstalls.delete(modelId);
+    writeLog(`ERROR: ${model.downloadError}\n`);
+  });
+  child.on('close', (code) => {
+    activeFasterWhisperInstalls.delete(modelId);
+    model.isDownloading = false;
+    model.downloadProgress = 0;
+    if (code === 0) {
+      refreshModelsFromDisk();
+      model.downloadSpeed = undefined;
+    } else {
+      model.downloadError = `Model download failed with exit code ${code ?? 'unknown'}. See logs\\model-${modelId}-download.log.`;
+      writeLog(`ERROR: ${model.downloadError}\n`);
+    }
+  });
+
+  res.json({ status: 'started', model });
+});
+
+// Legacy OpenAI .pt downloader retained temporarily for API compatibility.
+// Step 1 uses /prepare above, so it only installs weights WhisperX can use.
 app.post('/api/models/:id/install', (req, res) => {
   const modelId = req.params.id;
   const model = speechModels.find(m => m.id === modelId);
@@ -1996,7 +2090,7 @@ app.post('/api/models/:id/install', (req, res) => {
     return res.status(400).json({ error: `No download source configured for model '${modelId}'` });
   }
 
-  const targetDir = path.join(process.cwd(), 'models', modelId);
+  const targetDir = appPath('models', modelId);
   if (!fs.existsSync(targetDir)) {
     try {
       fs.mkdirSync(targetDir, { recursive: true });
@@ -2117,22 +2211,6 @@ app.post('/api/models/:id/install', (req, res) => {
         }
       }
 
-      // Also link to ~/.cache/whisper/<source.fileName> for local Python Whisper interoperability
-      try {
-        const homeCacheDir = path.join(os.homedir(), '.cache', 'whisper');
-        if (!fs.existsSync(homeCacheDir)) {
-          fs.mkdirSync(homeCacheDir, { recursive: true });
-        }
-        const homeTarget = path.join(homeCacheDir, source.fileName);
-        if (!fs.existsSync(homeTarget)) {
-          try {
-            fs.linkSync(finalFilePath, homeTarget);
-          } catch {
-            // Hard link failed (cross-device), ignore
-          }
-        }
-      } catch (e) {}
-
       // Write descriptive model_info.json in the folder
       const infoPath = path.join(targetDir, 'model_info.json');
       try {
@@ -2210,8 +2288,13 @@ app.post('/api/models/:id/cancel', (req, res) => {
     } catch (e) {}
     activeModelDownloads.delete(modelId);
   }
+  const activeFasterWhisper = activeFasterWhisperInstalls.get(modelId);
+  if (activeFasterWhisper) {
+    try { activeFasterWhisper.kill(); } catch {}
+    activeFasterWhisperInstalls.delete(modelId);
+  }
 
-  const targetDir = path.join(process.cwd(), 'models', modelId);
+  const targetDir = appPath('models', modelId);
   const source = WHISPER_MODEL_SOURCES[modelId];
   if (source && fs.existsSync(targetDir)) {
     const tempFile = path.join(targetDir, `${source.fileName}.downloading`);
@@ -2243,6 +2326,11 @@ app.post('/api/models/:id/uninstall', (req, res) => {
     } catch (e) {}
     activeModelDownloads.delete(modelId);
   }
+  const activeFasterWhisper = activeFasterWhisperInstalls.get(modelId);
+  if (activeFasterWhisper) {
+    try { activeFasterWhisper.kill(); } catch {}
+    activeFasterWhisperInstalls.delete(modelId);
+  }
 
   model.isDownloading = false;
   model.downloadProgress = 0;
@@ -2253,25 +2341,14 @@ app.post('/api/models/:id/uninstall', (req, res) => {
   model.sizeOnDiskLabel = '0 B';
   model.installedFile = undefined;
 
-  // Remove only the downloaded model files in models/<modelId>
-  const targetDir = path.join(process.cwd(), 'models', modelId);
+  // Remove only this app's Faster-Whisper snapshot. User audio and profile
+  // caches are deliberately outside the scope of portable-app cleanup.
+  const targetDir = getModelInstallationStatus(modelId).modelDirPath;
   if (fs.existsSync(targetDir)) {
     try {
       fs.rmSync(targetDir, { recursive: true, force: true });
     } catch (e) {}
   }
-
-  // Also remove from ~/.cache/whisper if present
-  const source = WHISPER_MODEL_SOURCES[modelId];
-  if (source) {
-    const homeCacheFile = path.join(os.homedir(), '.cache', 'whisper', source.fileName);
-    if (fs.existsSync(homeCacheFile)) {
-      try {
-        fs.unlinkSync(homeCacheFile);
-      } catch (e) {}
-    }
-  }
-
   refreshModelsFromDisk();
 
   res.json({ status: 'uninstalled', model });
@@ -2296,14 +2373,14 @@ app.post('/api/system/scan-folder', (req, res) => {
 app.get('/api/system/output-folder', (req, res) => {
   res.json({
     outputFolder: currentOutputFolder,
-    defaultOutputFolder: path.join(process.cwd(), 'output'),
+    defaultOutputFolder: appPath('output'),
     isWritable: fs.existsSync(currentOutputFolder),
   });
 });
 
 app.post('/api/system/output-folder', (req, res) => {
   const { outputFolder } = req.body;
-  const target = outputFolder ? path.resolve(outputFolder) : path.join(process.cwd(), 'output');
+  const target = outputFolder ? path.resolve(outputFolder) : appPath('output');
   try {
     if (!fs.existsSync(target)) {
       fs.mkdirSync(target, { recursive: true });
@@ -2311,7 +2388,7 @@ app.post('/api/system/output-folder', (req, res) => {
     currentOutputFolder = target;
     res.json({
       outputFolder: currentOutputFolder,
-      defaultOutputFolder: path.join(process.cwd(), 'output'),
+      defaultOutputFolder: appPath('output'),
       isWritable: true,
     });
   } catch (err: any) {
@@ -2333,9 +2410,9 @@ app.get('/api/tools/yt-dlp/status', (req, res) => {
 });
 
 // Install local yt-dlp binary
-app.post('/api/tools/yt-dlp/install', (req, res) => {
+app.post('/api/tools/yt-dlp/install', async (req, res) => {
   try {
-    const status = installLocalYtDlp();
+    const status = await installLocalYtDlp();
     if (status.status === 'error') {
       return res.status(500).json({ error: status.error, status });
     }
@@ -2464,7 +2541,7 @@ app.post('/api/youtube/download', (req, res) => {
   }
 
   // Setup download output directory
-  const importDir = path.join(process.cwd(), 'output', 'imports', 'youtube');
+  const importDir = appPath('output', 'imports', 'youtube');
   if (!fs.existsSync(importDir)) {
     try { fs.mkdirSync(importDir, { recursive: true }); } catch (e) {}
   }
@@ -2704,7 +2781,7 @@ app.delete('/api/jobs/:id', (req, res) => {
   }
 
   // Also cleanup audiobooks/[jobId] if it exists
-  const jobProcessDir = path.join(process.cwd(), 'audiobooks', job.id);
+  const jobProcessDir = appPath('audiobooks', job.id);
   if (fs.existsSync(jobProcessDir)) {
     try {
       fs.rmSync(jobProcessDir, { recursive: true, force: true });
@@ -2971,6 +3048,7 @@ const handleStep1Process = async (req: any, res: any) => {
   const mergedFilePath = path.join(intermediatesDir, `${job.id}_merged.mp3`);
   const concatPath = path.join(intermediatesDir, `${job.id}_concat.txt`);
   const concatDir = path.dirname(concatPath);
+  const existingMergedFile = fs.existsSync(mergedFilePath);
   
   let concatData = '';
   const missingFiles: string[] = [];
@@ -2983,9 +3061,9 @@ const handleStep1Process = async (req: any, res: any) => {
           part.name.startsWith(job.sourceFolderPath + '/') && 
           !path.isAbsolute(job.sourceFolderPath)
       ) {
-          p = path.resolve(process.cwd(), part.name);
+          p = path.resolve(APP_ROOT, part.name);
       } else {
-          p = path.resolve(process.cwd(), job.sourceFolderPath || '', part.name);
+          p = path.resolve(APP_ROOT, job.sourceFolderPath || '', part.name);
       }
       
       // Validate file existence
@@ -2998,7 +3076,11 @@ const handleStep1Process = async (req: any, res: any) => {
       concatData += `file '${pPosix.replace(/'/g, "'\\''")}'\n`;
   }
   
-  if (missingFiles.length > 0) {
+  // The imported source copies are intentionally removed after a successful
+  // merge. If transcription later fails, retrying must reuse that verified
+  // merged file instead of demanding temporary files that no longer exist.
+  const reusingMergedAudio = existingMergedFile && missingFiles.length > 0;
+  if (missingFiles.length > 0 && !reusingMergedAudio) {
       const err = new Error(`Missing source audio files:\n${missingFiles.join('\n')}`);
       console.error(err.message);
       logStep1(`ERROR: ${err.message}`);
@@ -3007,9 +3089,12 @@ const handleStep1Process = async (req: any, res: any) => {
       return;
   }
   
-  fs.writeFileSync(concatPath, concatData);
+  if (reusingMergedAudio) {
+      logStep1(`Reusing the existing merged audio after an earlier incomplete transcription. Temporary input copies were already cleaned up.`);
+  } else {
+    fs.writeFileSync(concatPath, concatData);
 
-  try {
+    try {
       const args = [
           '-y',
           '-f', 'concat',
@@ -3023,20 +3108,21 @@ const handleStep1Process = async (req: any, res: any) => {
       }
       args.push(path.basename(mergedFilePath));
       
-      await execFileAsync('ffmpeg', args, { cwd: concatDir });
-  } catch (err: any) {
+      await execFileAsync(MANAGED_FFMPEG_PATH, args, { cwd: concatDir });
+    } catch (err: any) {
       console.error("FFmpeg merge error:", err);
       logStep1(`FFmpeg Error: ${err.message}`);
       activeStep1ProgressState.isActive = false;
       activeStep1ProgressState.error = `FFmpeg Merge Error: ${err.message}`;
       return;
+    }
   }
 
   let realDuration = job.totalDurationSeconds;
   let realSizeBytes = job.totalSizeBytes;
   if (fs.existsSync(mergedFilePath)) {
       try {
-          const { stdout: probeOut } = await execAsync(`ffprobe -v error -show_entries format=duration,size -of json "${mergedFilePath}"`);
+          const { stdout: probeOut } = await execFileAsync(MANAGED_FFPROBE_PATH, ['-v', 'error', '-show_entries', 'format=duration,size', '-of', 'json', mergedFilePath]);
           const probeData = JSON.parse(probeOut.toString());
           if (probeData?.format?.duration) realDuration = parseFloat(probeData.format.duration);
           if (probeData?.format?.size) realSizeBytes = parseInt(probeData.format.size, 10);
@@ -3057,10 +3143,10 @@ const handleStep1Process = async (req: any, res: any) => {
   };
 
   // CLEANUP: Purge the original input files from the internal inputs folder to save disk space
-  if (job.sourceFolderPath && job.sourceFolderPath.includes('inputs')) {
+  if (!reusingMergedAudio && job.sourceFolderPath && job.sourceFolderPath.includes('inputs')) {
       logStep1(`Cleaning up temporary input files from workspace...`);
       for (const part of job.parts) {
-          const p = path.resolve(process.cwd(), job.sourceFolderPath, part.name);
+          const p = path.resolve(APP_ROOT, job.sourceFolderPath, part.name);
           if (fs.existsSync(p)) {
               try { fs.unlinkSync(p); } catch(e) {}
           }
@@ -3068,13 +3154,13 @@ const handleStep1Process = async (req: any, res: any) => {
       logStep1(`Cleared ${job.parts.length} source files to free disk space.`);
   }
 
-  if (mergeMethod === 'quick') {
+  if (!reusingMergedAudio && mergeMethod === 'quick') {
     job.logs.push({
       timestamp: now(),
       level: 'WARNING',
       message: `Audio Merge (Quick Merge): Concatenated ${job.parts.length} MP3 files directly to ${mergedFilePath}`,
     });
-  } else {
+  } else if (!reusingMergedAudio) {
     job.logs.push({
       timestamp: now(),
       level: 'INFO',
@@ -3090,14 +3176,10 @@ const handleStep1Process = async (req: any, res: any) => {
   activeStep1ProgressState.currentTask = `Neural speech recognition running on ${hw.mode === 'gpu' ? 'NVIDIA GPU (CUDA)' : 'CPU'}...`;
   logStep1(`Initialized Whisper model: ${model.name} (${model.id})`);
 
-  job.transcription = {
-    model: model.name,
-    profile: model.id,
-    language: 'en',
-    segmentsCount: Math.round(job.totalDurationSeconds / 8),
-    wordsCount: Math.round(job.totalDurationSeconds * 2.4),
-    completedAt: now(),
-  };
+  // Do not create estimated transcript statistics. A prior demo implementation
+  // filled these values before WhisperX had actually succeeded, which made a
+  // failed run look partially complete. They are set from real JSON below.
+  delete job.transcription;
 
   job.logs.push({
     timestamp: now(),
@@ -3140,6 +3222,7 @@ const handleStep1Process = async (req: any, res: any) => {
        "--model", model.id,
        "--language", "en",
        ...deviceFlag,
+       "--model_dir", WHISPERX_MODEL_CACHE_DIR,
        "--output_dir", intermediatesDir,
        "--output_format", "json"
     ];
@@ -3147,99 +3230,98 @@ const handleStep1Process = async (req: any, res: any) => {
     logStep1(`Running: ${venvPython} ${whisperArgs.join(' ')}`);
     
     // Execute the local WhisperX via the private runtime asynchronously
-    await execFileAsync(venvPython, whisperArgs);
+    ensureWhisperxVadCompatibility();
+    // Keep every runtime cache alongside the portable application instead of
+    // writing into the Windows account profile. Silero VAD uses TORCH_HOME on
+    // its first run and Matplotlib otherwise creates a font cache in the user
+    // profile; both must remain movable with this folder.
+    fs.mkdirSync(TORCH_CACHE_DIR, { recursive: true });
+    fs.mkdirSync(MATPLOTLIB_CACHE_DIR, { recursive: true });
+    await execFileAsync(venvPython, whisperArgs, {
+      env: {
+        ...process.env,
+        TORCH_HOME: TORCH_CACHE_DIR,
+        MPLCONFIGDIR: MATPLOTLIB_CACHE_DIR,
+      },
+    });
     
     const parsedName = path.parse(mergedFilePath).name;
     const whisperJsonPath = path.join(intermediatesDir, `${parsedName}.json`);
     
     if (fs.existsSync(whisperJsonPath)) {
       const whisperData = JSON.parse(fs.readFileSync(whisperJsonPath, 'utf8'));
+      const transcriptSegments = Array.isArray(whisperData.segments) ? whisperData.segments : [];
+      const transcriptWords = transcriptSegments.flatMap((segment: any) => (Array.isArray(segment.words) ? segment.words : []).map((word: any) => ({
+        word: String(word.word || '').trim(),
+        start: formatTimestamp(Number(word.start ?? segment.start ?? 0)),
+        startSeconds: Number(word.start ?? segment.start ?? 0),
+        endSeconds: Number(word.end ?? segment.end ?? word.start ?? segment.start ?? 0),
+        confidence: typeof word.score === 'number' ? word.score : undefined,
+      })).filter((word: any) => word.word));
+      job.transcriptWords = transcriptWords;
+      const transcriptWordCount = transcriptSegments.reduce((total: number, segment: any) => {
+        if (Array.isArray(segment.words)) return total + segment.words.length;
+        return total + (typeof segment.text === 'string' ? segment.text.trim().split(/\s+/).filter(Boolean).length : 0);
+      }, 0);
+      job.transcription = {
+        model: model.name,
+        profile: model.id,
+        language: 'en',
+        segmentsCount: transcriptSegments.length,
+        wordsCount: transcriptWordCount,
+        completedAt: now(),
+      };
       
       let candidateId = 1;
       const chapterRegex = /(chapter\s*\d+|prologue|epilogue|introduction)/i;
       
-      for (const segment of whisperData.segments || []) {
+      for (const segment of transcriptSegments) {
         if (chapterRegex.test(segment.text)) {
           const rawTime = segment.start;
           const startTime = Math.max(0, rawTime - leadIn);
           const endTime = segment.end;
+          const headingWordIndex = transcriptWords.findIndex((word: any) => word.startSeconds >= rawTime - 0.02);
+          const contextStart = Math.max(0, headingWordIndex - 18);
+          const contextEnd = Math.min(transcriptWords.length, headingWordIndex + 26);
+          const contextWords = headingWordIndex >= 0 ? transcriptWords.slice(contextStart, contextEnd) : [];
+          const headingWords = contextWords.filter((word: any) => word.startSeconds >= rawTime && word.startSeconds <= endTime);
           
           generatedCandidates.push({
             candidate_id: candidateId++,
             candidate_start: formatTimestamp(startTime),
             candidate_end: formatTimestamp(endTime),
             matched_text: segment.text.trim(),
-            context_before: "Detected via local WhisperX",
-            context_after: "",
-            confidence: "0.95",
+            context_before: contextWords.filter((word: any) => word.startSeconds < rawTime).map((word: any) => word.word).join(' '),
+            context_after: contextWords.filter((word: any) => word.startSeconds > endTime).map((word: any) => word.word).join(' '),
+            confidence: headingWords.length ? String(headingWords.reduce((sum: number, word: any) => sum + (word.confidence ?? 0), 0) / headingWords.length) : '0',
             proposed_title: segment.text.trim(),
             status: candidateId === 2 ? 'approved' : 'review',
             notes: `WhisperX detected at ${formatTimestamp(rawTime)} with ${leadIn}s lead-in`,
-            words: [],
+            words: contextWords,
           });
         }
       }
       logStep1(`Local WhisperX successfully extracted ${generatedCandidates.length} chapters.`);
     } else {
-      logStep1(`WhisperX completed but JSON output was not found.`);
+      throw new Error(`WhisperX completed but did not create its expected transcript: ${whisperJsonPath}`);
     }
   } catch (err: any) {
     console.error("Local WhisperX Execution Error:", err);
     if (err.message && err.message.includes("No module named whisperx")) {
-      logStep1(`WARNING: Private WhisperX module not found!`);
+      logStep1(`ERROR: Private WhisperX module not found!`);
       logStep1(`-> The actual WhisperX Python software is missing from the private runtime.`);
       logStep1(`-> Please click the "Settings Gear" icon, go to "System Requirements", and click "Install / Repair" to install WhisperX.`);
     } else {
-      logStep1(`WhisperX Execution Error: ${err.message}.`);
+      logStep1(`ERROR: WhisperX execution failed: ${err.message}.`);
     }
-    logStep1(`Falling back to mock chapter boundaries.`);
-  }
-
-  // Fallback if WhisperX wasn't installed, failed, or returned empty results
-  if (generatedCandidates.length === 0) {
-      const numChapters = Math.max(3, Math.floor(job.totalDurationSeconds / 1200));
-      const chapterInterval = job.totalDurationSeconds / numChapters;
-      
-      generatedCandidates.push({
-        candidate_id: 1,
-        candidate_start: "00:00:00.000",
-        candidate_end: formatTimestamp(Math.min(10, leadIn + 1)),
-        matched_text: "[START]",
-        context_before: "",
-        context_after: "Audiobook opening narration begins here.",
-        confidence: "1.00",
-        proposed_title: "Start / Prologue",
-        status: "approved",
-        notes: "Automatic opening candidate",
-        words: [],
-      });
-    
-      const sampleTitles = [
-        "Chapter 1", "Chapter 2: The Departure", "Chapter 3: Across the Plains",
-        "Chapter 4: The Discovery", "Chapter 5: Conflict", "Chapter 6: Resolution",
-        "Interlude: Night Reflections", "Chapter 7: The Summit", "Epilogue"
-      ];
-    
-      for (let i = 1; i < numChapters; i++) {
-        const rawTime = Math.max(30, Math.round(i * chapterInterval + (Math.random() * 60 - 30)));
-        const startTime = Math.max(0, rawTime - leadIn);
-        const endTime = startTime + 2.5;
-        const title = sampleTitles[i % sampleTitles.length] || `Chapter ${i + 1}`;
-    
-        generatedCandidates.push({
-          candidate_id: i + 1,
-          candidate_start: formatTimestamp(startTime),
-          candidate_end: formatTimestamp(endTime),
-          matched_text: title.split(':')[0],
-          context_before: `The narrator paused...`,
-          context_after: `And so they continued.`,
-          confidence: (0.91 + (Math.random() * 0.08)).toFixed(2),
-          proposed_title: title,
-          status: i === 1 ? 'approved' : 'review',
-          notes: `Matched chapter token with ${leadIn}s lead-in padding`,
-          words: [],
-        });
-      }
+    job.logs.push({ timestamp: now(), level: 'ERROR', message: `Step 1 failed: WhisperX did not complete. ${err.message}` });
+    saveJobs();
+    activeStep1ProgressState.isActive = false;
+    activeStep1ProgressState.canCancel = false;
+    activeStep1ProgressState.stage = 'error';
+    activeStep1ProgressState.error = `WhisperX transcription failed: ${err.message}`;
+    activeStep1ProgressState.liveStatusMessage = 'WhisperX transcription failed. No chapter markers were created.';
+    return;
   }
 
   job.candidates = generatedCandidates;
@@ -3365,10 +3447,10 @@ app.post('/api/jobs/:id/scan-cover', (req, res) => {
   
   // Search in current working directory and possible job folders
   const searchDirs = [
-    process.cwd(),
-    path.join(process.cwd(), 'public'),
-    path.join(process.cwd(), 'audiobooks', job.id),
-    path.join(process.cwd(), job.id),
+    APP_ROOT,
+    appPath('public'),
+    appPath('audiobooks', job.id),
+    appPath(job.id),
   ];
 
   let foundCover: CoverArtInfo | null = null;
@@ -3432,15 +3514,6 @@ app.post('/api/jobs/:id/scan-cover', (req, res) => {
     });
   }
 
-  // If running in cloud sandbox where local files aren't on disk, but job has Dune/default cover
-  if (job.id === 'dune-part-1' && job.metadata?.cover?.source === 'local') {
-    return res.json({
-      found: true,
-      cover: job.metadata.cover,
-      message: `Detected local cover.jpg for ${job.name} in source directory.`,
-    });
-  }
-
   res.json({
     found: false,
     message: 'No image named cover.jpg/png/webp was found in the local folder. You can upload an image or provide an image URL.',
@@ -3498,7 +3571,7 @@ app.post('/api/jobs/:id/metadata', (req, res) => {
 });
 
 // Step 4: Build Chaptered M4B (replicates app/m4b.py)
-app.post('/api/jobs/:id/build-m4b', (req, res) => {
+app.post('/api/jobs/:id/build-m4b', async (req, res) => {
   const job = jobs.find(j => j.id === req.params.id);
   if (!job) {
     return res.status(404).json({ error: 'Job not found' });
@@ -3565,25 +3638,51 @@ app.post('/api/jobs/:id/build-m4b', (req, res) => {
     estBytes = Math.round((job.totalDurationSeconds * kbps * 1000) / 8);
   }
 
-  job.outputM4b = {
-    filename: `${job.name}.${targetExt}`,
-    duration: job.totalDurationSeconds,
-    sizeBytes: estBytes,
-    bitrate: bitrate.includes('k') ? `${bitrate}bps` : bitrate,
-    chaptersCount: job.chapters.length,
-    codec,
-  };
+  const sourceAudioPath = job.mergedMp3.fullPath;
+  if (!sourceAudioPath || !fs.existsSync(sourceAudioPath)) {
+    return res.status(400).json({ error: 'The merged source audio file is unavailable. Run Step 1 again before building.' });
+  }
+  const outputDir = job.outputFolderPath || currentOutputFolder;
+  fs.mkdirSync(outputDir, { recursive: true });
+  const safeName = (job.name || 'audiobook').replace(/[<>:"/\\|?*]/g, '_');
+  const outputPath = path.join(outputDir, `${safeName}.${targetExt}`);
+  const metadataPath = path.join(path.dirname(sourceAudioPath), `${job.id}_chapters.ffmeta`);
+  fs.writeFileSync(metadataPath, job.ffmetaContent, 'utf8');
+  const encoder = codec === 'mp3' ? 'libmp3lame' : codec === 'opus' ? 'libopus' : codec === 'pcm_s16le' ? 'pcm_s16le' : codec;
+  const buildArgs = ['-y', '-i', sourceAudioPath, '-i', metadataPath, '-map', '0:a:0', '-map_metadata', '1', '-c:a', encoder];
+  if (!['flac', 'pcm_s16le'].includes(encoder)) buildArgs.push('-b:a', bitrate);
+  buildArgs.push(outputPath);
+  try {
+    // No -ss, -t, silencedetect, or trim filter: the complete merged master is
+    // always encoded from zero through its final sample.
+    await execFileAsync(MANAGED_FFMPEG_PATH, buildArgs);
+    const { stdout } = await execFileAsync(MANAGED_FFPROBE_PATH, ['-v', 'error', '-show_entries', 'format=duration,size', '-of', 'json', outputPath]);
+    const probe = JSON.parse(stdout.toString());
+    const actualDuration = Number(probe?.format?.duration || 0);
+    const sourceDuration = job.mergedMp3.duration || job.totalDurationSeconds;
+    if (actualDuration <= 0 || Math.abs(actualDuration - sourceDuration) > 2) {
+      throw new Error(`Output duration ${actualDuration.toFixed(3)}s does not match merged source duration ${sourceDuration.toFixed(3)}s.`);
+    }
+    job.outputM4b = {
+      filename: path.basename(outputPath),
+      duration: actualDuration,
+      sizeBytes: Number(probe?.format?.size || estBytes),
+      bitrate: bitrate.includes('k') ? `${bitrate}bps` : bitrate,
+      chaptersCount: job.chapters.length,
+      codec,
+    };
+  } catch (error: any) {
+    return res.status(500).json({ error: `FFmpeg build failed: ${error.message}` });
+  }
 
   job.status = 'built';
   saveJobs();
   const coverMsg = job.metadata?.cover ? ` Attached cover art (${job.metadata.cover.source}).` : '';
   const narratorMsg = job.metadata?.narrator ? ` Stored narrator "${job.metadata.narrator}" in metadata Composer tag.` : '';
-  const deadAirTrimMs = parseTimestampToMs(job.chapters[0].start);
-  const deadAirMsg = deadAirTrimMs > 0 ? ` Trimmed ${formatTimestamp(deadAirTrimMs / 1000)} of leading dead air.` : '';
   job.logs.push({
     timestamp: now(),
     level: 'INFO',
-    message: `Generated FFMETADATA1 chapter markers (${job.chapters.length} chapters).${deadAirMsg}${narratorMsg}${coverMsg} Encoded ${codec.toUpperCase()} ${targetExt.toUpperCase()} package. Output: ${job.outputM4b.filename}`,
+    message: `Generated FFMETADATA1 chapter markers (${job.chapters.length} chapters). Source audio is preserved from 00:00:00 through ${formatTimestamp(job.outputM4b.duration)}.${narratorMsg}${coverMsg} Encoded ${codec.toUpperCase()} ${targetExt.toUpperCase()} package. Output: ${job.outputM4b.filename}`,
   });
 
   res.json({
@@ -3828,7 +3927,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = appPath('dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

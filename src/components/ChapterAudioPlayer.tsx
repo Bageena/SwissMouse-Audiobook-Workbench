@@ -1,6 +1,5 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { AlignedWord } from '../types';
-import { buildAlignedWords, formatTimestamp } from '../utils/wordAlignment';
 import {
   Play,
   Pause,
@@ -41,6 +40,7 @@ interface ChapterAudioPlayerProps {
   onStop: () => void;
   onWordClick?: (timestamp: string, word: string, seconds: number) => void;
   totalDurationSeconds: number;
+  audioSrc: string;
 }
 
 export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
@@ -51,20 +51,18 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   onStop,
   onWordClick,
   totalDurationSeconds,
+  audioSrc,
 }) => {
   const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(audioSrc);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(totalDurationSeconds || 60);
   const [volume, setVolume] = useState<number>(0.9);
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [useSynthesizer, setUseSynthesizer] = useState<boolean>(true);
   const [lastClickedWord, setLastClickedWord] = useState<{ word: string; timestamp: string } | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const synthUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const synthTimerRef = useRef<any>(null);
 
   // Helper: Format seconds to HH:MM:SS
   const formatSec = (s: number): string => {
@@ -112,26 +110,17 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
       };
     }
 
-    const before = activeTrack.contextBefore || '';
-    const matched = activeTrack.matchedText || activeTrack.title || '';
-    const after = activeTrack.contextAfter || '';
-
-    if (!before && !after && activeTrack.snippetText) {
-      // Parse snippetText if context parts aren't broken down
-      return buildAlignedWords('', activeTrack.snippetText, '', activeTrack.seconds);
-    }
-
-    return buildAlignedWords(before, matched, after, activeTrack.seconds);
+    return null;
   }, [activeTrack]);
 
-  // Clean up Object URL and SpeechSynthesis
+  useEffect(() => {
+    setAudioUrl(audioSrc);
+  }, [audioSrc]);
+
+  // Clean up only locally-created object URLs. The review source is an app URL.
   useEffect(() => {
     return () => {
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-      if (synthTimerRef.current) clearInterval(synthTimerRef.current);
+      if (audioUrl?.startsWith('blob:')) URL.revokeObjectURL(audioUrl);
     };
   }, [audioUrl]);
 
@@ -139,11 +128,10 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      if (audioUrl?.startsWith('blob:')) URL.revokeObjectURL(audioUrl);
       const url = URL.createObjectURL(file);
       setAudioFile(file);
       setAudioUrl(url);
-      setUseSynthesizer(false);
 
       if (activeTrack) {
         setTimeout(() => {
@@ -163,8 +151,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
       return;
     }
 
-    // Mode 1: Real audio file attached
-    if (audioUrl && !useSynthesizer && audioRef.current) {
+    if (audioUrl && audioRef.current) {
       const audio = audioRef.current;
       audio.volume = isMuted ? 0 : volume;
 
@@ -180,59 +167,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
       return;
     }
 
-    // Mode 2: Web Speech Synthesis + Sound Chime Narrator Preview
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      if (synthTimerRef.current) clearInterval(synthTimerRef.current);
-
-      if (isPlaying) {
-        playWordChime(587.33);
-        setCurrentTime(activeTrack.seconds);
-
-        const textToSay =
-          activeTrack.snippetText ||
-          `Now playing ${activeTrack.title} at ${activeTrack.start}. Chapter marker starts here.`;
-
-        const utterance = new SpeechSynthesisUtterance(textToSay);
-        utterance.rate = 1.0;
-        utterance.pitch = 1.0;
-        utterance.volume = isMuted ? 0 : volume;
-
-        const voices = window.speechSynthesis.getVoices();
-        const engVoice =
-          voices.find(
-            (v) =>
-              v.lang.startsWith('en') &&
-              (v.name.includes('Natural') ||
-                v.name.includes('Google') ||
-                v.name.includes('Samantha') ||
-                v.name.includes('Daniel'))
-          ) || voices.find((v) => v.lang.startsWith('en'));
-        if (engVoice) utterance.voice = engVoice;
-
-        utterance.onend = () => {
-          if (synthTimerRef.current) clearInterval(synthTimerRef.current);
-          onPause();
-        };
-
-        utterance.onerror = () => {
-          if (synthTimerRef.current) clearInterval(synthTimerRef.current);
-          onPause();
-        };
-
-        synthUtteranceRef.current = utterance;
-        window.speechSynthesis.speak(utterance);
-
-        const startTime = Date.now();
-        synthTimerRef.current = setInterval(() => {
-          const elapsed = (Date.now() - startTime) / 1000;
-          setCurrentTime(activeTrack.seconds + elapsed);
-        }, 200);
-      } else {
-        window.speechSynthesis.cancel();
-      }
-    }
-  }, [activeTrack?.id, activeTrack?.start, isPlaying, audioUrl, useSynthesizer]);
+  }, [activeTrack?.id, activeTrack?.start, isPlaying, audioUrl, volume, isMuted]);
 
   // Audio element events
   const handleTimeUpdate = () => {
@@ -255,7 +190,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   const handleSeekOffset = (offset: number) => {
     const nextTime = Math.max(0, currentTime + offset);
     setCurrentTime(nextTime);
-    if (audioRef.current && audioUrl && !useSynthesizer) {
+    if (audioRef.current && audioUrl) {
       audioRef.current.currentTime = nextTime;
     }
   };
@@ -269,7 +204,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
       timestamp: wordItem.start,
     });
 
-    if (audioRef.current && audioUrl && !useSynthesizer) {
+    if (audioRef.current && audioUrl) {
       audioRef.current.currentTime = wordItem.startSeconds;
       if (!isPlaying) {
         audioRef.current.play().catch(() => {});
@@ -360,17 +295,11 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
               <span className="truncate max-w-[140px]" title={audioFile.name}>
                 {audioFile.name}
               </span>
-              <button
-                onClick={() => setUseSynthesizer(!useSynthesizer)}
-                className="ml-1 text-[10px] underline text-stone-500 hover:text-stone-900 cursor-pointer"
-              >
-                {useSynthesizer ? 'Switch to MP3' : 'Switch to Voice'}
-              </button>
             </div>
           ) : (
-            <div className="flex items-center space-x-1.5 bg-amber-50 text-amber-900 px-2.5 py-1 rounded border border-amber-200 text-[11px]">
-              <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-              <span>Narrator Speech & Chime</span>
+            <div className="flex items-center space-x-1.5 bg-emerald-50 text-emerald-900 px-2.5 py-1 rounded border border-emerald-200 text-[11px]">
+              <FileAudio className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>Actual merged audiobook audio</span>
             </div>
           )}
 
@@ -525,7 +454,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
               onChange={(e) => {
                 const val = parseFloat(e.target.value);
                 setCurrentTime(val);
-                if (audioRef.current && audioUrl && !useSynthesizer) {
+                if (audioRef.current && audioUrl) {
                   audioRef.current.currentTime = val;
                 }
               }}
