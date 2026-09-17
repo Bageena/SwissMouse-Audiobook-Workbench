@@ -1,6 +1,7 @@
 {
-  "name": "Audiobook Chapter Workbench",
-  "description": "A local-first desktop workbench to import, merge, transcribe, review chapters, edit metadata, and compile high-quality chaptered audiobooks.",
+  "name": "SwissMouse",
+  "version": "0.1.0-alpha.1",
+  "description": "The open source audiobook workbench.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

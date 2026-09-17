@@ -65,7 +65,7 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({ onClose, onCreateJob }
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 text-stone-900 font-bold text-base">
             <BookOpen className="w-5 h-5 text-amber-600" />
-            <span>Add Audiobook Job (Input/ Folder)</span>
+            <span>Create a new audiobook project</span>
           </div>
           <button
             onClick={onClose}
@@ -78,7 +78,7 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({ onClose, onCreateJob }
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
           <div>
             <label className="font-semibold text-stone-800 block mb-1">
-              Audiobook Title (Subfolder name) *
+              Book title *
             </label>
             <input
               type="text"
@@ -113,11 +113,12 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({ onClose, onCreateJob }
             </div>
           </div>
 
+          <p className="text-[11px] text-stone-500 -mt-2">This creates an empty project. You will choose its audio folder on the next screen.</p>
           {/* Parts list */}
           <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 space-y-2">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-stone-800">
-                Source MP3 Audio Pieces ({parts.length})
+                Example source files ({parts.length})
               </span>
               <button
                 type="button"
@@ -172,7 +173,7 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({ onClose, onCreateJob }
               disabled={isSubmitting || !name.trim()}
               className="px-4 py-1.5 rounded text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white cursor-pointer"
             >
-              {isSubmitting ? 'Creating...' : 'Create Job'}
+              {isSubmitting ? 'Creating...' : 'Create project'}
             </button>
           </div>
         </form>

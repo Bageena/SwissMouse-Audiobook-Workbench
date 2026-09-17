@@ -1,3 +1,4 @@
+import { stitchCompatibility } from '../audioFormats';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   AudiobookJob,
@@ -59,6 +60,7 @@ interface Step1Props {
   isRunning: boolean;
   onNextStep: () => void;
   onUpdateJobSettings?: (settings: Partial<AudiobookJob>) => void;
+  onConfigChange?: (config: WorkbenchConfig) => void;
 }
 
 export const Step1MergeDetect: React.FC<Step1Props> = ({
@@ -68,7 +70,15 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   isRunning,
   onNextStep,
   onUpdateJobSettings,
+  onConfigChange,
 }) => {
+  const [fasterEnabled, setFasterEnabled] = useState(config.faster_transcription);
+  useEffect(() => setFasterEnabled(config.faster_transcription), [config.faster_transcription]);
+  const [isSwitchingEngine, setIsSwitchingEngine] = useState(false);
+  const transcriptionEngine = fasterEnabled ? 'faster-whisper' : 'openai-whisper';
+  const modelsApi = `/api/models?engine=${transcriptionEngine}`;
+  const engineRef = useRef(transcriptionEngine);
+  engineRef.current = transcriptionEngine;
   // Folder & Files State (persisted on job where available)
   const [sourceFolderPath, setSourceFolderPath] = useState<string>(
     job.sourceFolderPath || ''
@@ -76,7 +86,8 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   const [discoveredFiles, setDiscoveredFiles] = useState<DiscoveredMp3File[]>(
     job.discoveredFiles ||
       job.parts.map((p, i) => ({
-        relativePath: p.name,
+        relativePath: p.sourceRelativePath || p.name,
+        storedName: p.name,
         fileName: p.name,
         folderName: 'Root',
         sizeBytes: p.sizeBytes,
@@ -116,15 +127,8 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     return exts.size > 0 ? Array.from(exts) : ['mp3'];
   }, [discoveredFiles, job.sourceSummary]);
 
-  // Stream copy compatibility check: Quick Merge requires identical container, codec, and sample rates
-  const streamCopyCompatible = useMemo(() => {
-    if (job.sourceSummary?.streamCopyCompatible !== undefined) {
-      return job.sourceSummary.streamCopyCompatible;
-    }
-    // Mixed formats cannot be safely concatenated directly via stream copy
-    if (formatsDetected.length > 1) return false;
-    return true;
-  }, [formatsDetected, job.sourceSummary]);
+  const compatibility = useMemo(() => stitchCompatibility(discoveredFiles), [discoveredFiles]);
+  const streamCopyCompatible = compatibility.compatible;
 
   // If streamCopy is incompatible and user has quick merge selected, enforce standard merge
   useEffect(() => {
@@ -151,6 +155,9 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     recommendedModelId: 'small',
   });
   const [models, setModels] = useState<SpeechModelInfo[]>([]);
+  const applyModels = (items: SpeechModelInfo[]) => {
+    if (items.every(model => model.backend === engineRef.current)) setModels(items);
+  };
   const [selectedModelId, setSelectedModelId] = useState<string>(
     job.selectedModelId || 'small'
   );
@@ -210,11 +217,13 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
 
   // Load initial hardware, models, and output directory
   useEffect(() => {
+    let cancelled = false;
     async function initHardwareAndModels() {
+      setIsLoadingModels(true);
       try {
         const [hwRes, modelsRes, outRes] = await Promise.all([
           fetch('/api/system/hardware'),
-          fetch('/api/models'),
+          fetch(`${modelsApi}&refresh=true`),
           fetch('/api/system/output-folder'),
         ]);
 
@@ -228,7 +237,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
 
         if (modelsRes.ok) {
           const modelsData: SpeechModelInfo[] = await modelsRes.json();
-          setModels(modelsData);
+          if (!cancelled) applyModels(modelsData);
         }
 
         if (outRes.ok) {
@@ -245,32 +254,43 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     }
 
     initHardwareAndModels();
-  }, []);
+    return () => { cancelled = true; };
+  }, [modelsApi]);
 
-  // Poll models while any download is active
+  // Poll state only while a download is active, without restarting on each update.
+  const hasModelDownload = models.some((m) => m.isDownloading);
   useEffect(() => {
-    const isDownloading = models.some((m) => m.isDownloading);
-    if (!isDownloading) return;
+    if (!hasModelDownload) return;
 
+    let cancelled = false;
+    let pending = false;
     const timer = setInterval(async () => {
+      if (pending) return;
+      pending = true;
       try {
-        const res = await fetch('/api/models');
+        const res = await fetch(`${modelsApi}&progress=true`);
         if (res.ok) {
           const updated: SpeechModelInfo[] = await res.json();
-          setModels(updated);
+          if (!cancelled) applyModels(updated);
         }
       } catch (err) {
         console.error('Polling models failed:', err);
-      }
+      } finally { pending = false; }
     }, 500);
 
-    return () => clearInterval(timer);
-  }, [models]);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [hasModelDownload, modelsApi]);
 
   // Sync settings back to parent / job state
   const notifyJobUpdate = (updates: Partial<AudiobookJob>) => {
     if (onUpdateJobSettings) {
       onUpdateJobSettings(updates);
+    }
+    if (updates.selectedModelId) {
+      fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selected_model: updates.selectedModelId }) })
+        .then(response => response.ok ? response.json() : Promise.reject(new Error('Could not save the selected model.')))
+        .then(data => onConfigChange?.(data.config))
+        .catch(error => console.error(error));
     }
   };
 
@@ -286,7 +306,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   };
 
   // Supported audio extensions regex: MP3, M4A, AAC, M4B, OGG, OPUS, FLAC, WAV, AIFF, WMA
-  const AUDIO_EXTENSIONS_REGEX = /\.(mp3|m4a|aac|m4b|ogg|oga|opus|flac|wav|aiff|aif|wma)$/i;
+  const AUDIO_EXTENSIONS_REGEX = /\.(mp3|m4a|aac|m4b|ogg|oga|opus|flac|wav|aiff|aif|wma|alac)$/i;
 
   // Handle native folder picker selection (webkitdirectory)
 
@@ -315,7 +335,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     
     try {
         const formData = new FormData();
-        filesToUpload.forEach(f => formData.append('files', f));
+        filesToUpload.forEach(f => formData.append('files', f, f.webkitRelativePath ? f.webkitRelativePath.split('/').slice(1).join('/') : f.name));
 
         setUploadProgressState(`Uploading ${filesToUpload.length} files to internal workspace...`);
         const res = await fetch(`/api/upload-audio?jobId=${job.id}`, {
@@ -333,15 +353,22 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
           // Flatten folder name for the UI display, but keep original for sorting context if needed
           const pathParts = f.originalName.split(/[/\\]/);
           const folderName = pathParts.length > 1 ? pathParts[pathParts.length - 2] : 'Root';
-          const chapterGroup = pathParts.length > 2 ? pathParts.slice(0, -1).join('/') : undefined;
+          const chapterGroup = pathParts.length > 1 ? pathParts.slice(0, -1).join('/') : undefined;
 
           return {
             relativePath: f.originalName,
-            fileName: f.filename,
+            fileName: pathParts[pathParts.length - 1],
+            storedName: f.filename,
             folderName: folderName,
             chapterGroup: chapterGroup,
             sizeBytes: f.size,
-            durationSeconds: f.durationSeconds || Math.max(30, Math.round(f.size / 16000)),
+            durationSeconds: f.durationSeconds,
+            format: f.format,
+            codec: f.codec,
+            sampleRate: f.sampleRate,
+            channels: f.channels,
+            isProbed: true,
+            streamSignature: f.streamSignature,
           };
         });
 
@@ -364,10 +391,11 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
             hasNestedChapterFolders: chapterFolders.size > 0,
             parts: audioFiles.map((f, idx) => ({
                 id: `p-${idx + 1}`,
-                name: f.fileName, // Use the flat filename saved by the server
+                name: f.storedName || f.fileName, // App-owned disk filename
+                sourceRelativePath: f.relativePath,
                 sizeBytes: f.sizeBytes,
                 durationSeconds: f.durationSeconds,
-                bitrate: 128,
+                bitrate: f.bitrate || 0,
                 order: idx + 1,
             }))
         });
@@ -415,9 +443,10 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
         parts: data.files.map((f, idx) => ({
           id: `p-${idx + 1}`,
           name: f.relativePath || f.fileName,
+          sourceRelativePath: f.relativePath,
           sizeBytes: f.sizeBytes,
           durationSeconds: f.durationSeconds,
-          bitrate: 128,
+          bitrate: f.bitrate || 0,
           order: idx + 1,
         })),
       });
@@ -431,6 +460,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   // Handle successful YouTube Audio import
   const handleYouTubeAudioImported = (updatedJob: AudiobookJob) => {
     setInputMethod('youtube');
+    setMergeMethod(updatedJob.mergeMethod || 'quick');
     if (updatedJob.sourceFolderPath) setSourceFolderPath(updatedJob.sourceFolderPath);
     if (updatedJob.discoveredFiles) setDiscoveredFiles(updatedJob.discoveredFiles);
     if (updatedJob.chapterSource) setChapterSource(updatedJob.chapterSource);
@@ -460,31 +490,10 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
 
   // Trigger native file explorer to choose an output folder
   const handleOpenNativeOutputFolderPicker = async () => {
-    setOutputFolderError(null);
-
-    // 1. Try modern File System Access API if supported in browser environment
-    if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
-      try {
-        const dirHandle = await (window as any).showDirectoryPicker({
-          mode: 'readwrite',
-        });
-        if (dirHandle && dirHandle.name) {
-          await handleSetOutputFolder(dirHandle.name);
-          return;
-        }
-      } catch (err: any) {
-        // User cancelled picker dialog
-        if (err.name === 'AbortError') {
-          return;
-        }
-        // If security exception (e.g. inside cross-origin iframe sandbox), fall through to file input fallback
-      }
-    }
-
-    // 2. Fallback to native OS folder picker using file input with webkitdirectory
-    if (outputFolderInputRef.current) {
-      outputFolderInputRef.current.click();
-    }
+    // Browser directory handles expose only a folder name, not its absolute disk path.
+    setShowOutputInput(true);
+    setCustomOutputInput(outputFolderPath);
+    setOutputFolderError('Paste the full output folder path. Browser folder selection cannot provide its disk location.');
   };
 
   // Handle folder chosen via native file explorer input
@@ -547,15 +556,10 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   // ----------------------------------------------------
 
   const handleInstallModel = async (model: SpeechModelInfo, force = false) => {
-    // If GPU required model in CPU mode, show the required modal!
-    if (model.requiresGpu && hardware.mode === 'cpu') {
-      setBlockedModelName(model.name);
-      setShowGpuRequiredModal(true);
-      return;
-    }
-
     try {
-      const res = await fetch(`/api/models/${model.id}/prepare${force ? '?force=true' : ''}`, { method: 'POST' });
+      const action = fasterEnabled ? 'prepare' : 'install';
+      const query = `?engine=${transcriptionEngine}${force ? '&force=true' : ''}`;
+      const res = await fetch(`/api/models/${model.id}/${action}${query}`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
         if (data.error?.includes('NVIDIA GPU')) {
@@ -567,9 +571,9 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
         return;
       }
       // Refresh models
-      const modelsRes = await fetch('/api/models');
+      const modelsRes = await fetch(modelsApi);
       if (modelsRes.ok) {
-        setModels(await modelsRes.json());
+        applyModels(await modelsRes.json());
       }
     } catch (err) {
       console.error('Install model error:', err);
@@ -578,10 +582,10 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
 
   const handleCancelDownload = async (modelId: string) => {
     try {
-      await fetch(`/api/models/${modelId}/cancel`, { method: 'POST' });
-      const modelsRes = await fetch('/api/models');
+      await fetch(`/api/models/${modelId}/cancel?engine=${transcriptionEngine}`, { method: 'POST' });
+      const modelsRes = await fetch(modelsApi);
       if (modelsRes.ok) {
-        setModels(await modelsRes.json());
+        applyModels(await modelsRes.json());
       }
     } catch (err) {
       console.error('Cancel download error:', err);
@@ -590,10 +594,10 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
 
   const handleUninstallModel = async (modelId: string) => {
     try {
-      await fetch(`/api/models/${modelId}/uninstall`, { method: 'POST' });
-      const modelsRes = await fetch('/api/models');
+      await fetch(`/api/models/${modelId}/uninstall?engine=${transcriptionEngine}`, { method: 'POST' });
+      const modelsRes = await fetch(modelsApi);
       if (modelsRes.ok) {
-        setModels(await modelsRes.json());
+        applyModels(await modelsRes.json());
       }
     } catch (err) {
       console.error('Uninstall model error:', err);
@@ -604,10 +608,10 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   const handleRefreshModels = async () => {
     setIsRefreshingModels(true);
     try {
-      const res = await fetch('/api/models/refresh', { method: 'POST' });
+      const res = await fetch(`/api/models/refresh?engine=${transcriptionEngine}`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        setModels(data.models || []);
+        applyModels(data.models || []);
       }
     } catch (err) {
       console.error('Refresh models error:', err);
@@ -616,35 +620,20 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     }
   };
 
-  // Toggle hardware simulation (convenience for developer/user to test GPU vs CPU UI behavior)
-  const handleToggleHardwareMode = async () => {
-    const nextMode = hardware.mode === 'cpu' ? 'gpu' : 'cpu';
+  const handleFasterTranscriptionChange = async (enabled: boolean) => {
+    setIsSwitchingEngine(true);
     try {
-      const res = await fetch('/api/system/hardware/mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: nextMode }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setHardware(data.hardware);
-        // Refresh models compatibility
-        const modelsRes = await fetch('/api/models');
-        if (modelsRes.ok) {
-          const updatedModels = await modelsRes.json();
-          setModels(updatedModels);
-          // If current model is not compatible with new mode, switch to recommended
-          if (nextMode === 'cpu') {
-            const curModel = updatedModels.find((m: any) => m.id === selectedModelId);
-            if (curModel?.requiresGpu) {
-              setSelectedModelId(data.hardware.recommendedModelId);
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error('Toggle hardware mode error:', err);
-    }
+      const saveResponse = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ faster_transcription: enabled }) });
+      if (!saveResponse.ok) throw new Error('The setting could not be saved.');
+      const saved = await saveResponse.json();
+      setFasterEnabled(enabled);
+      setModels([]);
+      onConfigChange?.(saved.config);
+
+    } catch (error) {
+      setFasterEnabled(!enabled);
+      console.error('Could not update transcription engine:', error);
+    } finally { setIsSwitchingEngine(false); }
   };
 
   // ----------------------------------------------------
@@ -657,14 +646,14 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
 
   // WhisperX downloads the selected Faster-Whisper model into the app-local cache
   // on first use, so a previous manual model download is not a prerequisite.
-  const selectedModel = models.find((m) => m.id === selectedModelId);
+  const selectedModel = models.find((m) => m.id === selectedModelId && m.backend === transcriptionEngine);
   const isSelectedModelCompatible = selectedModel
     ? hardware.mode === 'gpu' || !selectedModel.requiresGpu
     : false;
   const isWhisperXValid =
     chapterSource !== 'whisperx' || isSelectedModelCompatible;
 
-  const canRunStep1 = hasSourceFolder && hasAudioFiles && isOutputValid && isWhisperXValid;
+  const canRunStep1 = !isSwitchingEngine && hasSourceFolder && hasAudioFiles && isOutputValid && isWhisperXValid;
 
   // Source summary object for SourceSummary component
   const sourceSummaryData: SourceSummaryData = useMemo(() => {
@@ -677,9 +666,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
       formatsDetected,
       hasNestedChapters,
       streamCopyCompatible,
-      incompatibilityReason: !streamCopyCompatible
-        ? `Mixed audio formats detected (${formatsDetected.join(', ')}). Quick Merge stream copy disabled; standard Lossless PCM Merge is selected.`
-        : undefined,
+      incompatibilityReason: compatibility.reason || undefined,
       chapterWorkflow: chapterSource,
     };
   }, [
@@ -705,10 +692,11 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
       outputFolderPath,
       parts: discoveredFiles.map((f, idx) => ({
         id: `p-${idx + 1}`,
-        name: f.relativePath || f.fileName,
+        name: f.storedName || f.relativePath || f.fileName,
+        sourceRelativePath: f.relativePath,
         sizeBytes: f.sizeBytes,
         durationSeconds: f.durationSeconds,
-        bitrate: 128,
+        bitrate: f.bitrate || 0,
         order: idx + 1,
       })),
     });
@@ -738,7 +726,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
         webkitdirectory=""
         directory=""
         multiple
-        accept=".mp3,.m4a,.aac,.m4b,.ogg,.oga,.opus,.flac,.wav,.aiff,.aif,.wma,audio/*"
+        accept=".mp3,.m4a,.aac,.m4b,.ogg,.oga,.opus,.flac,.wav,.aiff,.aif,.wma,.alac,audio/*"
       />
 
       {/* Hidden native output folder input (uses OS native file explorer dialog) */}
@@ -799,11 +787,11 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                 1
               </span>
               <h2 className="text-lg font-bold text-stone-900">
-                Import & Setup
+                Choose audio and chapter options
               </h2>
             </div>
             <p className="text-xs sm:text-sm text-stone-600 mt-1 max-w-3xl">
-              Import your audio files or folder, choose how you want chapters handled, and get ready to create your audiobook.
+              Start by choosing your source audio. Then decide whether SwissMouse should find chapters from speech or use the file structure you already have.
             </p>
           </div>
 
@@ -813,7 +801,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                 onClick={onNextStep}
                 className="px-4 py-2.5 rounded-lg text-xs sm:text-sm font-semibold bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 transition-colors cursor-pointer flex items-center space-x-1.5"
               >
-                <span>Continue to Review</span>
+                <span>Review chapters</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             )}
@@ -838,10 +826,10 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                   <Play className="w-4 h-4 fill-white" />
                   <span>
                     {chapterSource === 'existing_files'
-                      ? 'Import Chapters & Continue'
+                      ? 'Prepare audio and chapters'
                       : job.status !== 'draft'
                       ? 'Re-Run Processing'
-                      : 'Processing'}
+                      : 'Prepare audiobook'}
                   </span>
                 </>
               )}
@@ -868,9 +856,9 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
           <div className="flex items-center space-x-2">
             <FolderOpen className="w-5 h-5 text-amber-600" />
             <div>
-              <h3 className="font-bold text-sm text-stone-900">Select Input</h3>
+              <h3 className="font-bold text-sm text-stone-900">Choose your source audio</h3>
               <p className="text-xs text-stone-500">
-                Import local audio files (.mp3, .m4a, .m4b, .flac, .ogg, .opus, .wav, .aac) or download from YouTube.
+                Choose audio already on your computer, or download audio from a YouTube URL. Supported files include MP3, M4A/M4B, FLAC, OGG, Opus, WAV, AAC, AIFF, and WMA.
               </p>
             </div>
           </div>
@@ -897,7 +885,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
               }`}
             >
               <Video className="w-3.5 h-3.5 text-red-600" />
-              <span>YouTube URL</span>
+              <span>From YouTube</span>
               <span className="px-1 py-0.2 rounded bg-amber-100 text-amber-800 text-[10px] font-mono">yt-dlp</span>
             </button>
           </div>
@@ -920,10 +908,10 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-stone-50/80 rounded-xl border border-stone-200">
               <div>
                 <h4 className="text-xs font-bold text-stone-900 uppercase tracking-wider mb-1">
-                  Import Folder
+                  Choose an audio folder
                 </h4>
                 <p className="text-xs text-stone-600 max-w-xl leading-relaxed">
-                  Select an audiobook folder containing your audio files. All processing occurs securely on your machine.
+                  Select the folder that contains the audio files for one book. SwissMouse reads copies for processing and does not rename, move, or alter the originals.
                 </p>
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   {['MP3', 'M4A', 'M4B', 'FLAC', 'OGG', 'OPUS', 'WAV', 'AAC', 'AIFF', 'WMA'].map((fmt) => (
@@ -951,7 +939,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                   onClick={() => setShowPathInput(!showPathInput)}
                   className="px-3 py-2 rounded-lg text-xs font-medium bg-white hover:bg-stone-100 text-stone-700 border border-stone-200 transition-colors cursor-pointer"
                 >
-                  {showPathInput ? 'Hide Path Scanner' : 'Enter Path'}
+                  {showPathInput ? 'Hide path entry' : 'Enter folder path'}
                 </button>
               </div>
             </div>
@@ -959,13 +947,13 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
             {/* Optional path scanner for local desktop filesystem paths. */}
             {showPathInput && (
               <div className="p-3.5 bg-stone-50 rounded-lg border border-stone-200 space-y-2 text-xs">
-                <div className="font-medium text-stone-700">Scan Local Desktop Filesystem Path:</div>
+                <div className="font-medium text-stone-700">Paste a folder path</div>
                 <div className="flex items-center space-x-2">
                   <input
                     type="text"
                     value={customPathInput}
                     onChange={(e) => setCustomPathInput(e.target.value)}
-                    placeholder="Paste a local folder path containing audio files"
+                    placeholder="Example: C:\\Audiobooks\\My Book"
                     className="flex-1 px-3 py-2 bg-white border border-stone-300 rounded-md font-mono text-stone-800 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
                   />
                   <button
@@ -973,7 +961,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                     disabled={isScanningFolder || !customPathInput.trim()}
                     className="px-3 py-2 bg-stone-900 text-white rounded-md font-semibold hover:bg-stone-800 disabled:opacity-50 cursor-pointer"
                   >
-                    {isScanningFolder ? 'Scanning...' : 'Scan Directory'}
+                    {isScanningFolder ? 'Checking folder...' : 'Check folder'}
                   </button>
                 </div>
               </div>
@@ -998,7 +986,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
         {!hasAudioFiles && !folderScanError && inputMethod === 'folder' && (
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 flex items-center space-x-2">
             <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
-            <span>No audio files loaded. Please click &ldquo;Import Audio Folder&rdquo; to continue.</span>
+                <span>No audio files selected yet. Choose an audio folder to continue.</span>
           </div>
         )}
 
@@ -1016,7 +1004,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                 <div className="flex items-center space-x-2">
                   <FileAudio className="w-3.5 h-3.5 text-amber-600" />
                   <span>
-                    Discovered Audio Files ({discoveredFiles.length} files • natural sort order: Chapter 2 before Chapter 10)
+                    Audio files in processing order ({discoveredFiles.length} files)
                   </span>
                 </div>
                 <div className="flex items-center space-x-1 text-stone-500">
@@ -1079,9 +1067,9 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
         <div className="flex items-center space-x-2 border-b border-stone-100 pb-3">
           <Sliders className="w-5 h-5 text-amber-600" />
           <div>
-            <h3 className="font-bold text-sm text-stone-900">Chapter Workflow</h3>
+              <h3 className="font-bold text-sm text-stone-900">Choose how to create chapters</h3>
             <p className="text-xs text-stone-500">
-              Choose how chapter markers are derived for your audiobook.
+              Pick AI chapter detection when the recording needs analysis, or use your existing file and folder structure when it already represents chapters.
             </p>
           </div>
         </div>
@@ -1110,7 +1098,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                     className="w-4 h-4 text-amber-600 focus:ring-amber-500"
                   />
                   <span className="font-bold text-sm text-stone-900">
-                    Generate Chapters with AI
+                    Find chapters from spoken audio
                   </span>
                 </div>
                 <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[11px] font-semibold">
@@ -1118,15 +1106,15 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                 </span>
               </div>
               <p className="text-xs text-stone-600 pl-6 leading-relaxed">
-                Stitches audio and uses WhisperX to automatically detect chapters.
+                Combines your source files, transcribes speech with your selected Whisper engine, and suggests chapter starts for you to review.
               </p>
               <div className="pl-6 pt-1 text-[11px] text-amber-800 italic">
-                &ldquo;Use when MP3s are not cleanly cut into chapters.&rdquo;
+                Best when files are long parts, chapter boundaries are unclear, or you want speech-based chapter suggestions.
               </div>
             </div>
           </label>
 
-          {/* Option B: Use imported audio files as individual chapters */}
+          {/* Option B: Derive chapters from the imported source structure */}
           <label
             className={`p-4 rounded-xl border-2 transition-all cursor-pointer flex flex-col justify-between ${
               chapterSource === 'existing_files'
@@ -1149,18 +1137,18 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                     className="w-4 h-4 text-amber-600 focus:ring-amber-500"
                   />
                   <span className="font-bold text-sm text-stone-900">
-                    Use Audio Files as Chapters
+                    Use files and folders as chapters
                   </span>
                 </div>
                 <span className="px-2 py-0.5 rounded bg-stone-200 text-stone-700 text-[11px] font-semibold">
-                  Instant
+                  No transcription
                 </span>
               </div>
               <p className="text-xs text-stone-600 pl-6 leading-relaxed">
-                Use each audio file as its own chapter. Ideal when your MP3s are already split per chapter.
+                Each numbered folder becomes a chapter; files inside are combined in name order. If there are no numbered folders, each audio file becomes a chapter.
               </p>
               <div className="pl-6 pt-1 text-[11px] text-amber-800 italic">
-                &ldquo;Use this when your audiobook already consists of clean, correctly separated chapter files.&rdquo;
+                Best when your files are already separated into the chapters you want.
               </div>
             </div>
           </label>
@@ -1169,11 +1157,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
 
       {/* SECTION 3: Audio Merge Method */}
       <div
-        className={`bg-white rounded-xl p-5 border transition-all ${
-          chapterSource === 'existing_files'
-            ? 'opacity-60 border-stone-200 bg-stone-50/40'
-            : 'border-stone-200/80 shadow-xs'
-        } space-y-3`}
+        className="bg-white rounded-xl p-5 border border-stone-200 shadow-xs space-y-3"
       >
         <div className="flex items-center justify-between border-b border-stone-100 pb-3">
           <div className="flex items-center space-x-2">
@@ -1181,22 +1165,14 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
             <div>
               <h3 className="font-bold text-sm text-stone-900">Audio Workflow</h3>
               <p className="text-xs text-stone-500">
-                Choose how audio files are combined before AI chapter detection.
+                Choose how audio is combined. Whisper is a separate option; skipping it still produces one audiobook.
               </p>
             </div>
           </div>
-          {chapterSource === 'existing_files' && (
-            <span className="text-xs font-semibold px-2.5 py-1 rounded bg-stone-200 text-stone-600">
-              Bypassed (Using files as chapters)
-            </span>
-          )}
+
         </div>
 
-        {chapterSource === 'existing_files' ? (
-          <div className="p-3 bg-stone-100/70 rounded-lg text-xs text-stone-600 leading-relaxed">
-            Audio merging and transcription are bypassed. Each audio file serves directly as an individual chapter.
-          </div>
-        ) : (
+        {(
           <div className="space-y-3 pt-1">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {/* Option A: Standard merge (recommended) */}
@@ -1263,21 +1239,21 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                         className="w-4 h-4 text-amber-600 focus:ring-amber-500 disabled:opacity-40"
                       />
                       <span className="font-bold text-sm text-stone-900">
-                        Fast Merge
+                        Skip PCM Conversion (Direct Stitch)
                       </span>
                     </div>
                     {!streamCopyCompatible ? (
                       <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 text-[10px] font-semibold">
-                        Not Available (Mixed Codecs)
+                        Unavailable (Stream Parameters)
                       </span>
                     ) : (
                       <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[11px] font-semibold">
-                        Instant
+                        Stream copy
                       </span>
                     )}
                   </div>
                   <p className="text-xs text-stone-600 pl-6 leading-relaxed">
-                    Stitches audio instantly without re-encoding. Requires all files to have the exact same format and sample rate.
+                    Stitches compatible encoded streams without PCM normalization. Analysis/preview decoding and selected chapter processing still run.
                   </p>
                 </div>
               </label>
@@ -1288,7 +1264,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
               <div className="p-3.5 bg-stone-50 border border-stone-200 rounded-lg text-xs text-stone-700 flex items-start space-x-2.5">
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div className="leading-relaxed">
-                  <span className="font-semibold text-stone-900">Quick Merge is unavailable:</span> Source audio files have mixed formats or non-uniform codecs ({formatsDetected.join(', ')}). Standard Lossless PCM Merge is selected to decode and normalize all tracks into a continuous timeline.
+                  <span className="font-semibold text-stone-900">Skip PCM is unavailable:</span> {compatibility.reason}
                 </div>
               </div>
             )}
@@ -1298,7 +1274,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
               <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-900 flex items-start space-x-2.5">
                 <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
                 <div className="leading-relaxed">
-                  <span className="font-bold">Warning:</span> Use Quick Merge only when source audio files have clean, continuous timestamps and matching sample rates. Files with timestamp drift, malformed headers, or inconsistent encoders may produce inaccurate WhisperX timing or chapter boundaries.
+                  <span className="font-bold">Warning:</span> Use Skip PCM only with clean audio, continuous timestamps and matching stream parameters. Files with timestamp drift, malformed headers, or inconsistent encoders may produce inaccurate transcription timing or chapter boundaries.
                 </div>
               </div>
             )}
@@ -1314,7 +1290,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
             <div>
               <h3 className="font-bold text-sm text-stone-900">Output Folder</h3>
               <p className="text-xs text-stone-500">
-                Destination where merged masters, transcription candidate logs, and final M4B files are written.
+                Destination where merged masters, transcription candidate logs, and final audio exports are written.
               </p>
             </div>
           </div>
@@ -1451,13 +1427,23 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
             : 'border-stone-200/80 shadow-xs'
         } space-y-4`}
       >
+        <label className="flex items-center justify-between gap-4 p-3 rounded-lg border border-emerald-200 bg-emerald-50 cursor-pointer">
+          <span>
+            <span className="block text-sm font-bold text-stone-900">Faster Transcription</span>
+            <span className="block text-xs text-stone-600 mt-0.5">Uses the optimized Faster Whisper engine for faster processing and lower memory usage. Recommended for most systems.</span>
+          </span>
+          <input type="checkbox" checked={fasterEnabled} disabled={isSwitchingEngine} onChange={event => handleFasterTranscriptionChange(event.target.checked)} title="Runs your selected Whisper model using the optimized CTranslate2 engine. Disable this if you experience compatibility problems." className="w-5 h-5 accent-emerald-600 shrink-0" />
+        </label>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-100 pb-3">
           <div className="flex items-center space-x-2">
             <Sparkles className="w-5 h-5 text-amber-600" />
             <div>
-              <h3 className="font-bold text-sm text-stone-900">5. Speech Model Management</h3>
+              <h3 className="font-bold text-sm text-stone-900">Choose a speech-recognition model</h3>
+              <p className="text-xs font-semibold text-amber-800">
+                {fasterEnabled ? 'Faster Whisper / CTranslate2 models' : 'OpenAI Whisper / PyTorch models'}
+              </p>
               <p className="text-xs text-stone-500">
-                Local hardware detection and local Whisper/WhisperX model weights.
+                Models run on your computer to turn speech into timestamped text. Larger models are usually more accurate but take longer and use more storage.
               </p>
             </div>
           </div>
@@ -1465,7 +1451,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
           <div className="flex items-center space-x-2">
             {chapterSource === 'existing_files' ? (
               <span className="text-xs font-semibold px-2.5 py-1 rounded bg-stone-200 text-stone-600">
-                Disabled (No WhisperX needed)
+                Not needed for file-based chapters
               </span>
             ) : (
               <>
@@ -1478,13 +1464,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                   <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingModels ? 'animate-spin' : ''}`} />
                   <span>{isRefreshingModels ? 'Checking Disk...' : 'Refresh Models'}</span>
                 </button>
-                <button
-                  onClick={handleToggleHardwareMode}
-                  className="px-2.5 py-1 rounded text-[11px] font-medium bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 transition-colors cursor-pointer"
-                  title="Toggle between real/simulated hardware mode for testing GPU vs CPU restriction logic"
-                >
-                  Simulate: {hardware.mode === 'cpu' ? 'Switch to NVIDIA GPU' : 'Switch to CPU-only'}
-                </button>
+
               </>
             )}
           </div>
@@ -1492,8 +1472,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
 
         {chapterSource === 'existing_files' ? (
           <div className="p-3 bg-stone-100/70 rounded-lg text-xs text-stone-500 italic">
-            Whisper speech recognition is bypassed because imported audio files will be used directly as
-            individual chapters.
+            Speech recognition is not needed because chapters will come from your folders, files, or existing chapter markers. Audio preparation still runs.
           </div>
         ) : (
           <div className="space-y-4">
@@ -1521,7 +1500,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                           : 'bg-stone-200 text-stone-700'
                       }`}
                     >
-                      {hardware.mode === 'gpu' ? 'CUDA Active' : 'Int8 CPU Mode'}
+                      {hardware.mode === 'gpu' ? 'GPU detected � automatic fallback' : 'CPU Mode'}
                     </span>
                   </div>
                   <p className="text-stone-500 mt-0.5">
@@ -1552,7 +1531,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
 
             {/* Models Table / Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {models.map((model) => {
+              {models.filter(model => model.backend === transcriptionEngine).map((model) => {
                 const isSelected = selectedModelId === model.id;
                 const isRecommended = hardware.recommendedModelId === model.id;
                 const isCompatible = hardware.mode === 'gpu' || !model.requiresGpu;
@@ -1666,7 +1645,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                       {model.isDownloading && (
                         <div className="space-y-1 pt-1">
                           <div className="flex justify-between text-[11px] text-amber-900 font-mono">
-                            <span>Downloading weights ({model.downloadSpeed || 'Streaming'})...</span>
+                            <span>Downloading model files ({model.downloadSpeed || 'in progress'})...</span>
                             <span className="font-bold">
                               {model.downloadedBytes && model.totalBytes
                                 ? `${(model.downloadedBytes / (1024 * 1024)).toFixed(1)} / ${(model.totalBytes / (1024 * 1024)).toFixed(1)} MB (${model.downloadProgress || 0}%)`
@@ -1697,7 +1676,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                             Downloading...
                           </span>
                         ) : (
-                          <span className="text-stone-400 text-[11px]">Not Installed</span>
+                          <span className="text-stone-400 text-[11px]">{model.downloadError ? 'Failed' : 'Not Installed'}</span>
                         )}
                       </div>
 
@@ -1779,7 +1758,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
               {!hasAudioFiles && <li>No supported audio files were found in the selected folder.</li>}
               {!isOutputValid && <li>The selected output folder cannot be written to.</li>}
               {chapterSource === 'whisperx' && !selectedModel && (
-                <li>Select a compatible WhisperX model to continue.</li>
+                <li>Select a compatible Whisper model to continue.</li>
               )}
               {chapterSource === 'whisperx' && selectedModel && !isSelectedModelCompatible && (
                 <li>
@@ -1796,11 +1775,11 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
             <span className="font-semibold text-stone-700">Workflow:</span>{' '}
             {chapterSource === 'existing_files' ? (
               <span className="font-medium text-amber-800">
-                Imported Audio Files as Chapters (No WhisperX)
+                Chapters from Source Structure (No Transcription)
               </span>
             ) : (
               <span className="font-medium text-amber-800">
-                WhisperX Chapter Detection ({mergeMethod === 'quick' ? 'Quick Merge' : 'Standard Merge'} •{' '}
+                Whisper Chapter Detection ({mergeMethod === 'quick' ? 'Quick Merge' : 'Standard Merge'} •{' '}
                 {selectedModel?.name || 'Whisper Small'})
               </span>
             )}

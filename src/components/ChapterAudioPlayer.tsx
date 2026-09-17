@@ -62,6 +62,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   const [lastClickedWord, setLastClickedWord] = useState<{ word: string; timestamp: string } | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastTrack = useRef<string>('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Helper: Format seconds to HH:MM:SS
@@ -155,9 +156,13 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
       const audio = audioRef.current;
       audio.volume = isMuted ? 0 : volume;
 
-      if (isPlaying) {
+      const trackKey = `${activeTrack.id}:${activeTrack.seconds}`;
+      if (lastTrack.current !== trackKey) {
         audio.currentTime = activeTrack.seconds;
         setCurrentTime(activeTrack.seconds);
+        lastTrack.current = trackKey;
+      }
+      if (isPlaying) {
         audio.play().catch((e) => {
           console.warn('Playback error:', e);
         });
@@ -167,7 +172,9 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
       return;
     }
 
-  }, [activeTrack?.id, activeTrack?.start, isPlaying, audioUrl, volume, isMuted]);
+  }, [activeTrack?.id, activeTrack?.start, activeTrack?.seconds, isPlaying, audioUrl]);
+
+  useEffect(() => { if(audioRef.current) audioRef.current.volume = isMuted ? 0 : volume; }, [volume,isMuted]);
 
   // Audio element events
   const handleTimeUpdate = () => {
@@ -188,7 +195,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
 
   // Nudge playback -5s or +5s
   const handleSeekOffset = (offset: number) => {
-    const nextTime = Math.max(0, currentTime + offset);
+    const nextTime = Math.min(duration, Math.max(0, currentTime + offset));
     setCurrentTime(nextTime);
     if (audioRef.current && audioUrl) {
       audioRef.current.currentTime = nextTime;
@@ -222,7 +229,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
         <div className="flex items-center space-x-2">
           <Radio className="w-4 h-4 text-stone-400" />
           <span>
-            Audio Audition Bar: Click any <strong className="text-stone-700">Listen ▶</strong> button in the table or candidates list. You can then click any word to snap the timestamp!
+            Preview audio: use <strong className="text-stone-700">Listen ▶</strong> beside a chapter, then click a transcript word to place that chapter start precisely.
           </span>
         </div>
         <div className="flex items-center space-x-2">
@@ -236,7 +243,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
           <button
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-white border border-stone-300 text-stone-700 hover:bg-stone-100 text-[11px] font-medium shadow-2xs cursor-pointer"
-            title="Attach your local audiobook MP3/M4B file to hear the actual narrator voice"
+            title="Choose a local audio file to preview while editing chapters"
           >
             <Upload className="w-3.5 h-3.5 text-stone-500" />
             <span>Load Local MP3 for Real Audio</span>
@@ -339,7 +346,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
               </span>
             )}
             <span className="text-stone-500 text-[10px] hidden sm:inline">
-              👆 Click any word to snap chapter start to that timestamp
+              Click a word to move the active chapter start to that exact moment
             </span>
           </div>
         </div>
@@ -447,8 +454,8 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
           <div className="flex-1 relative flex items-center">
             <input
               type="range"
-              min={Math.max(0, activeTrack.seconds - 30)}
-              max={activeTrack.seconds + 60}
+              min={0}
+              max={duration}
               step="0.5"
               value={currentTime}
               onChange={(e) => {
@@ -463,7 +470,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
           </div>
 
           <span className="font-mono text-xs text-stone-500">
-            {formatSec(activeTrack.seconds + 60)}
+            {formatSec(duration)}
           </span>
         </div>
 

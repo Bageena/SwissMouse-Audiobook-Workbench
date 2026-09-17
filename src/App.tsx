@@ -6,6 +6,7 @@ import {
   AudiobookMetadata,
   ChapterSourceType,
   AudioMergeMethodType,
+  OutputAudioFormat,
 } from './types';
 import { Header } from './components/Header';
 import { Step1MergeDetect } from './components/Step1MergeDetect';
@@ -212,22 +213,23 @@ export default function App() {
   };
 
   // Step 4 Handler: Build Chaptered Audio Package (M4B, M4A, MP3, FLAC, Opus, WAV)
-  const handleBuildM4b = async (outputFormat: string = 'm4b') => {
+  const handleBuildM4b = async (outputFormats: OutputAudioFormat[] = ['m4b'], convert = false, cue = true, bitrates: Partial<Record<OutputAudioFormat,number>> = {}) => {
     if (!currentJob) return;
     setIsBuildingM4b(true);
+    const poll = window.setInterval(() => refreshCurrentJob(currentJob.id), 1000);
     try {
       const res = await fetch(`/api/jobs/${currentJob.id}/build-m4b`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ outputFormat }),
+        body: JSON.stringify({ outputFormats, convert, cue, bitrates }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Build failed');
       await refreshCurrentJob(currentJob.id);
-      setActiveStep(5);
     } catch (err: any) {
       alert(`Build Error: ${err.message}`);
     } finally {
+      window.clearInterval(poll);
       setIsBuildingM4b(false);
     }
   };
@@ -370,7 +372,7 @@ export default function App() {
         <div className="text-center space-y-3">
           <div className="w-8 h-8 border-4 border-amber-600 border-t-transparent rounded-full animate-spin mx-auto" />
           <p className="text-stone-600 text-sm font-medium">
-            Starting Audiobook Chapter Workbench...
+            Starting SwissMouse...
           </p>
         </div>
       </div>
@@ -447,7 +449,7 @@ export default function App() {
                   { step: 1, label: '1. Staging', desc: 'Import and Workflow' },
                   { step: 2, label: '2. Build Chapters', desc: 'Audit and Edit Chapters' },
                   { step: 3, label: '3. Metadata', desc: 'Edit Metadata & Artwork' },
-                  { step: 4, label: '4. M4B Convert', desc: 'Compile FFmetadata & encode AAC audio' },
+                  { step: 4, label: '4. Export', desc: 'Preserve audio or convert selected formats' },
                   { step: 5, label: '5. Validate', desc: 'FFprobe container check & playback review' },
                 ].map((item) => {
                   const isActive = activeStep === item.step;
@@ -499,6 +501,7 @@ export default function App() {
                 isRunning={isProcessingStep1}
                 onNextStep={() => setActiveStep(2)}
                 onUpdateJobSettings={handleUpdateJobSettings}
+                onConfigChange={setConfig}
               />
             )}
 

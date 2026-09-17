@@ -34,7 +34,7 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
     { key: 'scanning', label: '1. Scan & Verify Source', desc: 'Inspect local audio files and verify formats' },
     { key: 'probing', label: '2. Probing Audio Streams', desc: 'FFprobe sample rates, bitrates, and durations' },
     { key: 'merging', label: '3. Audio Merge', desc: 'PCM decode or quick stream-copy stitch' },
-    { key: 'transcribing', label: '4. Speech Recognition', desc: 'Local WhisperX neural transcription' },
+    { key: 'transcribing', label: '4. Speech Recognition', desc: 'Local Whisper transcription' },
     { key: 'detecting_chapters', label: '5. Chapter Candidate Detection', desc: 'Phoneme alignment & title token extraction' },
     { key: 'completed', label: '6. Review Ready', desc: 'Prepare markers for Step 2 human review' },
   ];

@@ -394,6 +394,12 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
 
   return (
     <div className="space-y-6">
+      {!!job.existingChapters?.length && <details className="border rounded-lg p-4 bg-white">
+        <summary>View chapters already in the source file ({job.existingChapters.length})</summary>
+        <p className="text-sm">Only the chapter list you review and save below will be exported.</p>
+        {job.existingChapters.map(c => <p className="text-sm" key={c.id}>{c.start} — {c.title}</p>)}
+        <button className="underline text-sm" title="Replace the current review list with chapters read from the source file" onClick={() => setChapters(job.existingChapters!.map(c => ({...c})))}>Use these chapters as my starting point</button>
+      </details>}
       {/* Step Header Banner */}
       <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -403,12 +409,11 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                 2
               </span>
               <h2 className="text-lg font-bold text-stone-900">
-                Step 2: Review and Adjust Chapters
+                Review chapter starts and names
               </h2>
             </div>
             <p className="text-sm text-stone-600 mt-1 max-w-3xl">
-              Listen to the real merged audiobook, adjust chapter markers, prune false-positives, or snap timestamps to any spoken word.
-              Chapter markers never remove opening or ending audio; the full source timeline is preserved.
+              Check each chapter start and title before exporting. Click a word in the transcript to set a precise start time, or edit the list directly. Chapters organize the recording; they never cut out audio.
             </p>
           </div>
 
@@ -428,12 +433,12 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
               ) : saveSuccess ? (
                 <>
                   <Check className="w-4 h-4" />
-                  <span>Saved!</span>
+                  <span>Chapters saved</span>
                 </>
               ) : (
                 <>
                   <Check className="w-4 h-4" />
-                  <span>Save Chapters</span>
+                  <span>Save chapter list</span>
                 </>
               )}
             </button>
@@ -450,7 +455,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
               disabled={!!currentError}
               className="flex items-center space-x-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold bg-stone-900 hover:bg-stone-800 text-stone-100 disabled:opacity-40 transition-colors cursor-pointer"
             >
-              <span>Next: Metadata (Step 3)</span>
+              <span>Save and add book details</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
@@ -460,7 +465,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
         {currentError && (
           <div className="mt-4 p-3 rounded-lg bg-red-50 border border-red-200 flex items-center space-x-2 text-red-700 text-xs font-medium">
             <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
-            <span>Validation Alert: {currentError}</span>
+            <span>Fix this before continuing: {currentError}</span>
           </div>
         )}
       </div>
@@ -509,18 +514,18 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                 <div className="flex items-center space-x-2">
                   <Sparkles className="w-4 h-4 text-amber-600" />
                   <h3 className="font-semibold text-sm text-stone-900">
-                    Full Transcript ({matchingTranscriptWords.length.toLocaleString()} words)
+                    Transcript ({matchingTranscriptWords.length.toLocaleString()} words)
                   </h3>
                 </div>
                 <p className="text-xs text-stone-500 mt-0.5 font-mono">
-                  Actual WhisperX word timestamps · searchable
+                  Click a word to preview that moment and set the nearest chapter start
                 </p>
               </div>
 
               <input
                 value={transcriptSearch}
                 onChange={(event) => setTranscriptSearch(event.target.value)}
-                placeholder="Search words…"
+                placeholder="Find a word…"
                 className="w-36 px-2 py-1 text-xs rounded border border-stone-300 bg-white"
               />
             </div>
@@ -535,7 +540,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                     key={`${word.startSeconds}-${index}`}
                     type="button"
                     onClick={() => handleTranscriptWordSelect(word)}
-                    title={`Seek to ${word.start}`}
+                    title={`Listen from ${word.start}; use it to place a chapter start`}
                     className={`px-1 py-0.5 rounded cursor-pointer transition-colors ${isActive ? 'bg-amber-500 text-stone-950 font-bold' : isHeading ? 'bg-amber-100 text-amber-950 font-semibold ring-1 ring-amber-300' : 'text-stone-700 hover:bg-stone-200'}`}
                   >
                     {word.word}
@@ -617,7 +622,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                               ? 'bg-amber-100 text-amber-800'
                               : 'bg-stone-100 text-stone-700'
                           }`}
-                          title="WhisperX token confidence score"
+                          title="Speech-recognition confidence score"
                         >
                           {(confNum * 100).toFixed(0)}% conf
                         </span>
@@ -720,7 +725,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                 <div className="flex items-center space-x-2">
                   <FileText className="w-4 h-4 text-stone-800" />
                   <h3 className="font-semibold text-sm text-stone-900">
-                    Chapter List ({chapters.length})
+                    Chapters to export ({chapters.length})
                   </h3>
                 </div>
                 <p className="text-xs text-stone-500 mt-0.5 font-mono">
@@ -733,20 +738,20 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                   id="btn-import-csv"
                   onClick={() => setShowImportModal(true)}
                   className="flex items-center space-x-1 px-2.5 py-1 text-xs rounded border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 shadow-2xs font-medium cursor-pointer"
-                  title="Import edited chapters CSV"
+                  title="Paste a chapter list from a CSV file"
                 >
                   <Upload className="w-3.5 h-3.5 text-stone-500" />
-                  <span>Import</span>
+                  <span>Paste CSV</span>
                 </button>
 
                 <a
                   href={`/api/jobs/${job.id}/export/chapters-csv`}
                   download
                   className="flex items-center space-x-1 px-2.5 py-1 text-xs rounded border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 shadow-2xs font-medium"
-                  title="Download chapters.csv"
+                  title="Download this chapter list as a CSV file"
                 >
                   <Download className="w-3.5 h-3.5 text-stone-500" />
-                  <span>Export</span>
+                  <span>Download CSV</span>
                 </a>
 
                 <button
@@ -755,7 +760,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                   className="flex items-center space-x-1 px-2.5 py-1 text-xs rounded bg-stone-900 hover:bg-stone-800 text-stone-100 font-semibold cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Add Row</span>
+                  <span>Add chapter</span>
                 </button>
               </div>
             </div>
@@ -763,7 +768,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
             {/* Validation Rule Hints */}
             <div className="px-4 py-2 bg-amber-50/60 border-b border-amber-100 text-[11px] text-amber-900 flex items-center justify-between">
               <span>
-                Validation rules: Timestamps must strictly increase.
+                Chapter starts must be in time order. The first chapter starts at 00:00:00.000.
               </span>
               <span className="font-mono text-stone-500">Lead-in: {leadInSeconds}s</span>
             </div>

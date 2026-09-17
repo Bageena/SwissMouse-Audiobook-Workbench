@@ -309,16 +309,11 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                 3
               </span>
               <h2 className="text-lg font-bold text-stone-900">
-                Step 3: Audiobook Metadata & Cover Art
+                Add book details and cover art
               </h2>
             </div>
             <p className="text-sm text-stone-600 mt-1 max-w-3xl">
-              Configures standard <strong>Audiobookshelf</strong> metadata tags.
-              The <strong>Narrator</strong> is mapped to the MP4/QuickTime{' '}
-              <code className="bg-stone-100 px-1.5 py-0.5 rounded text-amber-900 font-mono text-xs">
-                Composer (\xa9wrt)
-              </code>{' '}
-              tag as per audiobook standards, and high-resolution cover art is embedded directly into the container.
+              Add the information players and library apps use to identify your book. Fields are optional unless marked required. SwissMouse uses common Audiobookshelf-compatible tags and checks them after export.
             </p>
           </div>
 
@@ -338,7 +333,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
               ) : (
                 <>
                   <Save className="w-4 h-4" />
-                  <span>Save Metadata</span>
+                  <span>Save book details</span>
                 </>
               )}
             </button>
@@ -349,7 +344,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
               onClick={onNextStep}
               className="flex items-center space-x-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold bg-stone-900 hover:bg-stone-800 text-stone-100 transition-colors cursor-pointer"
             >
-              <span>Next: Build M4B (Step 4)</span>
+              <span>Choose export options</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
@@ -359,7 +354,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
           <div className="mt-3 p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center space-x-2 text-emerald-800 text-xs font-medium">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
             <span>
-              Metadata successfully saved and synchronized! FFmetadata tags updated.
+              Book details saved. They will be included in your next export.
             </span>
           </div>
         )}
@@ -373,7 +368,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
             <div className="flex items-center justify-between border-b border-stone-100 pb-3">
               <div className="flex items-center space-x-2">
                 <Image className="w-4 h-4 text-amber-700" />
-                <h3 className="font-bold text-sm text-stone-900">Cover</h3>
+                <h3 className="font-bold text-sm text-stone-900">Cover art</h3>
               </div>
               {formData.cover && (
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
@@ -399,7 +394,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                       No cover art selected
                     </span>
                     <span className="text-[11px] text-stone-400 mt-1">
-                      Scans folder for cover.jpg or upload / paste link
+                      Find a cover in the source folder, upload one, or paste an image link
                     </span>
                   </div>
                 )}
@@ -409,7 +404,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                     type="button"
                     onClick={() => setFormData((prev) => ({ ...prev, cover: null }))}
                     className="absolute top-2 right-2 bg-rose-600 text-white p-1.5 rounded-full shadow hover:bg-rose-700 transition cursor-pointer opacity-90 hover:opacity-100"
-                    title="Remove Cover"
+                    title="Remove this cover image"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -475,14 +470,14 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-1.5 text-xs font-bold text-stone-800">
                     <FolderSearch className="w-3.5 h-3.5 text-amber-700" />
-                    <span>Local Folder Detection</span>
+                    <span>Find a cover in the source folder</span>
                   </div>
                   <span className="text-[10px] text-stone-400 font-mono">
                     cover.jpg / cover.png
                   </span>
                 </div>
                 <p className="text-[11px] text-stone-500">
-                  When running locally, automatically searches for any image named{' '}
+                  Search the selected audio folder for an image named{' '}
                   <code className="font-mono text-stone-700 bg-stone-200/70 px-1 py-0.5 rounded">
                     cover.*
                   </code>{' '}
@@ -497,7 +492,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                 >
                   <FolderSearch className={`w-3.5 h-3.5 ${isScanningLocal ? 'animate-spin' : ''}`} />
                   <span>
-                    {isScanningLocal ? 'Scanning directory...' : 'Scan Folder for cover.*'}
+                    {isScanningLocal ? 'Looking for cover art...' : 'Find cover art in folder'}
                   </span>
                 </button>
               </div>
@@ -506,7 +501,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
               <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 space-y-2">
                 <div className="flex items-center space-x-1.5 text-xs font-bold text-stone-800">
                   <Link2 className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Fetch via Web Link</span>
+                  <span>Use an image web link</span>
                 </div>
                 <div className="flex space-x-2">
                   <input
@@ -523,11 +518,11 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                     disabled={isLoadingUrl || !coverUrlInput.trim()}
                     className="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 text-white rounded text-xs font-semibold transition cursor-pointer disabled:bg-stone-300"
                   >
-                    {isLoadingUrl ? 'Loading...' : 'Fetch'}
+                    {isLoadingUrl ? 'Loading...' : 'Use image'}
                   </button>
                 </div>
                 <p className="text-[10px] text-stone-400">
-                  Direct image link from Audible, Goodreads, or OpenLibrary
+                  Paste a direct image link, for example from Audible, Goodreads, or Open Library.
                 </p>
               </div>
 
@@ -535,7 +530,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
               <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 space-y-2">
                 <div className="flex items-center space-x-1.5 text-xs font-bold text-stone-800">
                   <Upload className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Manual File Upload</span>
+                  <span>Upload a cover image</span>
                 </div>
                 <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-stone-300 rounded-lg bg-white hover:bg-stone-50 cursor-pointer transition">
                   <Upload className="w-5 h-5 text-stone-400 mb-1" />
@@ -566,7 +561,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
               <div className="flex items-center space-x-2 border-b border-stone-100 pb-3">
                 <BookOpen className="w-4 h-4 text-amber-700" />
                 <h3 className="font-bold text-sm text-stone-900">
-                  Title and Author
+                  Book title and contributors
                 </h3>
               </div>
 
@@ -927,7 +922,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
               <div className="flex items-center space-x-2 border-b border-stone-100 pb-3">
                 <Building className="w-4 h-4 text-amber-700" />
                 <h3 className="font-bold text-sm text-stone-900">
-                  Publishing & Metadata Identifiers
+                  Publication details and identifiers
                 </h3>
               </div>
 
@@ -1130,7 +1125,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                 <div className="flex items-center space-x-2">
                   <FileText className="w-4 h-4 text-amber-700" />
                   <h3 className="font-bold text-sm text-stone-900">
-                    Audiobook Synopsis & Description
+                    Book summary
                   </h3>
                 </div>
                 <span className="text-[11px] text-stone-400 font-mono">
@@ -1146,12 +1141,11 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                   onChange={(e) =>
                     setFormData((prev) => ({ ...prev, description: e.target.value }))
                   }
-                  placeholder="Enter the book synopsis or summary for Audiobookshelf description display..."
+                  placeholder="Write a short synopsis or summary for library apps and players..."
                   className="w-full bg-stone-50/50 border border-stone-300 rounded-lg p-3 text-xs text-stone-800 focus:outline-none focus:ring-1 focus:ring-amber-500 leading-relaxed font-sans"
                 />
                 <p className="text-[10px] text-stone-400 mt-1">
-                  Stored in both <code className="font-mono text-stone-600">description</code> and{' '}
-                  <code className="font-mono text-stone-600">comment</code> tags in FFMETADATA.
+                  Saved as the book description in compatible audiobook apps.
                 </p>
               </div>
             </div>
@@ -1165,7 +1159,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                 }}
                 className="px-4 py-2 text-xs font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-200/60 rounded-lg transition cursor-pointer"
               >
-                Reset Unsaved Changes
+                Discard unsaved changes
               </button>
               <button
                 type="submit"
@@ -1174,7 +1168,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                 className="flex items-center space-x-2 px-5 py-2.5 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 shadow-sm transition-all cursor-pointer active:scale-98 disabled:bg-stone-400"
               >
                 <Save className="w-4 h-4" />
-                <span>{isSaving ? 'Saving...' : 'Save Audiobook Metadata'}</span>
+                <span>{isSaving ? 'Saving...' : 'Save book details'}</span>
               </button>
             </div>
           </form>

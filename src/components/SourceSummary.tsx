@@ -47,7 +47,7 @@ export const SourceSummary: React.FC<SourceSummaryProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-amber-700">
-                Source Selected
+                Audio source selected
               </span>
               <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-medium">
                 <CheckCircle2 className="w-3 h-3 text-emerald-600" />
@@ -67,7 +67,7 @@ export const SourceSummary: React.FC<SourceSummaryProps> = ({
             className="self-start sm:self-center px-2.5 py-1.5 rounded-md bg-stone-100 hover:bg-stone-200 text-stone-700 hover:text-stone-900 text-xs flex items-center gap-1.5 transition-colors border border-stone-200 font-medium"
           >
             <RefreshCw className="w-3 h-3" />
-            Change Source
+            Choose different audio
           </button>
         )}
       </div>
@@ -118,10 +118,10 @@ export const SourceSummary: React.FC<SourceSummaryProps> = ({
         <div className="bg-stone-50/50 border border-stone-200/80 rounded-lg p-3">
           <div className="flex items-center gap-1.5 text-stone-500 text-xs mb-1">
             <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-            <span>Chapter Workflow</span>
+            <span>Chapter method</span>
           </div>
           <div className="text-xs font-semibold text-stone-900 mt-1 truncate" title={summary.chapterWorkflow === 'existing_files' ? 'Pre-split files as chapters' : 'Whisper AI detection'}>
-            {summary.chapterWorkflow === 'existing_files' ? 'Files as Chapters' : 'WhisperX AI'}
+            {summary.chapterWorkflow === 'existing_files' ? 'Files and folders' : 'AI speech detection'}
           </div>
         </div>
       </div>

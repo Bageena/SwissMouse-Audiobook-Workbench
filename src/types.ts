@@ -1,4 +1,6 @@
 export interface WorkbenchConfig {
+  faster_transcription: boolean;
+  selected_model: string;
   ffmpeg_path: string;
   ffprobe_path: string;
   whisper_profile: 'turbo' | 'accurate' | 'cpu';
@@ -42,6 +44,7 @@ export interface WorkbenchConfig {
 }
 
 export interface AudioPart {
+  sourceRelativePath?: string;
   id: string;
   name: string;
   sizeBytes: number;
@@ -130,7 +133,7 @@ export interface JobLog {
 export type ChapterSourceType = 'whisperx' | 'existing_files';
 export type AudioMergeMethodType = 'standard' | 'quick';
 export type Step1InputMethod = 'folder' | 'youtube';
-export type OutputAudioFormat = 'm4b' | 'm4a' | 'mp3' | 'flac' | 'opus' | 'wav';
+export type OutputAudioFormat = 'm4b' | 'm4a' | 'mp3' | 'flac' | 'ogg' | 'opus' | 'wav';
 export type YouTubeAudioFormat = 'best' | 'm4a' | 'mp3' | 'flac' | 'opus' | 'wav';
 
 export interface HardwareInfo {
@@ -159,6 +162,7 @@ export interface SpeechModelInfo {
   installedFile?: string;
   downloadError?: string;
   description: string;
+  backend?: 'faster-whisper' | 'openai-whisper';
 }
 
 export interface SourceSummaryData {
@@ -176,6 +180,8 @@ export interface SourceSummaryData {
 }
 
 export interface DiscoveredAudioFile {
+  storedName?: string;
+  streamSignature?: string;
   relativePath: string;
   fileName: string;
   folderName: string;
@@ -246,6 +252,17 @@ export interface YtDlpStatusInfo {
 }
 
 export interface AudiobookJob {
+  sourceBitrate?: number;
+  chapterStructure?: 'sequential_folders' | 'files';
+  sourceKey?: string;
+  transcriptKey?: string;
+  previewPath?: string;
+  sourceCodec?: string;
+  sourceFormat?: string;
+  sourceTags?: Record<string, string>;
+  importedMetadata?: AudiobookMetadata;
+  existingChapters?: ChapterEntry[];
+  exports?: { format: OutputAudioFormat; status: 'queued' | 'running' | 'success' | 'failed'; progress: number; filename?: string; fullPath?: string; mode?: string; error?: string; warnings?: string[]; verifiedTags?: Record<string,string> }[];
   id: string;
   name: string;
   author?: string;
@@ -294,6 +311,9 @@ export interface AudiobookJob {
     model: string;
     profile: string;
     language: string;
+    engine?: 'faster-whisper' | 'openai-whisper';
+    device?: 'cpu' | 'cuda';
+    computeType?: string;
     segmentsCount: number;
     wordsCount: number;
     completedAt: string;
@@ -309,6 +329,7 @@ export interface AudiobookJob {
   ffmetaContent?: string;
   
   outputM4b?: {
+    fullPath?: string;
     filename: string;
     duration: number;
     sizeBytes: number;
@@ -336,13 +357,15 @@ export type ComponentStatus =
   | 'repairing'
   | 'error';
 
-export type ComponentClassification = 'required' | 'optional';
+export type ComponentClassification = 'required' | 'recommended' | 'optional';
+export type RequirementGroup = 'core' | 'active_transcription' | 'optional_acceleration' | 'compatibility';
 
 export interface BaseRequirementItem {
   id: string;
   name: string;
   purpose: string;
   classification: ComponentClassification;
+  group?: RequirementGroup;
   status: ComponentStatus;
   installedVersion?: string;
   availableVersion?: string;

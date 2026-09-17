@@ -40,7 +40,7 @@ export const PurgeModal: React.FC<PurgeModalProps> = ({ job, onClose, onPurge })
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 text-stone-900 font-bold text-base">
             <Trash2 className="w-5 h-5 text-red-600" />
-            <span>Disk Cleanup & Purging</span>
+            <span>Free up disk space</span>
           </div>
           <button
             onClick={onClose}
@@ -51,7 +51,7 @@ export const PurgeModal: React.FC<PurgeModalProps> = ({ job, onClose, onPurge })
         </div>
 
         <p className="text-xs text-stone-600">
-          Raw audio processing and Whisper transcription generate large working files. Use this tool to reclaim disk space safely.
+          Audio preparation and speech recognition can create large working files. Choose what to remove carefully; completed exports stay safe unless you delete them outside this tool.
         </p>
 
         {/* Purge Type Radio Selector */}
@@ -68,11 +68,11 @@ export const PurgeModal: React.FC<PurgeModalProps> = ({ job, onClose, onPurge })
                 className="text-amber-600 focus:ring-amber-500"
               />
               <span className="font-semibold text-stone-900">
-                Option 1: Temporary PCM work files only
+                Remove temporary audio work files
               </span>
             </div>
             <p className="text-stone-500 text-[11px] mt-1 ml-5">
-              Removes leftover uncompressed PCM files from failed/interrupted jobs.
+              Removes leftover uncompressed audio from interrupted or failed processing.
             </p>
           </label>
 
@@ -88,11 +88,11 @@ export const PurgeModal: React.FC<PurgeModalProps> = ({ job, onClose, onPurge })
                 className="text-amber-600 focus:ring-amber-500"
               />
               <span className="font-semibold text-stone-900">
-                Option 2: Intermediates (Merged MP3 + Whisper JSON)
+                Remove generated working audio and transcript
               </span>
             </div>
             <p className="text-stone-500 text-[11px] mt-1 ml-5">
-              Removes the working CBR MP3 in <code>Merge/</code> and Whisper transcription JSON.
+              Removes the generated merged audio and speech transcript used for review. You can recreate them by running Step 1 again.
             </p>
           </label>
 
@@ -108,11 +108,11 @@ export const PurgeModal: React.FC<PurgeModalProps> = ({ job, onClose, onPurge })
                 className="text-red-600 focus:ring-red-500"
               />
               <span className="font-semibold text-red-900">
-                Option 3: All job source data (Input + Intermediates)
+                Remove this project’s imported source and working files
               </span>
             </div>
             <p className="text-stone-500 text-[11px] mt-1 ml-5">
-              Removes original files in <code>Input/</code> and intermediates. Keeps <code>Output/</code> .m4b and CSVs.
+              Permanently removes the copies stored in this project plus working files. Completed exports and CSV chapter lists remain.
             </p>
           </label>
         </div>
@@ -122,10 +122,10 @@ export const PurgeModal: React.FC<PurgeModalProps> = ({ job, onClose, onPurge })
           <div className="p-3 bg-red-50 rounded-lg border border-red-200 space-y-2 text-xs text-red-800">
             <div className="flex items-center space-x-1.5 font-semibold">
               <ShieldAlert className="w-4 h-4 text-red-600" />
-              <span>Destructive Action Confirmation</span>
+              <span>Confirm permanent removal</span>
             </div>
             <p className="text-[11px]">
-              Type <strong className="font-mono">{requiredPhrase}</strong> below to confirm permanent deletion of input files:
+              Type <strong className="font-mono">{requiredPhrase}</strong> below to confirm. This cannot be undone:
             </p>
             <input
               type="text"
@@ -147,10 +147,10 @@ export const PurgeModal: React.FC<PurgeModalProps> = ({ job, onClose, onPurge })
         <div className="p-3 bg-stone-50 border border-stone-200 rounded-lg space-y-1.5 text-[11px] text-stone-600">
           <div className="flex items-center space-x-1.5 font-semibold text-stone-800">
             <Check className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Strict Retention Guarantees</span>
+            <span>What stays safe</span>
           </div>
           <p className="leading-relaxed">
-            Purging <strong>only</strong> removes temporary/intermediate working files. Purge will <strong>never</strong> delete:
+            The first two options remove only generated working files. This tool never removes:
           </p>
           <ul className="list-disc list-inside space-y-0.5 text-stone-500 pl-1">
             <li>Saved projects, metadata, cover art, transcripts, or chapter edits</li>
@@ -176,7 +176,7 @@ export const PurgeModal: React.FC<PurgeModalProps> = ({ job, onClose, onPurge })
                 : 'bg-amber-600 hover:bg-amber-500'
             }`}
           >
-            {isPurging ? 'Purging...' : 'Execute Purge'}
+            {isPurging ? 'Removing files...' : purgeType === 'job' ? 'Permanently remove project files' : 'Remove selected working files'}
           </button>
         </div>
       </div>

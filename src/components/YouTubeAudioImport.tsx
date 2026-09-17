@@ -85,8 +85,8 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
     const trimmed = url.trim();
     const valid = /^(https?:\/\/)?(www\.|m\.)?(youtube\.com|youtu\.be)\/.+$/i.test(trimmed);
     setIsUrlValid(valid);
-    if (!valid && videoInfo) {
-      // Clear inspected info if URL was changed to something invalid
+    if (videoInfo) {
+      // Changing to another valid URL also invalidates the inspected details.
       setVideoInfo(null);
       setDownloadSuccess(null);
     }
@@ -248,7 +248,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
         </div>
         <div>
           <span className="font-semibold text-amber-300 block mb-0.5">
-            Content Rights & Terms of Service Notice
+            Make sure you have permission
           </span>
           <p className="text-stone-300">
             Download only content you own, have permission to download, or are otherwise authorized to use. You are responsible for complying with YouTube’s Terms of Service, copyright law, and all applicable rights restrictions.
@@ -265,7 +265,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
           <div className="flex items-center gap-2">
             <Terminal className="w-4 h-4 text-stone-400" />
             <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-300">
-              Local Tooling: yt-dlp & FFmpeg
+              Tools needed for YouTube import
             </h4>
           </div>
 
@@ -292,7 +292,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
         {/* Binary Details & Status Rows */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
           <div className="bg-stone-950/60 border border-stone-800/80 rounded-lg p-3">
-            <div className="text-stone-400 font-medium mb-1">yt-dlp Executable</div>
+            <div className="text-stone-400 font-medium mb-1">YouTube download tool (yt-dlp)</div>
             {isToolInstalled ? (
               <div className="space-y-0.5">
                 <div className="font-mono text-stone-200 truncate" title={ytDlpStatus?.executablePath}>
@@ -310,7 +310,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
           </div>
 
           <div className="bg-stone-950/60 border border-stone-800/80 rounded-lg p-3">
-            <div className="text-stone-400 font-medium mb-1">FFmpeg & FFprobe Media Engine</div>
+            <div className="text-stone-400 font-medium mb-1">Audio processing tool (FFmpeg)</div>
             {isFfmpegReady ? (
               <div className="space-y-0.5">
                 <div className="font-mono text-stone-200">
@@ -318,7 +318,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
                 </div>
                 <div className="text-[11px] text-emerald-400 flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3" />
-                  Ready for audio extraction, PCM merge, and transcode
+                  Ready to extract, combine, and convert audio
                 </div>
               </div>
             ) : (
@@ -373,10 +373,10 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
             onClick={checkStatus}
             disabled={isLoadingStatus}
             className="px-2.5 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-stone-200 border border-stone-800 text-xs flex items-center gap-1 transition-colors ml-auto"
-            title="Refresh status"
+            title="Check whether the required tools are ready"
           >
             <RefreshCw className={`w-3 h-3 ${isLoadingStatus ? 'animate-spin' : ''}`} />
-            Check Status
+            Check tools
           </button>
         </div>
 
@@ -423,7 +423,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
         <div className="flex items-center justify-between">
           <label htmlFor="youtube-url-input" className="text-xs font-semibold uppercase tracking-wider text-stone-300 flex items-center gap-2">
             <Video className="w-4 h-4 text-red-500" />
-            YouTube Video URL
+            YouTube link
           </label>
           <span className="text-[11px] text-stone-400">
             Accepts youtube.com/watch, youtu.be, and shorts links
@@ -463,12 +463,12 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
             {isFetchingInfo ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                Inspecting Video...
+                Checking link...
               </>
             ) : (
               <>
                 <Film className="w-3.5 h-3.5" />
-                Fetch Video Info
+                Check video
               </>
             )}
           </button>
@@ -479,7 +479,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
           <div className="p-3.5 rounded-lg bg-red-950/40 border border-red-800/60 text-xs text-red-200 flex items-start gap-2.5">
             <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <span className="font-semibold block">Inspection Error</span>
+              <span className="font-semibold block">Could not check this link</span>
               <p>{fetchError}</p>
             </div>
           </div>
@@ -513,11 +513,11 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
               <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-200">
-                Video Details Verified
+                Video found
               </h4>
             </div>
             <span className="text-xs text-stone-400">
-              Does not download until you click "Download Audio"
+              Nothing downloads until you choose Download audio
             </span>
           </div>
 
@@ -565,19 +565,19 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
           <div className="border-t border-stone-800 pt-4 space-y-3">
             <div className="flex items-center justify-between">
               <label className="text-xs font-semibold uppercase tracking-wider text-stone-300">
-                Audio Output Format
+                Choose downloaded audio format
               </label>
               <span className="text-[11px] text-stone-400">
-                Saved into: <code className="font-mono text-stone-300">output/imports/youtube/</code>
+                The downloaded file will be added to this project
               </span>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
               {[
-                { id: 'best', label: 'Best Available', sub: 'Preserve source' },
+                { id: 'best', label: 'Best available', sub: 'Keep source audio' },
                 { id: 'm4a', label: 'M4A', sub: 'AAC audio' },
-                { id: 'mp3', label: 'MP3', sub: 'FFmpeg transcode' },
-                { id: 'flac', label: 'FLAC', sub: 'Lossless PCM' },
+                { id: 'mp3', label: 'MP3', sub: 'Converted audio' },
+                { id: 'flac', label: 'FLAC', sub: 'Lossless audio' },
                 { id: 'opus', label: 'Opus', sub: 'High efficiency' },
                 { id: 'wav', label: 'WAV', sub: 'Uncompressed' },
               ].map(opt => (
@@ -600,7 +600,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
             {selectedFormat === 'mp3' && (
               <p className="text-[11px] text-stone-400 flex items-center gap-1.5">
                 <Info className="w-3 h-3 text-amber-400" />
-                MP3 conversion re-encodes source audio to standard CBR MP3 via FFmpeg.
+                MP3 conversion re-encodes source audio via FFmpeg. Best available preserves the source audio.
               </p>
             )}
           </div>
@@ -608,7 +608,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
           {/* Download Action Section */}
           <div className="border-t border-stone-800 pt-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
             <div className="text-xs text-stone-400">
-              Ready to extract audio from YouTube and import into current workbench session.
+              Ready to download the audio and add it to this audiobook project.
             </div>
 
             <button

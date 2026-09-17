@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import { expandRequirementSelection, requirementDependencies } from '../../tools/requirements';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   RequirementsReport,
   BaseRequirementItem,
@@ -33,6 +34,10 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showFullLogs, setShowFullLogs] = useState<boolean>(false);
 
+  const [selectedIds, setSelectedIds] = useState<string[]>(['faster_whisper']);
+  const selected = new Set(expandRequirementSelection(selectedIds));
+  const lastPhase = useRef('');
+
   // Load status
   const fetchStatus = async (isRefreshAction = false) => {
     if (isRefreshAction) setIsRefreshing(true);
@@ -41,10 +46,11 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
     setSuccessMsg(null);
 
     try {
-      const res = await fetch('/api/requirements/status');
+      const res = await fetch(`/api/requirements/status${isRefreshAction ? '?refresh=true' : ''}`);
       if (!res.ok) throw new Error('Failed to fetch requirements status.');
       const data: RequirementsReport = await res.json();
       setReport(data);
+      window.dispatchEvent(new Event('requirements-changed'));
     } catch (e: any) {
       setErrorMsg(e.message || 'Error checking requirements.');
     } finally {
@@ -68,25 +74,26 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
           setProgressState(prog);
           if (prog.isActive) {
             // keep polling
-          } else if (prog.phase === 'completed') {
+          } else if (['completed', 'error', 'cancelled'].includes(prog.phase) && lastPhase.current !== prog.phase) {
             // refresh report once finished
             fetchStatus();
           }
+          lastPhase.current = prog.phase;
         }
       } catch (e) {}
     };
 
     checkProgress();
-    interval = setInterval(checkProgress, 1500);
+    if (progressState?.isActive) interval = setInterval(checkProgress, 1500);
     return () => clearInterval(interval);
-  }, []);
+  }, [progressState?.isActive]);
 
   // Trigger Install / Repair
   const handleInstallRepair = async () => {
     setErrorMsg(null);
     setSuccessMsg(null);
     try {
-      const res = await fetch('/api/requirements/install-repair', { method: 'POST' });
+      const res = await fetch('/api/requirements/install-repair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedIds }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to start installation/repair.');
       
@@ -116,7 +123,14 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
     } catch (e) {}
   };
 
-  const getStatusBadge = (status: BaseRequirementItem['status']) => {
+  const getStatusBadge = (component: BaseRequirementItem) => {
+    const { status, classification } = component;
+    if (classification === 'optional' && status === 'missing' && (component.id === 'faster_whisper' || (component.id === 'nvidia_acceleration' && report?.hardware.hasNvidiaGpu))) {
+      return <span className="text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-[11px]">Recommended improvement</span>;
+    }
+    if (classification === 'optional' && status === 'missing') {
+      return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-stone-100 text-stone-600 border border-stone-200">○ Optional</span>;
+    }
     switch (status) {
       case 'ready':
         return (
@@ -161,9 +175,9 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
               <Wrench className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-stone-900">Requirements & Dependencies</h2>
+              <h2 className="text-base font-bold text-stone-900">System setup and tools</h2>
               <p className="text-xs text-stone-500">
-                Local runtime checks, hardware acceleration mode, and core software components.
+                Check and repair the local tools SwissMouse needs to process audio.
               </p>
             </div>
           </div>
@@ -179,19 +193,21 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
         {/* Scrollable Content Body */}
         <div className="p-6 overflow-y-auto space-y-5 text-stone-800 text-xs">
           {/* Summary Banner */}
-          {report && report.statusColor !== 'green' && (
+          {report && (
             <div className={`p-3 rounded-lg border flex items-start space-x-3 ${
               report.statusColor === 'red' 
                 ? 'bg-red-50 border-red-200 text-red-800' 
-                : 'bg-amber-50 border-amber-200 text-amber-800'
+                : report.statusColor === 'yellow' ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'
             }`}>
               {report.statusColor === 'red' ? (
                 <XCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-              ) : (
+              ) : report.statusColor === 'yellow' ? (
                 <Zap className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              ) : (
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
               )}
               <div className="space-y-1">
-                <p className="font-bold text-xs uppercase tracking-tight">System Status: {report.statusColor === 'red' ? 'Critical' : 'Optimized for CPU'}</p>
+                <p className="font-bold text-xs uppercase tracking-tight">Overall Status: {report.statusColor === 'red' ? 'Setup Required' : report.statusColor === 'yellow' ? 'Ready — Optional Improvement Available' : 'Ready'}</p>
                 <p className="text-[11px] leading-relaxed opacity-90">{report.summaryMessage}</p>
               </div>
             </div>
@@ -201,10 +217,10 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
           <div className="p-3 bg-stone-50 border border-stone-200 rounded-lg flex items-start space-x-3">
             <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <p className="font-semibold text-stone-900 text-xs">100% Local Processing & Explicit Separation</p>
+              <p className="font-semibold text-stone-900 text-xs">Your files stay on this computer</p>
               <p className="text-[11px] text-stone-600 leading-relaxed">
-                This workbench executes all operations on your local machine. Source audio, transcripts, and metadata are never uploaded to a cloud server.
-                <strong className="text-stone-800 ml-1">Whisper models and yt-dlp are managed independently</strong> and are never installed or updated by this panel.
+                SwissMouse processes source audio, transcripts, and book details locally; it does not upload them to a cloud service.
+                <strong className="text-stone-800 ml-1">Speech models and YouTube tools are managed separately</strong> and are not changed here.
               </p>
             </div>
           </div>
@@ -215,12 +231,12 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
                   <Cpu className="w-4 h-4 text-amber-400" />
-                  <span className="font-semibold text-xs text-white">Detected Hardware Environment</span>
+                  <span className="font-semibold text-xs text-white">Your computer</span>
                 </div>
                 <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider ${
                   report.hardware.hasNvidiaGpu ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-stone-800 text-stone-300 border border-stone-700'
                 }`}>
-                  {report.hardware.hasNvidiaGpu ? 'GPU Accelerated (CUDA)' : 'CPU Mode'}
+                  {report.hardware.hasNvidiaGpu ? 'NVIDIA GPU Detected' : 'CPU Ready'}
                 </span>
               </div>
 
@@ -246,7 +262,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
                   </>
                 ) : (
                   <div className="md:col-span-2 text-stone-400 italic">
-                    No discrete NVIDIA GPU detected. PyTorch and Whisper will use optimized CPU int8 inference.
+                    No compatible NVIDIA GPU was found. Speech recognition will still work on the CPU, though it may take longer.
                   </div>
                 )}
               </div>
@@ -342,7 +358,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
           <div className="space-y-2">
             <div className="flex items-center justify-between pb-1 border-b border-stone-200">
               <span className="font-bold text-stone-900 text-xs uppercase tracking-wider">
-                Core Components & Folders
+                Available components
               </span>
               <button
                 onClick={() => fetchStatus(true)}
@@ -350,23 +366,36 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
                 className="flex items-center space-x-1 text-xs text-stone-600 hover:text-stone-900 font-medium disabled:opacity-50 cursor-pointer"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-amber-600' : ''}`} />
-                <span>Re-check</span>
+                <span>Check again</span>
               </button>
             </div>
 
             {isLoading ? (
               <div className="py-8 text-center text-stone-500 space-y-2">
                 <RefreshCw className="w-6 h-6 animate-spin mx-auto text-amber-600" />
-                <p>Auditing local audio tools, Python runtime, and folder permissions...</p>
+                <p>Checking audio tools, Python, and folder access...</p>
               </div>
             ) : report ? (
-              <div className="divide-y divide-stone-100 border border-stone-200 rounded-lg overflow-hidden bg-white">
-                {report.components.map((comp) => (
+              <div className="space-y-3">
+                {([
+                  ['core', 'Core Requirements'],
+                  ['active_transcription', 'Recommended Transcription Engine'],
+                  ['optional_acceleration', 'Optional Acceleration'],
+                  ['compatibility', 'Compatibility Backend'],
+                ] as const).map(([groupId, groupLabel]) => {
+                  const group = report.components.filter(comp => (comp.group || 'core') === groupId);
+                  if (!group.length) return null;
+                  return <div key={groupId} className="border border-stone-200 rounded-lg overflow-hidden bg-white">
+                    <div className="px-3 py-2 bg-stone-50 border-b border-stone-200 font-bold text-stone-800">{groupLabel}</div>
+                    <div className="divide-y divide-stone-100">{group.map((comp) => (
                   <div key={comp.id} className="p-3 hover:bg-stone-50/70 transition-colors space-y-1.5">
                     <div className="flex items-start justify-between">
                       <div className="space-y-0.5">
                         <div className="flex items-center space-x-2">
-                          <span className="font-semibold text-stone-900 text-xs">{comp.name}</span>
+                          <input type="checkbox" aria-label={`Include ${comp.name}`} checked={comp.classification === 'required' || selected.has(comp.id)}
+                            disabled={comp.classification === 'required' || !comp.isAppManaged || Boolean(progressState?.isActive) || Object.entries(requirementDependencies).some(([parent, children]) => selected.has(parent) && children.includes(comp.id))}
+                            onChange={event => setSelectedIds(ids => event.target.checked ? [...ids, comp.id] : ids.filter(id => id !== comp.id && !(requirementDependencies[comp.id] || []).includes(id)))} />
+                          <span className="font-semibold text-stone-900 text-xs">{comp.name}{comp.classification === 'required' ? ' (Required)' : ' (Optional)'}</span>
                           <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${
                             comp.isAppManaged ? 'bg-stone-100 text-stone-600 border border-stone-200' : 'bg-stone-100 text-stone-500'
                           }`}>
@@ -377,7 +406,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
                       </div>
 
                       <div className="shrink-0 ml-3 text-right">
-                        {getStatusBadge(comp.status)}
+                        {getStatusBadge(comp)}
                         {comp.installedVersion && (
                           <p className="text-[10px] text-stone-500 font-mono mt-0.5">
                             v{comp.installedVersion}
@@ -404,7 +433,9 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
                       </p>
                     )}
                   </div>
-                ))}
+                    ))}</div>
+                  </div>;
+                })}
               </div>
             ) : null}
           </div>
@@ -450,12 +481,12 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
             {report?.statusColor === 'green' ? (
               <span className="text-emerald-700 font-medium flex items-center space-x-1">
                 <CheckCircle2 className="w-3.5 h-3.5 inline text-emerald-600" />
-                <span>GPU Acceleration Ready.</span>
+                <span>Workflow ready.</span>
               </span>
             ) : report?.statusColor === 'yellow' ? (
               <span className="text-amber-700 font-medium flex items-center space-x-1">
                 <Zap className="w-3.5 h-3.5 inline text-amber-600" />
-                <span>CPU Ready (GPU Missing).</span>
+                <span>Ready with an optional improvement.</span>
               </span>
             ) : (
               <span className="text-red-700 font-medium flex items-center space-x-1">
@@ -479,7 +510,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
               className="flex items-center space-x-1.5 px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
             >
               <Wrench className="w-3.5 h-3.5" />
-              <span>{report?.allReady ? 'Repair / Re-verify' : 'Install / Repair'}</span>
+              <span>Install Selected Missing Requirements</span>
             </button>
           </div>
         </div>

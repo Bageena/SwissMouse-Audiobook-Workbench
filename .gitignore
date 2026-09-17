@@ -1,0 +1,26 @@
+# JavaScript build and installed dependencies
+node_modules/
+dist/
+
+# Application-generated data and downloaded runtime components
+.cache/
+logs/
+inputs/
+output/
+runtime/
+models/
+jobs.json
+config.json
+
+# Local-only configuration and publishing-audit output
+.env
+.env.*
+!.env.example
+.gitleaks-report*.json
+
+# Generated test projects and manually downloaded tools
+audio-test-*/
+tools/yt-dlp
+
+# Personal convenience scripts. Keep public automation outside this directory.
+scripts/local/

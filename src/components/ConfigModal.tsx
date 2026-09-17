@@ -31,7 +31,7 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, onClose, onSav
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 text-stone-900 font-bold text-base">
             <Settings className="w-5 h-5 text-amber-600" />
-            <span>Workbench Configuration (config.json)</span>
+            <span>Advanced settings</span>
           </div>
           <button
             onClick={onClose}
@@ -42,11 +42,27 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, onClose, onSav
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+          <div className="p-3.5 bg-emerald-50 rounded-lg border border-emerald-200 space-y-1.5">
+            <label className="flex items-center justify-between gap-4 cursor-pointer">
+              <span>
+                <span className="block font-semibold text-stone-900">Faster Transcription</span>
+                <span className="block text-[11px] text-stone-600 mt-1">Uses the optimized Faster Whisper engine for faster processing and lower memory usage. Recommended for most systems.</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={form.faster_transcription}
+                onChange={(event) => setForm({ ...form, faster_transcription: event.target.checked })}
+                title="Runs your selected Whisper model using the optimized CTranslate2 engine. Disable this if you experience compatibility problems."
+                className="w-5 h-5 accent-emerald-600 shrink-0"
+              />
+            </label>
+            <p className="text-[10px] text-stone-500">{form.faster_transcription ? 'Active engine: Faster Whisper (recommended)' : 'Active engine: OpenAI Whisper compatibility mode'}</p>
+          </div>
           {/* Whisper Profile */}
           <div className="space-y-1.5">
             <label className="font-semibold text-stone-800 flex items-center space-x-1.5">
               <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-              <span>WhisperX Transcription Profile</span>
+              <span>Default speech-recognition profile</span>
             </label>
             <select
               value={form.whisper_profile}
@@ -62,12 +78,13 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, onClose, onSav
               <option value="accurate">accurate (large-v3, high accuracy large model)</option>
               <option value="cpu">cpu (medium.en, int8 quantization for CPU systems)</option>
             </select>
+            <p className="text-[11px] text-stone-500">This is the default used when a project does not choose its own model. Faster options trade some accuracy for speed.</p>
           </div>
 
           {/* Lead-in seconds */}
           <div className="space-y-1.5">
             <label className="font-semibold text-stone-800 flex items-center justify-between">
-              <span>Lead-in Offset (Seconds)</span>
+              <span>Chapter lead-in (seconds)</span>
               <span className="font-mono text-amber-700 font-bold">{form.lead_in_seconds}s</span>
             </label>
             <input
@@ -82,7 +99,7 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, onClose, onSav
               className="w-full px-3 py-2 border border-stone-300 rounded-lg bg-stone-50 font-mono text-stone-900"
             />
             <p className="text-[11px] text-stone-500">
-              Pre-roll padding subtracted from detected chapter words (default 1.5s). Gives audio lead-in before narrator speaks.
+              Starts AI-detected chapters slightly before the first spoken word (default: 1.5 seconds), so the beginning is not clipped.
             </p>
           </div>
 
@@ -90,12 +107,12 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, onClose, onSav
           <div className="p-3.5 bg-stone-50 rounded-lg border border-stone-200 space-y-3">
             <div className="font-semibold text-stone-800 flex items-center space-x-1.5">
               <Sliders className="w-3.5 h-3.5 text-stone-600" />
-              <span>M4B Audio Encoder Settings</span>
+              <span>Default M4B audio quality</span>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[11px] text-stone-500 block mb-1">Stereo Bitrate</label>
+                <label title="Bitrate controls file size when audio is re-encoded; it cannot improve the source recording." className="text-[11px] text-stone-500 block mb-1">Stereo quality (bitrate)</label>
                 <input
                   type="text"
                   value={form.m4b_settings.bitrate_stereo}
@@ -110,7 +127,7 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, onClose, onSav
               </div>
 
               <div>
-                <label className="text-[11px] text-stone-500 block mb-1">Mono Bitrate</label>
+                <label title="Bitrate controls file size when audio is re-encoded; it cannot improve the source recording." className="text-[11px] text-stone-500 block mb-1">Mono quality (bitrate)</label>
                 <input
                   type="text"
                   value={form.m4b_settings.bitrate_mono}

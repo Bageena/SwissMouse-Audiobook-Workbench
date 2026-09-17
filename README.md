@@ -1,20 +1,22 @@
-# Audiobook Workbench
+# SwissMouse
 
-> Want to support the project? You can find me on [Patreon](https://patreon.com/Bageena?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink).
->
+Current release: `0.1.0-alpha.1`
+
+The open source audiobook workbench.
+
 > There are no paid or locked features—only my appreciation and the warm fuzzy feeling of helping an independent project continue.
 
 > **Status: Work in Progress**
 >
-> Audiobook Workbench is under active development, testing, and refinement. It is not yet recommended for general installation or production use.
+> SwissMouse is under active development, testing, and refinement. It is not yet recommended for general installation or production use.
 
 ## Overview
 
-**Audiobook Workbench** is an open-source, local web application for preparing, organizing, and preserving audiobooks.
+**SwissMouse** is an open-source, local web application for preparing, organizing, and preserving audiobooks.
 
 Built with **Node.js**, it provides a browser-based interface while processing files locally on your own computer. It is primarily intended for Windows, though Docker support may be possible depending on the configuration and installation files included with the project.
 
-Audiobook Workbench began as a collection of practical Windows batch-file workflows for audiobook conversion, merging, chaptering, and metadata work. Those batch files became the functional foundation of the project. With assistance from AI, the workflows were translated and expanded into a Node.js web application with a browser-based interface.
+SwissMouse began as a collection of practical Windows batch-file workflows for audiobook conversion, merging, chaptering, and metadata work. Those batch files became the functional foundation of the project. With assistance from AI, the workflows were translated and expanded into a Node.js web application with a browser-based interface.
 
 Original source audio files are never intentionally modified, and the application does not automatically delete files.
 
@@ -43,14 +45,17 @@ To run this application locally from a downloaded ZIP or cloned repository:
 
 ## Features
 
+See [verified format support and chapter repair](FORMAT-SUPPORT.md) for the input/output matrix, preservation rules, short-fixture tests and known verification limits.
+
 - Merge multiple audio files into a single M4B audiobook
 - Optionally decode source files to PCM before processing
 - Bypass PCM decoding when direct processing is preferred
-- Use WhisperX AI to identify likely spoken chapter headings and propose chapter timestamps
+- Use Faster Whisper by default to identify likely spoken chapter headings and propose chapter timestamps
+- Switch to the OpenAI Whisper/PyTorch compatibility backend when troubleshooting requires it
 - Skip AI chapter detection when input files are already chapterized
 - Review, add, remove, rename, and fine-tune chapter markers in a browser-based interface
 - Edit audiobook metadata, including title, author, narrator, cover art, and other supported fields
-- Download YouTube audio in MP3 format and process it through the same workflow
+- Download the best available YouTube audio stream without re-encoding by default and process it through the same workflow
 - Preserve original audio files; the app is designed not to overwrite, alter, or automatically delete them
 - Run locally as a Node.js web application
 - Potentially run in Docker for users who prefer a containerized environment
@@ -58,7 +63,7 @@ To run this application locally from a downloaded ZIP or cloned repository:
 
 ## Development Note
 
-Audiobook Workbench is not a professionally engineered commercial application. It is a personal project built through experimentation, iterative testing, trial and error, and a considerable amount of AI-assisted development.
+SwissMouse is not a professionally engineered commercial application. It is a personal project built through experimentation, iterative testing, trial and error, and a considerable amount of AI-assisted development.
 
 Put plainly: this project is heavily “vibe coded.”
 
@@ -72,7 +77,7 @@ If you choose to test the application, use copies of your files and verify the f
 
 ## How It Works
 
-Audiobook Workbench is intended to run locally rather than as a public cloud service.
+SwissMouse is intended to run locally rather than as a public cloud service.
 
 You start the application on your computer and access its interface through a web browser. The browser provides the GUI, while file processing takes place on your local system.
 
@@ -86,11 +91,19 @@ A Docker setup will generally need persistent mounted folders for:
 - Temporary working files, including PCM conversions and AI-analysis data
 - Completed M4B output files
 - Cover images, metadata, and chapter data
-- WhisperX model files, caches, and other required runtime dependencies
+- Backend-specific Whisper model files, caches, and other required runtime dependencies
+
+## Local transcription architecture
+
+Faster Whisper is the default and recommended engine. It runs the selected Whisper model through CTranslate2, uses CPU INT8 on CPU-only systems, and first attempts FP16 acceleration when a compatible NVIDIA GPU is detected. GPU initialization is verified when transcription starts; if it fails, the same job automatically retries on CPU without changing the original audio timeline.
+
+OpenAI Whisper remains available as a compatibility engine. Its PyTorch dependency and `.pt` model files are installed and tracked separately from Faster Whisper's CTranslate2 model snapshots. The Faster Whisper toggle switches execution, the model catalog, downloads, and installed-model status together. Saved choices are respected; new configurations default to Faster Whisper. Hardware is detected from the actual machine.
+
+FFmpeg and FFprobe remain core requirements because audiobook preparation, merging, inspection, encoding, chapter work, and export use them independently of the transcription engine. The Requirements screen describes both engines independently of the active toggle. Select optional components before choosing **Install Selected Missing Requirements**; engine dependencies are included automatically, and core components cannot be deselected. GPU acceleration is optional and unchecked by default. When selected on NVIDIA hardware, its CUDA 12/cuDNN 9 libraries are installed into the private Python environment, without installing a system driver. These libraries follow the [Faster Whisper GPU requirements](https://github.com/SYSTRAN/faster-whisper#gpu). On Windows, the Microsoft Visual C++ runtime may still be required by native Python packages; import and DLL failures are reported in the installer diagnostic log while CPU fallback remains available when possible.
 
 ## File Safety
 
-Audiobook Workbench is designed with preservation in mind:
+SwissMouse is designed with preservation in mind:
 
 - Source audio files should not be altered
 - Original files should not be overwritten
@@ -101,7 +114,7 @@ Even so, this is work-in-progress software. Always maintain backups and test the
 
 ## Windows Security Notice
 
-Because Audiobook Workbench is not distributed by a registered Windows trusted publisher, Windows SmartScreen may display a warning when you run downloaded batch files, scripts, or executables.
+Because SwissMouse is not distributed by a registered Windows trusted publisher, Windows SmartScreen may display a warning when you run downloaded batch files, scripts, or executables.
 
 This does not automatically mean the project is harmful. However, download it only from a source you trust. If possible, inspect the included scripts and source code before running them.
 
@@ -120,7 +133,7 @@ Unblocking the archive before extraction can prevent Windows from applying its �
 
 ## Intended Use
 
-Audiobook Workbench is intended for lawful personal audiobook organization, preservation, conversion, metadata editing, and chaptering of audio that you own or are authorized to process.
+SwissMouse is intended for lawful personal audiobook organization, preservation, conversion, metadata editing, and chaptering of audio that you own or are authorized to process.
 
 If you use YouTube downloads or other online sources, you are responsible for ensuring that your use complies with applicable copyright law, platform terms, and the rights of authors, narrators, publishers, musicians, and other creators.
 
@@ -129,3 +142,9 @@ If you use YouTube downloads or other online sources, you are responsible for en
 This is an evolving personal project, and feedback is welcome.
 
 If you find a bug, have an idea for a feature, discover a compatibility issue, or would like to improve the code, please consider opening an issue or submitting a pull request.
+
+Requirements reports runtime dependencies only: green for core tools plus Faster Whisper/CTranslate2, yellow for the compatibility engine or an optional GPU improvement, and red for missing core tools or no installed engine. Manage model weights in Step 1 using the shared Install/Uninstall controls. The Faster Transcription toggle selects the backend-specific catalog and installation state. Optional packages never become mandatory merely because a backend is selected.
+
+System checks are asynchronous and cached on demand (hardware: 10 minutes; package/binary versions: 5 minutes). Opening Requirements reuses those snapshots; **Check again** refreshes them. Installation invalidates affected dependency snapshots, with native import checks performed only during deliberate installation verification or transcription. Ordinary status reads never import Whisper, PyTorch, or CTranslate2. CUDA package detection is not a compatibility guarantee; transcription still tests acceleration and falls back to CPU.
+
+Model discovery uses asynchronous filesystem access when opening or refreshing the model area. Background download polling reads in-memory progress without scanning model folders. Other model reads share a one-minute snapshot; model operations update or invalidate the affected backend's state.
