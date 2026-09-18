@@ -25,6 +25,14 @@ export function parseTimestampToMs(ts: string): number {
   return totalMs;
 }
 
+export function getTranscriptWordsNear(
+  words: AlignedWord[],
+  seconds: number,
+  windowSeconds: number = 25
+): AlignedWord[] {
+  return words.filter(word => Math.abs(word.startSeconds - seconds) <= windowSeconds);
+}
+
 /**
  * Parses contextBefore, matchedText, contextAfter and aligns each word with precise timestamps
  */

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlignedWord, AudiobookJob, ChapterCandidate, ChapterEntry } from '../types';
 import { ChapterAudioPlayer, ActiveAudioTrack } from './ChapterAudioPlayer';
-import { buildAlignedWords } from '../utils/wordAlignment';
+import { buildAlignedWords, getTranscriptWordsNear } from '../utils/wordAlignment';
 import {
   Check,
   Plus,
@@ -140,11 +140,41 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     return null;
   };
 
+  const syncPlayerToChapter = (chapter: ChapterEntry, index: number) => {
+    const ms = parseMs(chapter.start);
+    if (ms === -1) return;
+    const seconds = ms / 1000;
+    const matched = candidates.find(
+      candidate => candidate.candidate_start === chapter.start || candidate.proposed_title.toLowerCase() === chapter.title.toLowerCase()
+    );
+    const nearbyWords = getTranscriptWordsNear(transcriptWords, seconds);
+
+    setActiveTrack({
+      id: chapter.id || `chap-${index}`,
+      chapterIndex: index,
+      title: chapter.title || `Chapter ${index + 1}`,
+      start: chapter.start,
+      seconds,
+      snippetText: matched
+        ? `${matched.context_before ? matched.context_before + ' ' : ''}${matched.matched_text}${matched.context_after ? ' ' + matched.context_after : ''}`
+        : undefined,
+      contextBefore: matched?.context_before || '',
+      matchedText: matched?.matched_text || chapter.title,
+      contextAfter: matched?.context_after || '',
+      words: nearbyWords.length > 0 ? nearbyWords : matched?.words,
+      sourceType: 'chapter',
+    });
+  };
+
   // Update a single chapter field
   const handleUpdateChapter = (index: number, field: 'start' | 'title', val: string) => {
     const updated = [...chapters];
     updated[index] = { ...updated[index], [field]: val };
     setChapters(updated);
+    if (field === 'start') syncPlayerToChapter(updated[index], index);
+    else if (activeTrack?.chapterIndex === index) {
+      setActiveTrack(prev => prev ? { ...prev, title: val } : null);
+    }
     setSaveSuccess(false);
     setValidationError(validateChaptersList(updated));
   };
@@ -157,15 +187,14 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
       const lastMs = parseMs(last.start);
       nextStart = formatTs((lastMs + 600000) / 1000);
     }
-    const updated = [
-      ...chapters,
-      {
-        id: `c-${Date.now()}`,
-        start: nextStart,
-        title: `Chapter ${chapters.length + 1}`,
-      },
-    ];
+    const newChapter = {
+      id: `c-${Date.now()}`,
+      start: nextStart,
+      title: `Chapter ${chapters.length + 1}`,
+    };
+    const updated = [...chapters, newChapter];
     setChapters(updated);
+    syncPlayerToChapter(newChapter, updated.length - 1);
     setSaveSuccess(false);
     setValidationError(validateChaptersList(updated));
   };
@@ -228,38 +257,11 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
 
   // Toggle audio preview for a chapter entry
   const handleToggleChapterPlay = (chapter: ChapterEntry, index: number) => {
-    const ms = parseMs(chapter.start);
-    const seconds = ms === -1 ? 0 : ms / 1000;
-
-    // Look for matching candidate to find context quotes if present
-    const matched = candidates.find(
-      c => c.candidate_start === chapter.start || c.proposed_title.toLowerCase() === chapter.title.toLowerCase()
-    );
-
-    let snippet = '';
-    if (matched) {
-      snippet = `${matched.context_before ? matched.context_before + ' ' : ''}${matched.matched_text}${matched.context_after ? ' ' + matched.context_after : ''}`;
-    } else {
-      snippet = `Now listening to ${chapter.title}, starting boundary at ${chapter.start}.`;
-    }
-
     const trackId = chapter.id || `chap-${index}`;
     if (activeTrack?.id === trackId && isPlaying) {
       setIsPlaying(false);
     } else {
-      setActiveTrack({
-        id: trackId,
-        chapterIndex: index,
-        title: chapter.title || `Chapter ${index + 1}`,
-        start: chapter.start,
-        seconds,
-        snippetText: snippet,
-        contextBefore: matched?.context_before || '',
-        matchedText: matched?.matched_text || chapter.title,
-        contextAfter: matched?.context_after || '',
-        words: matched?.words,
-        sourceType: 'chapter',
-      });
+      syncPlayerToChapter(chapter, index);
       setIsPlaying(true);
     }
   };
@@ -309,8 +311,6 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
       );
       setTimeout(() => setWordUpdateNotification(null), 4000);
 
-      // Keep activeTrack synced
-      setActiveTrack(prev => (prev ? { ...prev, start: timestamp, seconds } : null));
     } else if (activeTrack?.sourceType === 'candidate') {
       // Update candidate start timestamp so when clicked "+ Add" it carries the clicked word boundary
       setCandidates(prev =>
@@ -334,16 +334,6 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
       if (parseMs(chapter.start) / 1000 <= word.startSeconds) targetIdx = index;
     });
     handleUpdateChapter(targetIdx, 'start', word.start);
-    const nearbyWords = transcriptWords.filter(item => Math.abs(item.startSeconds - word.startSeconds) <= 25);
-    setActiveTrack({
-      id: 'transcript-word',
-      chapterIndex: targetIdx,
-      title: chapters[targetIdx]?.title || 'Chapter boundary',
-      start: word.start,
-      seconds: word.startSeconds,
-      words: nearbyWords,
-      sourceType: 'chapter',
-    });
     setIsPlaying(true);
     setWordUpdateNotification(`✓ Snapped ${chapters[targetIdx]?.title || 'chapter'} to ${word.start} from actual transcript word "${word.word}"`);
     setTimeout(() => setWordUpdateNotification(null), 4000);
