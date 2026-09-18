@@ -30,6 +30,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Prepare audio test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+          mkdir -p .cache
+
       - name: Install dependencies
         run: npm ci
 
