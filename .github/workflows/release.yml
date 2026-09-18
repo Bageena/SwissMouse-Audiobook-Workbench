@@ -20,22 +20,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out the selected commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
 
-      - name: Install, validate, and build
-        run: |
-          npm ci
-          npm run lint
-          npm run test:audio
-          npm run build
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run lint
+
+      - name: Run tests
+        run: npm run test:audio
+
+      - name: Build application
+        run: npm run build
 
       - name: Assemble release files
         run: |
