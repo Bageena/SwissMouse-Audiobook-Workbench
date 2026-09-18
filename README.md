@@ -13,6 +13,9 @@ If a paid Patreon tier isn't within your budget, **free Patreon members are just
 **Nothing related to this project is locked behind a Patreon paywall.** Posts and project updates are available to free members, and the software itself remains free and open source.
 
 If you can support financially, thank you. If you can't, you're still every bit as welcome here.
+<img width="2815" height="1831" alt="Chapter" src="https://github.com/user-attachments/assets/4ef27bce-a542-431c-9bd9-8d221791a5eb" />
+<img width="3046" height="1711" alt="Requirements" src="https://github.com/user-attachments/assets/564e5017-8b6d-4884-9063-e1f51da9a949" />
+<img width="3049" height="1782" alt="Stage1" src="https://github.com/user-attachments/assets/022ff4e1-6917-4d7e-8610-72d246b3afc1" />
 
 # SwissMouse
 
