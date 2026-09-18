@@ -13,6 +13,7 @@ import vm from 'node:vm';
 import {downloadYoutubeAudio, youtubeUrl} from './youtube-audio';
 const ff = process.env.TEST_FFMPEG || 'ffmpeg';
 const fp = process.env.TEST_FFPROBE || 'ffprobe';
+const binaryName = (name: string) => process.platform === 'win32' ? name + '.exe' : name;
 const root = fs.mkdtempSync(path.resolve('audio-test-'));
 const run = (args: string[]) => execFileSync(ff, ['-v', 'error', '-y', ...args], {windowsHide: true});
 const chapters = [{start: '00:00:00.000', title: 'Opening'}, {start: '00:00:01.250', title: 'Chapter One'}, {start: '00:00:04.500', title: 'Two = # ; \\ café'}];
@@ -65,10 +66,10 @@ test('all selected outputs read chapters back and preserve source duration; comp
 test('HTTP single-book repair, range preview and seven selected outputs', async () => {
   const appRoot=path.join(root,'app');const bin=path.join(appRoot,'runtime','bin');fs.mkdirSync(bin,{recursive:true});
   for(const [name,command] of [['ffmpeg',ff],['ffprobe',fp]]) {
-    const executable=path.isAbsolute(command)?command:execFileSync('where.exe',[command],{encoding:'utf8'}).trim().split(/\r?\n/)[0];
-    fs.copyFileSync(executable,path.join(bin,name+'.exe'));
+    const executable=path.isAbsolute(command)?command:execFileSync(process.platform === 'win32' ? 'where.exe' : 'which',[command],{encoding:'utf8'}).trim().split(/\r?\n/)[0];
+    fs.copyFileSync(executable,path.join(bin,binaryName(name)));
   }
-  if(process.env.TEST_YOUTUBE_URL) fs.copyFileSync(path.resolve('runtime/bin/yt-dlp.exe'),path.join(bin,'yt-dlp.exe'));
+  if(process.env.TEST_YOUTUBE_URL) fs.copyFileSync(path.resolve('runtime/bin',binaryName('yt-dlp')),path.join(bin,binaryName('yt-dlp')));
   const port=39000+Math.floor(Math.random()*1000);
   const child=spawn(process.execPath,[path.resolve('dist/server.cjs')],{env:{...process.env,APP_ROOT:appRoot,NODE_ENV:'production',PORT:String(port)},windowsHide:true,stdio:'pipe'});
   let logs='';child.stdout.on('data',b=>logs+=b);child.stderr.on('data',b=>logs+=b);
@@ -218,7 +219,7 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     assert.match(whisper.logs.at(-1).message,/Step 1 processing failed.*Missing requirements/);
 
     // Dependency validation runs before Multer writes any staged upload files.
-    const ffprobeBinary=path.join(bin,'ffprobe.exe');
+    const ffprobeBinary=path.join(bin,binaryName('ffprobe'));
     fs.renameSync(ffprobeBinary,ffprobeBinary+'.missing');
     await request('/api/requirements/status?refresh=true');
     const blockedImportJob=await request('/api/jobs',{name:'Blocked import',parts:[]});
