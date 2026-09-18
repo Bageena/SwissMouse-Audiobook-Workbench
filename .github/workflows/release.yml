@@ -3,10 +3,6 @@ name: Build release
 on:
   workflow_dispatch:
     inputs:
-      commit:
-        description: Full commit SHA to build and release
-        required: true
-        type: string
       tag:
         description: Release tag to create (for example, v0.1.0-alpha.2)
         required: true
@@ -26,7 +22,7 @@ jobs:
       - name: Check out the selected commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.commit }}
+          ref: ${{ github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -51,7 +47,6 @@ jobs:
       - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-          COMMIT: ${{ inputs.commit }}
           TAG: ${{ inputs.tag }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
@@ -59,5 +54,5 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ASSET" --clobber
           else
-            gh release create "$TAG" "$ASSET" --target "$COMMIT" --title "SwissMouse $VERSION" --prerelease --generate-notes
+            gh release create "$TAG" "$ASSET" --target "$GITHUB_SHA" --title "SwissMouse $VERSION" --prerelease --generate-notes
           fi
