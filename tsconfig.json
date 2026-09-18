@@ -16,5 +16,5 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "server.ts", "tools/audio-engine.ts"]
+  "include": ["src", "server.ts", "tools/audio-engine.ts", "scripts/*.ts"]
 }

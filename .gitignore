@@ -1,6 +1,7 @@
 # JavaScript build and installed dependencies
 node_modules/
 dist/
+release/
 
 # Application-generated data and downloaded runtime components
 .cache/

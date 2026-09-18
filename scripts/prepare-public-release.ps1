@@ -22,6 +22,7 @@ $generatedPaths = @(
   'logs',
   'inputs',
   'output',
+  'release',
   'runtime',
   'models',
   'node_modules',
