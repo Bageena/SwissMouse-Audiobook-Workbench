@@ -162,7 +162,8 @@ export default function App() {
       await refreshCurrentJob(currentJob.id);
       // Wait for the user to manually click 'Continue to Review' if they are on Step 1
     } catch (err: any) {
-      alert(`Step 1 Error: ${err.message}`);
+      await refreshCurrentJob(currentJob.id);
+      setShowLogsDrawer(true);
     } finally {
       setIsProcessingStep1(false);
     }
@@ -227,7 +228,8 @@ export default function App() {
       if (!res.ok) throw new Error(data.error || 'Build failed');
       await refreshCurrentJob(currentJob.id);
     } catch (err: any) {
-      alert(`Build Error: ${err.message}`);
+      await refreshCurrentJob(currentJob.id);
+      setShowLogsDrawer(true);
     } finally {
       window.clearInterval(poll);
       setIsBuildingM4b(false);
@@ -246,7 +248,8 @@ export default function App() {
       if (!res.ok) throw new Error(data.error || 'Validation failed');
       await refreshCurrentJob(currentJob.id);
     } catch (err: any) {
-      alert(`Validation Error: ${err.message}`);
+      await refreshCurrentJob(currentJob.id);
+      setShowLogsDrawer(true);
     } finally {
       setIsValidating(false);
     }

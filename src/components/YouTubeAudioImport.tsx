@@ -24,6 +24,7 @@ import {
   YouTubeAudioFormat,
   AudiobookJob
 } from '../types';
+import { useDependencyStatus } from '../dependency-status';
 
 interface YouTubeAudioImportProps {
   job: AudiobookJob;
@@ -36,6 +37,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
   onAudioImported,
   onCancel,
 }) => {
+  const { feature, refresh: refreshDependencies } = useDependencyStatus();
   // Input URL
   const [url, setUrl] = useState<string>(job.youtubeUrl || '');
   const [isUrlValid, setIsUrlValid] = useState<boolean>(false);
@@ -101,6 +103,8 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
       const data = await res.json();
       if (res.ok && data.info) {
         setYtDlpStatus(data.info);
+        await refreshDependencies(true);
+        window.dispatchEvent(new Event('requirements-changed'));
         setToolActionMessage(data.message || 'yt-dlp installed successfully.');
       } else {
         setToolActionMessage(`Install failed: ${data.error || 'Unknown error'}`);
@@ -122,6 +126,8 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
       const data = await res.json();
       if (res.ok && data.info) {
         setYtDlpStatus(data.info);
+        await refreshDependencies(true);
+        window.dispatchEvent(new Event('requirements-changed'));
         setToolActionMessage(data.message || 'yt-dlp is now up to date.');
       } else {
         setToolActionMessage(`Update failed: ${data.error || 'Unknown error'}`);
@@ -144,6 +150,8 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
       const data = await res.json();
       if (res.ok && data.info) {
         setYtDlpStatus(data.info);
+        await refreshDependencies(true);
+        window.dispatchEvent(new Event('requirements-changed'));
         setVideoInfo(null);
         setToolActionMessage(data.message || 'Local yt-dlp uninstalled.');
       } else {
@@ -189,7 +197,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
 
   // Trigger Download
   const handleDownloadAudio = async (overwrite = false) => {
-    if (!videoInfo || !isUrlValid) return;
+    if (!videoInfo || !isUrlValid || !downloadAvailability.ready) return;
     setIsDownloading(true);
     setDownloadProgress(20);
     setDownloadError(null);
@@ -235,6 +243,8 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
 
   const isToolInstalled = ytDlpStatus?.status === 'installed';
   const isFfmpegReady = ytDlpStatus?.ffmpegAvailable;
+  const inspectionAvailability = feature('youtube_inspection');
+  const downloadAvailability = feature(selectedFormat === 'best' ? 'youtube_import' : 'youtube_conversion');
 
   return (
     <div id="youtube-audio-import-container" className="space-y-6">
@@ -438,7 +448,8 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
               value={url}
               onChange={e => setUrl(e.target.value)}
               placeholder="https://www.youtube.com/watch?v=..."
-              disabled={!isToolInstalled || isFetchingInfo || isDownloading}
+              disabled={!inspectionAvailability.ready || isFetchingInfo || isDownloading}
+              title={inspectionAvailability.tooltip}
               className="w-full bg-stone-950 border border-stone-700 rounded-lg px-3.5 py-2.5 text-stone-100 placeholder-stone-600 text-sm font-mono focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 disabled:opacity-50"
             />
             {url && (
@@ -456,7 +467,8 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
           <button
             id="fetch-video-info-btn"
             type="button"
-            disabled={!isToolInstalled || !isUrlValid || isFetchingInfo || isDownloading}
+            disabled={!inspectionAvailability.ready || !isUrlValid || isFetchingInfo || isDownloading}
+            title={inspectionAvailability.tooltip}
             onClick={handleFetchVideoInfo}
             className="px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-stone-950 font-semibold text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
           >
@@ -614,7 +626,8 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
             <button
               id="download-youtube-audio-btn"
               type="button"
-              disabled={isDownloading || !isToolInstalled}
+              disabled={isDownloading || !downloadAvailability.ready}
+              title={downloadAvailability.tooltip}
               onClick={() => handleDownloadAudio(false)}
               className="px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md hover:shadow-emerald-950/40 disabled:opacity-50 disabled:cursor-not-allowed"
             >

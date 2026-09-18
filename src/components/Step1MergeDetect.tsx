@@ -15,6 +15,7 @@ import {
 import { SourceSummary } from './SourceSummary';
 import { YouTubeAudioImport } from './YouTubeAudioImport';
 import { Step1ProgressPanel } from './Step1ProgressPanel';
+import { useDependencyStatus } from '../dependency-status';
 import { Step1ProcessState } from '../types';
 import {
   Loader2, FolderOpen,
@@ -72,10 +73,14 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   onUpdateJobSettings,
   onConfigChange,
 }) => {
+  const { feature } = useDependencyStatus();
   const [fasterEnabled, setFasterEnabled] = useState(config.faster_transcription);
   useEffect(() => setFasterEnabled(config.faster_transcription), [config.faster_transcription]);
   const [isSwitchingEngine, setIsSwitchingEngine] = useState(false);
   const transcriptionEngine = fasterEnabled ? 'faster-whisper' : 'openai-whisper';
+  const importAvailability = feature('file_import');
+  const scanAvailability = feature('folder_scan');
+  const modelAvailability = feature(fasterEnabled ? 'faster_model_management' : 'openai_model_management');
   const modelsApi = `/api/models?engine=${transcriptionEngine}`;
   const engineRef = useRef(transcriptionEngine);
   engineRef.current = transcriptionEngine;
@@ -300,6 +305,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
 
   // Trigger native folder browser dialog
   const handleOpenNativeFolderPicker = () => {
+    if (!importAvailability.ready) return;
     if (folderInputRef.current) {
       folderInputRef.current.click();
     }
@@ -314,6 +320,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   const [uploadProgressState, setUploadProgressState] = useState('');
 
   const handleNativeFolderSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!importAvailability.ready) { event.target.value = ''; return; }
     const fileList = event.target.files;
     if (!fileList || fileList.length === 0) return;
 
@@ -343,8 +350,8 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
             body: formData,
         });
 
-        if (!res.ok) throw new Error('Failed to upload files');
         const data = await res.json();
+        if (!res.ok) throw new Error(data.message || data.error || 'Failed to upload files');
         
         // Use the server-side filenames and metadata directly
         const sortedUploadedFiles = naturalSort(data.files, (f: any) => f.originalName);
@@ -411,6 +418,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
 
   // Scan folder by path on local filesystem
   const handleScanLocalPath = async (pathToScan: string) => {
+    if (!scanAvailability.ready) return;
     setIsScanningFolder(true);
     setFolderScanError(null);
     try {
@@ -556,6 +564,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   // ----------------------------------------------------
 
   const handleInstallModel = async (model: SpeechModelInfo, force = false) => {
+    if (!modelAvailability.ready) return;
     try {
       const action = fasterEnabled ? 'prepare' : 'install';
       const query = `?engine=${transcriptionEngine}${force ? '&force=true' : ''}`;
@@ -593,6 +602,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   };
 
   const handleUninstallModel = async (modelId: string) => {
+    if (!modelAvailability.ready) return;
     try {
       await fetch(`/api/models/${modelId}/uninstall?engine=${transcriptionEngine}`, { method: 'POST' });
       const modelsRes = await fetch(modelsApi);
@@ -653,7 +663,11 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   const isWhisperXValid =
     chapterSource !== 'whisperx' || isSelectedModelCompatible;
 
-  const canRunStep1 = !isSwitchingEngine && hasSourceFolder && hasAudioFiles && isOutputValid && isWhisperXValid;
+  const processAvailability = feature(
+    'audio_processing',
+    ...(chapterSource === 'whisperx' ? [fasterEnabled ? 'faster_transcription' : 'openai_transcription'] as const : []),
+  );
+  const canRunStep1 = processAvailability.ready && !isSwitchingEngine && hasSourceFolder && hasAudioFiles && isOutputValid && isWhisperXValid;
 
   // Source summary object for SourceSummary component
   const sourceSummaryData: SourceSummaryData = useMemo(() => {
@@ -810,6 +824,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
               id="btn-run-step1-main"
               onClick={handleExecute}
               disabled={isRunning || !canRunStep1}
+              title={processAvailability.tooltip}
               className={`flex items-center space-x-2 px-4 py-2.5 rounded-lg text-xs sm:text-sm font-semibold text-white shadow-sm transition-all cursor-pointer ${
                 isRunning || !canRunStep1
                   ? 'bg-stone-300 text-stone-500 cursor-not-allowed border border-stone-300'
@@ -929,7 +944,9 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                 <button
                   id="btn-import-mp3-folder"
                   onClick={handleOpenNativeFolderPicker}
-                  className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-xs transition-colors cursor-pointer flex items-center space-x-1.5"
+                  disabled={!importAvailability.ready}
+                  title={importAvailability.tooltip}
+                  className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-xs transition-colors cursor-pointer flex items-center space-x-1.5 disabled:bg-stone-300 disabled:text-stone-500 disabled:cursor-not-allowed"
                 >
                   <FolderOpen className="w-4 h-4" />
                   <span>Import Audio Folder</span>
@@ -958,7 +975,8 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                   />
                   <button
                     onClick={() => handleScanLocalPath(customPathInput.trim())}
-                    disabled={isScanningFolder || !customPathInput.trim()}
+                    disabled={!scanAvailability.ready || isScanningFolder || !customPathInput.trim()}
+                    title={scanAvailability.tooltip}
                     className="px-3 py-2 bg-stone-900 text-white rounded-md font-semibold hover:bg-stone-800 disabled:opacity-50 cursor-pointer"
                   >
                     {isScanningFolder ? 'Checking folder...' : 'Check folder'}
@@ -1419,7 +1437,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
         )}
       </div>
 
-      {/* SECTION 5: Whisper/WhisperX Model Management */}
+      {/* SECTION 5: Models */}
       <div
         className={`bg-white rounded-xl p-5 border transition-all ${
           chapterSource === 'existing_files'
@@ -1438,12 +1456,12 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
           <div className="flex items-center space-x-2">
             <Sparkles className="w-5 h-5 text-amber-600" />
             <div>
-              <h3 className="font-bold text-sm text-stone-900">Choose a speech-recognition model</h3>
+              <h3 className="font-bold text-sm text-stone-900">Models</h3>
               <p className="text-xs font-semibold text-amber-800">
                 {fasterEnabled ? 'Faster Whisper / CTranslate2 models' : 'OpenAI Whisper / PyTorch models'}
               </p>
               <p className="text-xs text-stone-500">
-                Models run on your computer to turn speech into timestamped text. Larger models are usually more accurate but take longer and use more storage.
+                Available models are listed here; installed models are marked and can be reinstalled or removed. Larger models are usually more accurate but take longer and use more storage.
               </p>
             </div>
           </div>
@@ -1500,7 +1518,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                           : 'bg-stone-200 text-stone-700'
                       }`}
                     >
-                      {hardware.mode === 'gpu' ? 'GPU detected · automatic fallback' : 'CPU Mode'}
+                      {hardware.mode === 'gpu' ? 'GPU detected ï¿½ automatic fallback' : 'CPU Mode'}
                     </span>
                   </div>
                   <p className="text-stone-500 mt-0.5">
@@ -1699,8 +1717,9 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                                 e.stopPropagation();
                                 handleInstallModel(model, true);
                               }}
+                              disabled={!modelAvailability.ready}
                               className="px-2.5 py-1 rounded text-xs font-medium text-stone-600 hover:text-stone-950 hover:bg-stone-100 border border-stone-200 transition-colors cursor-pointer flex items-center space-x-1"
-                              title="Download a fresh copy of this model into the application cache"
+                              title={modelAvailability.tooltip || 'Download a fresh copy of this model into the application cache'}
                             >
                               <RefreshCw className="w-3.5 h-3.5" />
                               <span>Reinstall</span>
@@ -1723,9 +1742,10 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                               e.stopPropagation();
                               handleInstallModel(model);
                             }}
-                            disabled={isUnavailableGpu}
+                            disabled={isUnavailableGpu || !modelAvailability.ready}
+                            title={modelAvailability.tooltip}
                             className={`px-3 py-1 rounded text-xs font-semibold shadow-xs transition-colors cursor-pointer flex items-center space-x-1 ${
-                              isUnavailableGpu
+                              isUnavailableGpu || !modelAvailability.ready
                                 ? 'bg-stone-200 text-stone-400 cursor-not-allowed'
                                 : 'bg-stone-900 hover:bg-stone-800 text-white'
                             }`}
@@ -1757,6 +1777,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
               {!hasSourceFolder && <li>Select an audiobook source folder or provide a YouTube URL.</li>}
               {!hasAudioFiles && <li>No supported audio files were found in the selected folder.</li>}
               {!isOutputValid && <li>The selected output folder cannot be written to.</li>}
+              {!processAvailability.ready && <li>{processAvailability.tooltip}</li>}
               {chapterSource === 'whisperx' && !selectedModel && (
                 <li>Select a compatible Whisper model to continue.</li>
               )}
@@ -1799,6 +1820,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
               id="btn-run-step1"
               onClick={handleExecute}
               disabled={isRunning || !canRunStep1}
+              title={processAvailability.tooltip}
               className={`flex items-center space-x-2 px-5 py-2.5 rounded-lg text-xs sm:text-sm font-semibold text-white shadow-sm transition-all cursor-pointer ${
                 isRunning || !canRunStep1
                   ? 'bg-stone-300 text-stone-500 cursor-not-allowed border border-stone-300'

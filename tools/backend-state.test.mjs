@@ -99,26 +99,14 @@ test('backend APIs isolate model files, cancellation, removal, defaults and requ
     assert.ok(fs.existsSync(fw));
     assert.equal((await fetch(base + '/api/system/hardware/mode', {method:'POST',headers:{'Content-Type':'application/json'},body:'{"mode":"gpu"}'})).status, 404);
     assert.ok(['cpu','gpu'].includes((await json('/api/system/hardware')).mode));
-    // Simulated transport exercises download completion/failure/cancellation without network or model imports.
+    // A file-shaped but nonfunctional runtime must not allow model download work to start.
     const python = path.join(root, process.platform === 'win32' ? 'runtime/venv/Scripts/python.exe' : 'runtime/venv/bin/python');
     fs.mkdirSync(path.dirname(python), {recursive:true}); fs.writeFileSync(python, '');
-    const finished = async id => {
-      for (let i = 0; i < 100; i++) {
-        const model = (await json('/api/models?engine=faster-whisper&progress=true')).find(m => m.id === id);
-        if (!model.isDownloading) return model;
-        await new Promise(resolve => setTimeout(resolve, 10));
-      }
-      assert.fail('model download did not finish');
-    };
-    await json('/api/models/tiny/prepare?engine=faster-whisper&force=true', {});
-    assert.equal((await finished('tiny')).isInstalled, true, 'completion must publish installed state before stopping progress');
-    await json('/api/models/small/prepare?engine=faster-whisper', {});
-    assert.match((await finished('small')).downloadError, /failed/);
-    await json('/api/models/base/prepare?engine=faster-whisper', {});
-    await json('/api/models/base/cancel?engine=faster-whisper', {});
-    const cancelled = await finished('base');
-    assert.equal(cancelled.isInstalled, false);
-    assert.equal(cancelled.downloadError, undefined);
+    const refreshedRequirements = await json('/api/requirements/status?refresh=true');
+    assert.equal(refreshedRequirements.components.find(component => component.id === 'python').status, 'missing');
+    const blocked = await fetch(base + '/api/models/tiny/prepare?engine=faster-whisper&force=true', {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    assert.equal(blocked.status, 424);
+    assert.deepEqual((await blocked.json()).missingRequirements, ['Application Runtime']);
   } finally {
     server.kill();
     await new Promise(resolve => server.once('exit', resolve));

@@ -206,10 +206,31 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     const uploadProcessed=await processBook('Uploaded structure',upload.uploadDir,'standard','existing_files',uploadedParts);
     assert.equal(uploadProcessed.progress.stage,'completed',JSON.stringify(uploadProcessed.progress));
     assert.deepEqual(uploadProcessed.book.chapters.map((c:any)=>[c.title,c.start]),[['01','00:00:00.000'],['02','00:00:06.000']]);
-    const whisper=await processBook('Whisper missing runtime',loose,'quick','whisperx');
-    assert.equal(whisper.progress.stage,'error');
-    assert.match(whisper.progress.error,/Transcription could not start.*System Requirements/);
-    assert.ok(!whisper.book.transcription);assert.ok(!whisper.book.transcriptWords.length);
+    const whisperJob=await request('/api/jobs',{name:'Whisper missing runtime',parts:[]});
+    const whisperScan=await request('/api/system/scan-folder',{folderPath:loose});
+    const whisperParts=whisperScan.files.map((f:any)=>({name:f.relativePath,sourceRelativePath:f.relativePath}));
+    const whisperResponse=await fetch(base+'/api/jobs/'+whisperJob.id+'/process-step1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sourceFolderPath:loose,mergeMethod:'quick',chapterSource:'whisperx',selectedModelId:'small',parts:whisperParts})});
+    assert.equal(whisperResponse.status,424);
+    const whisperError:any=await whisperResponse.json();
+    assert.deepEqual(whisperError.missingRequirements,['Application Runtime','Faster Whisper','CTranslate2']);
+    const whisper=await request('/api/jobs/'+whisperJob.id);
+    assert.ok(!whisper.transcription);assert.ok(!whisper.transcriptWords?.length);
+    assert.match(whisper.logs.at(-1).message,/Step 1 processing failed.*Missing requirements/);
+
+    // Dependency validation runs before Multer writes any staged upload files.
+    const ffprobeBinary=path.join(bin,'ffprobe.exe');
+    fs.renameSync(ffprobeBinary,ffprobeBinary+'.missing');
+    await request('/api/requirements/status?refresh=true');
+    const blockedImportJob=await request('/api/jobs',{name:'Blocked import',parts:[]});
+    const inputsRoot=path.join(appRoot,'inputs');
+    const inputsBefore=fs.readdirSync(inputsRoot,{recursive:true}).map(String).sort();
+    const blockedForm=new FormData();
+    blockedForm.append('files',new Blob([fs.readFileSync(path.join(loose,'1.mp3'))]),'1.mp3');
+    const blockedImport=await fetch(base+'/api/upload-audio?jobId='+blockedImportJob.id,{method:'POST',body:blockedForm});
+    assert.equal(blockedImport.status,424);
+    assert.deepEqual((await blockedImport.json()).missingRequirements,['FFprobe']);
+    assert.deepEqual(fs.readdirSync(inputsRoot,{recursive:true}).map(String).sort(),inputsBefore,'blocked imports must not stage or move files');
+    assert.match((await request('/api/jobs/'+blockedImportJob.id)).logs.at(-1).message,/Import failed.*No files were copied or modified/);
     console.log('API fixtures: '+appRoot);
   } finally {child.kill();}
 });

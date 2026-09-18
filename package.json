@@ -1,6 +1,6 @@
 {
   "name": "audiobook-chapter-workbench",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "Web workbench to merge multi-part MP3 audiobooks, detect chapters with AI, review timestamps, and build chaptered M4B audiobooks.",
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "lint": "tsc --noEmit",
-    "test:audio": "node --import tsx --test tools/audio-engine.test.ts tools/transcription-engine.test.ts tools/requirements.test.ts tools/backend-state.test.mjs tools/status-cache.test.ts tools/package-status.test.ts"
+    "test:audio": "node --import tsx --test tools/audio-engine.test.ts tools/transcription-engine.test.ts tools/requirements.test.ts tools/feature-dependencies.test.ts tools/backend-state.test.mjs tools/status-cache.test.ts tools/package-status.test.ts"
   },
   "dependencies": {
     "adm-zip": "^0.6.1",

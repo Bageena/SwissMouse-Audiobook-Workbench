@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { AudiobookJob, WorkbenchConfig, OutputAudioFormat } from '../types';
 import { outputFormats, canCopy, chapterSupport, bitrateOptions, defaultBitrate } from '../audioFormats';
+import { useDependencyStatus } from '../dependency-status';
 
 export const Step4BuildM4b: React.FC<{job: AudiobookJob; config: WorkbenchConfig; onBuildM4b: (formats: OutputAudioFormat[], convert: boolean, cue: boolean, bitrates: Partial<Record<OutputAudioFormat,number>>) => Promise<void>; isBuilding: boolean; onNextStep: () => void}> = ({job, onBuildM4b, isBuilding, onNextStep}) => {
+  const exportAvailability = useDependencyStatus().feature('audio_export');
   const [selected, setSelected] = useState<OutputAudioFormat[]>([outputFormats.includes(job.sourceFormat as any) ? job.sourceFormat as OutputAudioFormat : 'm4b']);
   const [convert, setConvert] = useState(false);
   const [cue, setCue] = useState(true);
@@ -24,7 +26,7 @@ export const Step4BuildM4b: React.FC<{job: AudiobookJob; config: WorkbenchConfig
     </fieldset>
     <label className="block text-sm" title="A CUE file is a small sidecar chapter list. Some players can use it when embedded chapters are unavailable."><input type="checkbox" disabled={isBuilding} checked={cue} onChange={e => setCue(e.target.checked)} /> Also create a CUE chapter file</label>
     <p className="text-xs text-stone-600">SwissMouse checks the exported file’s metadata and chapter list. Test playback in your preferred player afterward; player support differs, especially for WAV, Ogg, and Opus. Cover art cannot be embedded in WAV, Ogg, or Opus exports.</p>
-    <button className="px-4 py-2 bg-amber-600 text-white rounded disabled:opacity-40" disabled={isBuilding || !selected.length || !job.mergedMp3 || !job.chapters.length} onClick={() => onBuildM4b(selected, convert, cue, Object.fromEntries(outputFormats.map(f=>[f,bitrates[f] ?? recommended])))}>{isBuilding ? 'Exporting…' : 'Export selected formats'}</button>
+    <button className="px-4 py-2 bg-amber-600 text-white rounded disabled:opacity-40" title={exportAvailability.tooltip} disabled={!exportAvailability.ready || isBuilding || !selected.length || !job.mergedMp3 || !job.chapters.length} onClick={() => onBuildM4b(selected, convert, cue, Object.fromEntries(outputFormats.map(f=>[f,bitrates[f] ?? recommended])))}>{isBuilding ? 'Exporting…' : 'Export selected formats'}</button>
     <div aria-live="polite" className="space-y-2">{job.exports?.map(item => <div className="border rounded p-3 text-sm" key={item.format}>
       <strong>{item.format.toUpperCase()}</strong>: {item.status} {item.progress}% {item.mode === 'copy' ? '— audio copied' : item.mode === 'convert' ? '— audio converted' : ''}
       <p className="break-all">{item.fullPath || item.filename}</p><p className="text-red-700">{item.error}</p>{item.warnings?.map(w => <p key={w}>{w}</p>)}

@@ -20,7 +20,9 @@ import {
   Play,
   Pause,
   Info,
-  Scissors
+  Scissors,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 
 interface Step2Props {
@@ -29,6 +31,17 @@ interface Step2Props {
   onSaveChapters: (chapters: ChapterEntry[]) => Promise<void>;
   onNextStep: () => void;
 }
+
+// Keeps the complete chapter entry intact so this can also back future drag-and-drop.
+export const moveChapter = (list: ChapterEntry[], fromIndex: number, toIndex: number): ChapterEntry[] => {
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= list.length || toIndex >= list.length) {
+    return list;
+  }
+  const reordered = [...list];
+  const [chapter] = reordered.splice(fromIndex, 1);
+  reordered.splice(toIndex, 0, chapter);
+  return reordered;
+};
 
 export const Step2ChapterReview: React.FC<Step2Props> = ({
   job,
@@ -164,6 +177,14 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
       return;
     }
     const updated = chapters.filter((_, i) => i !== index);
+    setChapters(updated);
+    setSaveSuccess(false);
+    setValidationError(validateChaptersList(updated));
+  };
+
+  const handleMoveChapter = (fromIndex: number, toIndex: number) => {
+    const updated = moveChapter(chapters, fromIndex, toIndex);
+    if (updated === chapters) return;
     setChapters(updated);
     setSaveSuccess(false);
     setValidationError(validateChaptersList(updated));
@@ -783,6 +804,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                     <th className="py-2 px-2 w-36">Start (HH:MM:SS.mmm)</th>
                     <th className="py-2 px-2">Chapter Title</th>
                     <th className="py-2 px-2 w-28 text-right">Nudge</th>
+                    <th className="py-2 px-1 w-20 text-center">Move</th>
                     <th className="py-2 px-1 w-10 text-center">Del</th>
                   </tr>
                 </thead>
@@ -877,6 +899,29 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                               title="Nudge 1 second later"
                             >
                               +1s
+                            </button>
+                          </div>
+                        </td>
+
+                        <td className="py-2 px-1 text-center">
+                          <div className="flex items-center justify-center space-x-1">
+                            <button
+                              onClick={() => handleMoveChapter(idx, idx - 1)}
+                              disabled={isFirst}
+                              className="p-1 text-stone-400 hover:text-amber-700 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                              title="Move Up"
+                              aria-label={`Move ${chap.title || `chapter ${idx + 1}`} up`}
+                            >
+                              <ArrowUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleMoveChapter(idx, idx + 1)}
+                              disabled={idx === chapters.length - 1}
+                              className="p-1 text-stone-400 hover:text-amber-700 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                              title="Move Down"
+                              aria-label={`Move ${chap.title || `chapter ${idx + 1}`} down`}
+                            >
+                              <ArrowDown className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </td>

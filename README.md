@@ -16,7 +16,7 @@ If you can support financially, thank you. If you can't, you're still every bit 
 
 # SwissMouse
 
-Current release: `0.1.0-alpha.1`
+Current release: `0.1.0-alpha.2`
 
 The open source audiobook workbench.
 

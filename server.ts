@@ -8,6 +8,8 @@ import { naturalPathCompare, sourceChapterGroups } from './src/utils/sourceStruc
 import { outputFormats, canCopy, defaultBitrate, bitrateOptions, stitchCompatibility } from './src/audioFormats';
 import { transcriptionEngines, chooseFasterWhisperAttempts, PYTHON_DLL_SETUP, type NormalizedTranscription, type TranscriptionEngineId } from './tools/transcription-engine';
 import { evaluateRequirementReadiness, selectedMissingRequirements } from './tools/requirements';
+import { missingDependencies, missingRequirementsTooltip } from './tools/feature-dependencies';
+import type { FeatureId } from './tools/feature-dependencies';
 import type { WorkbenchConfig, ChapterEntry, AudiobookMetadata, AudiobookJob, HardwareInfo, SpeechModelInfo, InstallRepairProgress, Step1ProcessState, HardwareEnvironmentInfo, RequirementsReport, BaseRequirementItem, FolderScanResult, DiscoveredAudioFile, UnsupportedFileItem, YtDlpStatusInfo, YtDlpStatusState, YouTubeVideoInfo, YouTubeAudioFormat, ChapterCandidate, CoverArtInfo, OutputAudioFormat } from './src/types';
 import express from 'express';
 import cors from 'cors';
@@ -302,7 +304,27 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage, preservePath: true });
 
-app.post('/api/upload-audio', upload.array('files'), (req, res) => {
+function appendOperationFailure(jobId: string | undefined, operation: string, message: string) {
+  const job = jobId ? jobs.find(item => item.id === jobId) : undefined;
+  if (!job) return;
+  job.logs.push({ timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19), level: 'ERROR', message: `${operation} failed. ${message}` });
+  saveJobs();
+}
+
+function requireFeatures(features: FeatureId[], operation: string, jobId: (req: any) => string | undefined = req => req.params?.id || req.query?.jobId || req.body?.jobId) {
+  return (req: any, res: any, next: any) => {
+    void checkActiveRequirements().then(report => {
+      const missing = missingDependencies(report.components, features);
+      if (!missing.length) return next();
+      const tooltip = missingRequirementsTooltip(missing)!;
+      const message = `${tooltip}. No files were copied or modified.`;
+      appendOperationFailure(jobId(req), operation, message);
+      return res.status(424).json({ error: `${operation} failed`, message, missingRequirements: missing.map(item => item.name) });
+    }).catch((error: any) => res.status(500).json({ error: `Could not validate requirements for ${operation}.`, details: error.message }));
+  };
+}
+
+app.post('/api/upload-audio', requireFeatures(['file_import'], 'Import'), upload.array('files'), (req, res) => {
   if (!req.files || req.files.length === 0) {
     return res.status(400).json({ error: 'No files uploaded.' });
   }
@@ -316,39 +338,33 @@ app.post('/api/upload-audio', upload.array('files'), (req, res) => {
     return res.status(400).json({ error: 'No active project selected. Please create or open a book project first.' });
   }
 
+  const staged = req.files as Express.Multer.File[];
   const finalUploadDir = path.join(uploadDir, jobId);
-  if (!fs.existsSync(finalUploadDir)) {
+  const moved: string[] = [];
+  try {
+    // Validate every staged file before committing any of them to the project.
+    const probes = staged.map(file => probeAudioFile(file.path));
     fs.mkdirSync(finalUploadDir, { recursive: true });
+    const uploadedFiles = staged.map((file, index) => {
+      const finalPath = path.join(finalUploadDir, file.filename);
+      fs.renameSync(file.path, finalPath);
+      moved.push(finalPath);
+      const probe = probes[index];
+      return {
+        originalName: file.originalname.replace(/\\/g, '/'), filename: file.filename, path: finalPath, size: file.size,
+        durationSeconds: probe.durationSeconds, bitrate: probe.bitrate, format: probe.format, codec: probe.codec,
+        sampleRate: probe.sampleRate, channels: probe.channels, streamSignature: probe.streamSignature,
+      };
+    });
+    res.json({ message: 'Successfully uploaded files.', files: uploadedFiles, uploadDir: finalUploadDir });
+  } catch (error: any) {
+    for (const file of staged) { try { if (fs.existsSync(file.path)) fs.unlinkSync(file.path); } catch {} }
+    for (const file of moved) { try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch {} }
+    try { if (fs.existsSync(finalUploadDir) && fs.readdirSync(finalUploadDir).length === 0) fs.rmdirSync(finalUploadDir); } catch {}
+    const message = `${error.message || 'Audio validation failed'}. No files were imported; staged files were removed.`;
+    appendOperationFailure(jobId, 'Import', message);
+    res.status(400).json({ error: 'Import failed', message });
   }
-  
-  const uploadedFiles = (req.files as Express.Multer.File[]).map(f => {
-    const newPath = path.join(finalUploadDir, f.filename);
-    fs.renameSync(f.path, newPath);
-    const finalPath = newPath;
-
-    // Probe the file for accurate metadata
-    const probe = probeAudioFile(finalPath);
-
-    return {
-      originalName: f.originalname.replace(/\\/g, '/'),
-      filename: f.filename,
-      path: finalPath,
-      size: f.size,
-      durationSeconds: probe.durationSeconds,
-      bitrate: probe.bitrate,
-      format: probe.format,
-      codec: probe.codec,
-      sampleRate: probe.sampleRate,
-      channels: probe.channels,
-      streamSignature: probe.streamSignature
-    };
-  });
-  
-  res.json({
-    message: 'Successfully uploaded files.',
-    files: uploadedFiles,
-    uploadDir: finalUploadDir
-  });
 });
 
 
@@ -953,6 +969,9 @@ async function checkActiveRequirements(): Promise<RequirementsReport> {
     item({ id, name, purpose, classification: 'required', group: 'core', status: output ? 'ready' : 'missing', installLocation: binary, isAppManaged: true, error: output ? undefined : `${name} is not installed in the application runtime.` });
   }
 
+  const ytDlp = await getYtDlpStatus();
+  item({ id: 'yt_dlp', name: 'yt-dlp', purpose: 'Optional download tool used only for YouTube inspection and audio import.', classification: 'optional', group: 'compatibility', status: ytDlp.status === 'installed' ? 'ready' : ytDlp.status === 'error' ? 'broken' : 'missing', installedVersion: ytDlp.version, installLocation: ytDlp.executablePath, isAppManaged: true, error: ytDlp.error });
+
   // Package discovery never imports a transcription engine or initializes CUDA.
   // Real device compatibility is tested by the transcription engine when used.
   const faster = probe('faster-whisper');
@@ -966,7 +985,7 @@ async function checkActiveRequirements(): Promise<RequirementsReport> {
     ['openai_whisper', 'OpenAI Whisper', 'Optional compatibility transcription engine.', openai, 'compatibility'],
     ['pytorch', 'PyTorch', 'Required for OpenAI Whisper. Included with that engine.', torch, 'compatibility'],
   ] as const) item({ id, name, purpose, classification: 'optional', group, status: probe.ok ? 'ready' : 'missing', installedVersion: probe.output?.split(/\r?\n/)[0], isAppManaged: true });
-  // Requirements describes engine dependencies; weights are managed in Step 1.
+  // Requirements describes engine dependencies; weight files are managed in Models.
   const gpuStatus: BaseRequirementItem['status'] = hw.hasNvidiaGpu && cudaDevices > 0 ? 'ready' : 'missing';
   item({ id: 'nvidia_acceleration', name: 'NVIDIA GPU Acceleration', purpose: !hw.hasNvidiaGpu ? 'No compatible GPU detected. Optimized CPU transcription will be used.' : cudaDevices > 0 ? 'CUDA runtime packages are installed; device compatibility is verified when transcription starts.' : 'Optional CUDA libraries for Faster Whisper on compatible NVIDIA hardware. CPU transcription remains available.', classification: 'optional', group: 'optional_acceleration', status: gpuStatus, isAppManaged: hw.hasNvidiaGpu, diagnosticDetails: !hw.hasNvidiaGpu ? 'Optional; this computer is fully supported in CPU mode.' : cudaDevices > 0 ? 'CUDA libraries detected without initializing CTranslate2. Compatibility is checked during transcription.' : undefined, error: hw.hasNvidiaGpu && cudaDevices === 0 ? 'Optional performance improvement available; the application remains usable.' : undefined });
 
@@ -981,10 +1000,10 @@ async function checkActiveRequirements(): Promise<RequirementsReport> {
     timestamp: new Date().toISOString(), allReady: readiness.allReady, statusColor,
     needsAttentionCount: readiness.needsAttentionCount,
     summaryMessage: statusColor === 'red'
-      ? 'Setup required: install the core tools and at least one transcription engine, then download a model for that engine in Step 1.'
+      ? 'Setup required: install the core tools and at least one transcription engine, then download a model for that engine in Models.'
       : statusColor === 'yellow'
         ? 'A complete workflow is available. Faster Whisper or GPU acceleration can improve performance.'
-        : 'Runtime dependencies are ready. Manage downloaded transcription models in Step 1.',
+        : 'Runtime dependencies are ready. Manage downloaded transcription models in Models.',
     hardware: hw, components, availableUpdatesCount: 0,
   };
 }
@@ -1049,7 +1068,7 @@ app.post('/api/requirements/install-repair', async (req, res) => {
     overallProgress: 5,
     logs: [
       `[${new Date().toLocaleTimeString()}] Initializing installation/repair for ${componentsToFix.length} component(s)...`,
-      `[${new Date().toLocaleTimeString()}] Safety Check: Whisper models and yt-dlp will NOT be installed. User projects and audio files will NOT be modified.`,
+      `[${new Date().toLocaleTimeString()}] Safety Check: Speech model files will NOT be installed. yt-dlp is installed only when selected. User projects and audio files will NOT be modified.`,
       `[${new Date().toLocaleTimeString()}] Hardware detection: ${report.hardware.recommendationSummary}`,
     ],
     canCancel: true,
@@ -1168,6 +1187,10 @@ app.post('/api/requirements/install-repair', async (req, res) => {
           mediaBinariesConfigured = true;
           logFn(`Verified application-local FFmpeg: ${getManagedBinaryVersion(MANAGED_FFMPEG_PATH)}.`);
           logFn(`Verified application-local FFprobe: ${getManagedBinaryVersion(MANAGED_FFPROBE_PATH)}.`);
+        } else if (comp.id === 'yt_dlp') {
+          const status = await installLocalYtDlp();
+          if (status.status !== 'installed') throw new Error(status.error || 'yt-dlp installation could not be verified.');
+          appendInstallDiagnostic(`Verified application-local yt-dlp ${status.version || ''}.`);
         }
 
         currentProgress += stepWeight;
@@ -1208,7 +1231,7 @@ app.post('/api/requirements/install-repair', async (req, res) => {
         activeInstallProgress.isActive = false;
         activeInstallProgress.phase = 'completed';
         activeInstallProgress.currentActivity = 'Installation and repair complete.';
-        activeInstallProgress.successMessage = 'Selected components installed and verified. Download a speech model in Step 1 if needed.';
+        activeInstallProgress.successMessage = 'Selected components installed and verified. Download a speech model in Models if needed.';
         activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] All required base components are ready. Speech models remain separately managed.`);
       } else {
         const remaining = selectedMissingRequirements(updatedReport.components, selectedIds);
@@ -1505,6 +1528,7 @@ async function installLocalYtDlp(): Promise<YtDlpStatusInfo> {
 
     isYtDlpInstalling = false;
     ytDlpVersion.invalidate();
+    invalidateRequirements();
     return getYtDlpStatus();
   } catch (err: any) {
     isYtDlpInstalling = false;
@@ -1528,6 +1552,8 @@ async function updateLocalYtDlp(): Promise<YtDlpStatusInfo> {
     } else {
       throw new Error('The application-local yt-dlp executable is missing. Use Install yt-dlp instead.');
     }
+    ytDlpVersion.invalidate();
+    invalidateRequirements();
     return getYtDlpStatus();
   } catch (err: any) {
     throw new Error(`yt-dlp update failed: ${err.message}. Previous version was retained.`);
@@ -1544,6 +1570,7 @@ async function uninstallLocalYtDlp(): Promise<YtDlpStatusInfo> {
   }
   ytDlpInstallError = null;
   ytDlpVersion.invalidate();
+  invalidateRequirements();
   return getYtDlpStatus();
 }
 
@@ -1618,8 +1645,8 @@ app.get('/api/models/info', async (req, res) => {
 
 // Download a Faster-Whisper model snapshot into the portable app cache. This is
 // separate from Runtime Repair because model weights are installed only when a
-// user explicitly chooses one in Step 1.
-app.post('/api/models/:id/prepare', async (req, res) => {
+// user explicitly chooses one in the Models section.
+app.post('/api/models/:id/prepare', requireFeatures(['faster_model_management'], 'Model download'), async (req, res) => {
   const modelId = req.params.id;
   const model = backendModels['faster-whisper'].find(m => m.id === modelId);
   if (!model) return res.status(404).json({ error: 'Model not found' });
@@ -1706,7 +1733,7 @@ app.post('/api/models/:id/prepare', async (req, res) => {
 });
 
 // OpenAI Whisper downloads use their own PyTorch checkpoint cache.
-app.post('/api/models/:id/install', async (req, res) => {
+app.post('/api/models/:id/install', requireFeatures(['openai_model_management'], 'Model download'), async (req, res) => {
   const modelId = req.params.id;
   const model = backendModels['openai-whisper'].find(m => m.id === modelId);
   if (!model) {
@@ -2001,7 +2028,7 @@ app.post('/api/models/:id/uninstall', async (req, res) => {
 });
 
 // Scan local folder
-app.post('/api/system/scan-folder', (req, res) => {
+app.post('/api/system/scan-folder', requireFeatures(['folder_scan'], 'Folder scan'), (req, res) => {
   const { folderPath } = req.body;
   if (!folderPath || typeof folderPath !== 'string') {
     return res.status(400).json({ error: 'folderPath is required' });
@@ -2091,7 +2118,7 @@ app.post('/api/tools/yt-dlp/uninstall', async (req, res) => {
 });
 
 // Fetch YouTube video metadata via yt-dlp
-app.post('/api/youtube/fetch-info', async (req, res) => {
+app.post('/api/youtube/fetch-info', requireFeatures(['youtube_inspection'], 'YouTube inspection', () => undefined), async (req, res) => {
   const { url } = req.body as { url?: string };
   if (!url || typeof url !== 'string' || !url.trim()) {
     return res.status(400).json({ error: 'Please enter a valid YouTube video URL.' });
@@ -2145,7 +2172,10 @@ app.post('/api/youtube/fetch-info', async (req, res) => {
 
 // Download YouTube audio via yt-dlp & FFmpeg
 const youtubeImports = new Set<string>();
-app.post('/api/youtube/download', async (req, res) => {
+app.post('/api/youtube/download', (req, res, next) => requireFeatures(
+  [req.body?.format && req.body.format !== 'best' ? 'youtube_conversion' : 'youtube_import'],
+  'YouTube import', request => request.body?.jobId,
+)(req, res, next), async (req, res) => {
   const {
     jobId,
     url,
@@ -2269,6 +2299,7 @@ app.post('/api/youtube/download', async (req, res) => {
       job: updatedJob,
     });
   } catch (err: any) {
+    appendOperationFailure(jobId, 'YouTube import', err.message || 'yt-dlp download failed.');
     res.status(500).json({
       error: 'Download Failed',
       message: err.message || 'Failed to download audio with yt-dlp. Please check the URL and your local network.',
@@ -2890,6 +2921,8 @@ const handleStep1Process = async (req: any, res: any) => {
       return;
     }
     console.error("Fatal Step 1 Background Error:", err);
+    job.logs.push({ timestamp: now(), level: 'ERROR', message: `Step 1 processing failed. ${err.message}` });
+    saveJobs();
     activeStep1ProgressState.isActive = false;
     activeStep1ProgressState.stage = 'error';
     activeStep1ProgressState.error = err.message;
@@ -2897,8 +2930,14 @@ const handleStep1Process = async (req: any, res: any) => {
   })();
 };
 
-app.post('/api/jobs/:id/merge-and-detect', handleStep1Process);
-app.post('/api/jobs/:id/process-step1', handleStep1Process);
+const requireStep1Dependencies = (req: any, res: any, next: any) => {
+  const chapterSource = req.body?.chapterSource || (jobs.find(job => job.id === req.params.id)?.chapterSource || 'whisperx');
+  const features: FeatureId[] = ['audio_processing'];
+  if (chapterSource !== 'existing_files') features.push(currentConfig.faster_transcription ? 'faster_transcription' : 'openai_transcription');
+  return requireFeatures(features, 'Step 1 processing')(req, res, next);
+};
+app.post('/api/jobs/:id/merge-and-detect', requireStep1Dependencies, handleStep1Process);
+app.post('/api/jobs/:id/process-step1', requireStep1Dependencies, handleStep1Process);
 
 // Update & Validate Chapter List (replicates app/chapters.py validation)
 app.post('/api/jobs/:id/chapters', (req, res) => {
@@ -3100,7 +3139,7 @@ app.post('/api/jobs/:id/metadata', (req, res) => {
 });
 
 // Step 4: Build Chaptered M4B (replicates app/m4b.py)
-app.post('/api/jobs/:id/build-m4b', async (req, res) => {
+app.post('/api/jobs/:id/build-m4b', requireFeatures(['audio_export'], 'Audio export'), async (req, res) => {
   const job = jobs.find(j => j.id === req.params.id);
   if (!job?.mergedMp3?.fullPath || job.status === 'draft') return res.status(400).json({ error: 'Complete Step 1 first.' });
   if (activeStep1ProgressState.isActive) return res.status(409).json({ error: 'Wait for source processing to complete.' });
@@ -3146,24 +3185,27 @@ app.post('/api/jobs/:id/build-m4b', async (req, res) => {
       Object.assign(item, result, { status: 'success' });
       job.outputM4b = result;
       job.status = 'built';
-    } catch (error: any) { item.status = 'failed'; item.error = error.message; }
+    } catch (error: any) {
+      item.status = 'failed'; item.error = error.message;
+      job.logs.push({ timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19), level: 'ERROR', message: `Audio export failed (${item.format.toUpperCase()}). ${error.message}` });
+    }
     saveJobs();
   }
   const succeeded = job.exports.some(item => item.status === 'success');
   res.status(succeeded ? 200 : 500).json({ status: succeeded ? 'ok' : 'error', error: succeeded ? undefined : job.exports.map(item => item.error).join('; '), exports: job.exports, outputM4b: job.outputM4b });
 });
 
-app.post('/api/jobs/:id/build-audio', (req, res) => {
+app.post('/api/jobs/:id/build-audio', requireFeatures(['audio_export'], 'Audio export'), (req, res) => {
   // Alias to build-m4b with format support
   const target = app._router.stack.find((layer: any) => layer.route?.path === '/api/jobs/:id/build-m4b');
   if (target) {
-    return target.route.stack[0].handle(req, res);
+    return target.route.stack[target.route.stack.length - 1].handle(req, res);
   }
   res.status(500).json({ error: 'Route handler not found' });
 });
 
 // Step 3: Validate Output (replicates app/validate.py)
-app.post('/api/jobs/:id/validate', (req, res) => {
+app.post('/api/jobs/:id/validate', requireFeatures(['output_validation'], 'Output validation'), (req, res) => {
   const job = jobs.find(j => j.id === req.params.id);
   if (!job) {
     return res.status(404).json({ error: 'Job not found' });
@@ -3179,7 +3221,10 @@ app.post('/api/jobs/:id/validate', (req, res) => {
   const sizeMb = Number((job.outputM4b.sizeBytes / (1024 * 1024)).toFixed(2));
   let inspected: ReturnType<typeof inspect>;
   try { inspected = inspect(MANAGED_FFPROBE_PATH, job.outputM4b.fullPath || path.join(job.outputFolderPath || currentOutputFolder, job.outputM4b.filename)); }
-  catch (error: any) { return res.status(400).json({ error: `Cannot read exported file: ${error.message}` }); }
+  catch (error: any) {
+    appendOperationFailure(job.id, 'Output validation', `Cannot read exported file: ${error.message}`);
+    return res.status(400).json({ error: `Cannot read exported file: ${error.message}` });
+  }
   const chaptersCount = inspected.chapters.length;
   const duration = inspected.durationSeconds;
   const origDuration = job.mergedMp3 ? job.mergedMp3.duration : job.totalDurationSeconds;
