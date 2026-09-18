@@ -110,7 +110,6 @@ function runSpawnCmd(cmd: string, args: string[], onLog: (msg: string) => void):
     });
   });
 }
-import { createServer as createViteServer } from 'vite';
 import multer from 'multer';
 
 const app = express();
@@ -3432,6 +3431,7 @@ app.post('/api/jobs/:id/import/chapters-csv', (req, res) => {
 // ----------------------------------------------------
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

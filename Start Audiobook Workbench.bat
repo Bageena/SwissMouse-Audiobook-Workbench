@@ -26,7 +26,9 @@ rem a system Node installation when one is available.
 set "NODE_EXE=%APP_ROOT%runtime\node\node.exe"
 if not exist "%NODE_EXE%" set "NODE_EXE=node"
 set "NPM_EXE=%APP_ROOT%runtime\node\npm.cmd"
-if not exist "%NPM_EXE%" set "NPM_EXE=npm"
+rem CALL needs the full .cmd path: quoted extensionless "npm" makes npm's
+rem own relative paths resolve against the application folder on Windows.
+if not exist "%NPM_EXE%" for %%I in (npm.cmd) do set "NPM_EXE=%%~$PATH:I"
 
 "%NODE_EXE%" --version >nul 2>&1
 if errorlevel 1 (
@@ -40,13 +42,25 @@ if errorlevel 1 (
   exit /b 1
 )
 
+if not exist "%NPM_EXE%" (
+  echo.
+  echo npm.cmd was not found. Repair your Node.js installation with npm included.
+  pause
+  exit /b 1
+)
+
 if not exist "%APP_ROOT%node_modules" (
   echo.
   echo Installing the locked application dependencies for this first run...
-  call "%NPM_EXE%" ci
+  rem Source checkouts need build tools; compiled releases need runtime packages only.
+  if exist "%APP_ROOT%dist\server.cjs" (
+    call "%NPM_EXE%" ci --omit=dev
+  ) else (
+    call "%NPM_EXE%" ci --include=dev
+  )
   if errorlevel 1 (
     echo.
-    echo Dependency installation failed. Check your internet connection and try again.
+    echo Dependency installation failed. Review the npm error above for details.
     pause
     exit /b 1
   )

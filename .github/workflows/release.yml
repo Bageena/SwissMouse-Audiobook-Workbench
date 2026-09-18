@@ -60,6 +60,14 @@ jobs:
           cd release
           zip -r "../SwissMouse-${VERSION}.zip" "SwissMouse-${VERSION}"
 
+      - name: Smoke test isolated production release
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          SMOKE_ROOT=$(mktemp -d)
+          cp -a "release/SwissMouse-${VERSION}/." "$SMOKE_ROOT/"
+          npm ci --omit=dev --prefix "$SMOKE_ROOT"
+          node scripts/smoke-release.mjs "$SMOKE_ROOT"
+
       - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
