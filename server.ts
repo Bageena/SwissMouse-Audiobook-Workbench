@@ -2648,13 +2648,19 @@ const handleStep1Process = async (req: any, res: any) => {
         job.existingChapters = media[0].chapters;
         const tags = Object.fromEntries(Object.entries(media[0].tags).map(([k,v])=>[k.toLowerCase(),String(v)]));
         job.sourceTags = media[0].tags;
-        job.metadata = { title: tags.album || tags.title || job.name, author: tags.artist || tags.album_artist || '', narrator: tags.composer || '', genres: (tags.genre || '').split(/[;,]/).map(value => value.trim()).filter(Boolean), language: tags.language || 'eng', abridged: tags.abridged === '1', explicit: tags.explicit === '1', subtitle: tags.subtitle || tags.tit3, series: tags.series, seriesSequence: tags['series-part'], publishedYear: tags.date, releaseDate: tags.releasetime, publisher: tags.publisher, description: tags.description || tags.desc || tags.comment, copyright: tags.copyright, isbn: tags.isbn, asin: tags.asin };
+        const importedMetadata: AudiobookMetadata = { title: tags.album || tags.title || job.name, author: tags.artist || tags.album_artist || '', narrator: tags.composer || '', genres: (tags.genre || '').split(/[;,]/).map(value => value.trim()).filter(Boolean), language: tags.language || 'eng', abridged: tags.abridged === '1', explicit: tags.explicit === '1', subtitle: tags.subtitle || tags.tit3, series: tags.series, seriesSequence: tags['series-part'], publishedYear: tags.date, releaseDate: tags.releasetime, publisher: tags.publisher, description: tags.description || tags.desc || tags.comment, copyright: tags.copyright, isbn: tags.isbn, asin: tags.asin };
+        job.importedMetadata = JSON.parse(JSON.stringify(importedMetadata));
+        job.metadata = {
+          ...importedMetadata,
+          title: job.metadata?.title?.trim() || job.name,
+          author: job.metadata?.author?.trim() || job.author || importedMetadata.author,
+          narrator: job.metadata?.narrator?.trim() || job.narrator || importedMetadata.narrator,
+        };
         if (media[0].artwork) {
           const coverPath = path.join(intermediatesDir, media[0].artwork.codec_name === 'png' ? 'original-cover.png' : 'original-cover.jpg');
           await execFileAsync(MANAGED_FFMPEG_PATH, ['-v', 'error', '-y', '-i', master, '-map', '0:' + media[0].artwork.index, '-c', 'copy', coverPath]);
           job.metadata.cover = { source: 'local', filename: path.basename(coverPath), url: 'data:image/' + (coverPath.endsWith('.png') ? 'png' : 'jpeg') + ';base64,' + fs.readFileSync(coverPath).toString('base64') };
         }
-        job.importedMetadata = JSON.parse(JSON.stringify(job.metadata));
       }
       const reusablePreview = reusePreparedAudio && job.previewPath && fs.existsSync(job.previewPath);
       if (reusablePreview) {
@@ -3118,6 +3124,7 @@ app.post('/api/jobs/:id/scan-cover', (req, res) => {
       level: 'INFO',
       message: `Local cover detected in folder: '${foundCover.filename}' (${(foundCover.sizeBytes! / 1024).toFixed(1)} KB). Loaded as active artwork.`,
     });
+    saveJobs();
     return res.json({
       found: true,
       cover: foundCover,
@@ -3129,6 +3136,17 @@ app.post('/api/jobs/:id/scan-cover', (req, res) => {
     found: false,
     message: 'No image named cover.jpg/png/webp was found in the local folder. You can upload an image or provide an image URL.',
   });
+});
+
+// Preserve in-progress Metadata screen edits locally without marking the step complete.
+app.post('/api/jobs/:id/metadata-draft', (req, res) => {
+  const job = jobs.find(j => j.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  const { metadata } = req.body as { metadata?: AudiobookMetadata };
+  if (!metadata || typeof metadata !== 'object') return res.status(400).json({ error: 'Metadata draft is required.' });
+  job.metadataDraft = metadata;
+  saveJobs();
+  res.json({ status: 'ok' });
 });
 
 // Update Audiobook Metadata (Standard Audiobookshelf metadata with Narrator in Composer)
@@ -3152,6 +3170,7 @@ app.post('/api/jobs/:id/metadata', (req, res) => {
     narrator: metadata.narrator?.trim() || '',
     genres: Array.isArray(metadata.genres) ? metadata.genres : ['Audiobook'],
   };
+  job.metadataDraft = undefined;
 
   // Synchronize top-level fields for convenience
   job.name = job.metadata.title;

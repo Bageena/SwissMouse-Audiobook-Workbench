@@ -79,13 +79,14 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     let ready=false;for(let i=0;i<80;i++){try{await request('/api/jobs');ready=true;break;}catch{await new Promise(r=>setTimeout(r,100));}}
     assert.ok(ready,logs);
     const source=path.join(root,'export.m4b');const original=await fingerprint([source],{});
-    const job=await request('/api/jobs',{name:'API fixture',parts:[{name:source}]});
+    const job=await request('/api/jobs',{name:'API fixture',author:'Project author',narrator:'Project narrator',parts:[{name:source}]});
     await request('/api/jobs/'+job.id+'/process-step1',{chapterSource:'existing_files'});
     let updated:any;
     for(let i=0;i<100;i++){updated=await request('/api/jobs/'+job.id);if(updated.status==='transcribed')break;await new Promise(r=>setTimeout(r,100));}
     assert.equal(updated.status,'transcribed',logs);
     assert.equal(updated.mergedMp3.fullPath,source);
     assert.equal(updated.existingChapters.length,3);
+    assert.deepEqual([updated.metadata.title,updated.metadata.author,updated.metadata.narrator],['API fixture','Project author','Project narrator']);
     assert.ok(updated.metadata.cover.url.startsWith('data:image/'));
     const range=await fetch(base+'/api/jobs/'+job.id+'/audio-preview',{headers:{Range:'bytes=1000-1999'}});
     assert.equal(range.status,206);assert.equal((await range.arrayBuffer()).byteLength,1000);

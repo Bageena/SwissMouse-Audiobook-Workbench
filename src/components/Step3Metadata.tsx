@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AudiobookJob, AudiobookMetadata, CoverArtInfo } from '../types';
 import {
   Image,
@@ -77,8 +77,8 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
 }) => {
   // Initialize state from existing job metadata or fallback to job fields
   const [formData, setFormData] = useState<AudiobookMetadata>(() => {
-    if (job.metadata) {
-      return { ...job.metadata };
+    if (job.metadataDraft || job.metadata) {
+      return { ...(job.metadataDraft || job.metadata)! };
     }
     return {
       title: job.name || '',
@@ -112,6 +112,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
   const [tagFilter, setTagFilter] = useState<string>('');
   const [authorInput, setAuthorInput] = useState<string>('');
   const [narratorInput, setNarratorInput] = useState<string>('');
+  const lastSavedDraft = useRef(JSON.stringify(formData));
 
   const authorsList = formData.author ? formData.author.split(',').map((s) => s.trim()).filter(Boolean) : [];
   const narratorsList = formData.narrator ? formData.narrator.split(',').map((s) => s.trim()).filter(Boolean) : [];
@@ -150,10 +151,31 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
 
   // Keep synced if job changes
   useEffect(() => {
-    if (job.metadata) {
-      setFormData({ ...job.metadata });
+    const storedMetadata = job.metadataDraft || job.metadata;
+    if (storedMetadata) {
+      setFormData({ ...storedMetadata });
+      lastSavedDraft.current = JSON.stringify(storedMetadata);
     }
-  }, [job.id, job.metadata]);
+  }, [job.id, job.metadata, job.metadataDraft]);
+
+  // Keep unsaved book details and uploaded cover art across app restarts.
+  useEffect(() => {
+    const serialized = JSON.stringify(formData);
+    if (serialized === lastSavedDraft.current) return;
+    const timeout = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/jobs/${job.id}/metadata-draft`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ metadata: formData }),
+        });
+        if (response.ok) lastSavedDraft.current = serialized;
+      } catch {
+        // The next edit retries; the explicit Save button still reports failures.
+      }
+    }, 750);
+    return () => window.clearTimeout(timeout);
+  }, [formData, job.id]);
 
   // Scan local folder for cover image (cover.jpg, cover.png, etc.)
   const handleScanLocalFolder = async () => {

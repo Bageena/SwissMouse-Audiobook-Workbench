@@ -269,6 +269,7 @@ export interface AudiobookJob {
   author?: string;
   narrator?: string;
   metadata?: AudiobookMetadata;
+  metadataDraft?: AudiobookMetadata;
   createdAt: string;
   parts: AudioPart[];
   totalDurationSeconds: number;

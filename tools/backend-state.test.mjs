@@ -59,6 +59,16 @@ test('backend APIs isolate model files, cancellation, removal, defaults and requ
     for (let i=0; i<100 && !output.includes('server running'); i++) await new Promise(resolve => setTimeout(resolve, 100));
     assert.match(output, /server running/);
     assert.equal((await json('/api/config')).faster_transcription, true);
+    const project = await json('/api/jobs', {name:'Project title',author:'Project author',narrator:'Project narrator',parts:[]});
+    assert.deepEqual([project.metadata.title, project.metadata.author, project.metadata.narrator], ['Project title','Project author','Project narrator']);
+    const draft = {...project.metadata,title:'Editable draft',description:'Survives restart'};
+    await json('/api/jobs/' + project.id + '/metadata-draft', {metadata:draft});
+    assert.deepEqual((await json('/api/jobs/' + project.id)).metadataDraft, draft);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root,'jobs.json'),'utf8'))[0].metadataDraft, draft);
+    await json('/api/jobs/' + project.id + '/metadata', {metadata:{...draft,title:'Saved title',author:'Edited author',narrator:'Edited narrator'}});
+    const savedProject = await json('/api/jobs/' + project.id);
+    assert.deepEqual([savedProject.name,savedProject.author,savedProject.narrator], ['Saved title','Edited author','Edited narrator']);
+    assert.equal(savedProject.metadataDraft, undefined);
     const fw = weight('models/whisperx/models--Systran--faster-whisper-tiny/snapshots/test/model.bin');
     // Partial Faster Whisper snapshots must never be marked installed.
     assert.equal((await json('/api/models?engine=faster-whisper')).find(m=>m.id==='tiny').isInstalled, false);
