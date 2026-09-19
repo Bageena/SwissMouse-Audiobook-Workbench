@@ -668,6 +668,11 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     ...(chapterSource === 'whisperx' ? [fasterEnabled ? 'faster_transcription' : 'openai_transcription'] as const : []),
   );
   const canRunStep1 = processAvailability.ready && !isSwitchingEngine && hasSourceFolder && hasAudioFiles && isOutputValid && isWhisperXValid;
+  const runButtonLabel = chapterSource === 'existing_files'
+    ? 'Prepare audio and chapters'
+    : job.status !== 'draft'
+    ? 'Re-Run Processing'
+    : 'Prepare audiobook';
 
   // Source summary object for SourceSummary component
   const sourceSummaryData: SourceSummaryData = useMemo(() => {
@@ -840,11 +845,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                 <>
                   <Play className="w-4 h-4 fill-white" />
                   <span>
-                    {chapterSource === 'existing_files'
-                      ? 'Prepare audio and chapters'
-                      : job.status !== 'draft'
-                      ? 'Re-Run Processing'
-                      : 'Prepare audiobook'}
+                    {runButtonLabel}
                   </span>
                 </>
               )}
@@ -1836,11 +1837,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                 <>
                   <Play className="w-4 h-4 fill-white" />
                   <span>
-                    {chapterSource === 'existing_files'
-                      ? 'Import Chapters & Continue'
-                      : job.status !== 'draft'
-                      ? 'Re-Run Processing'
-                      : 'Processing'}
+                    {runButtonLabel}
                   </span>
                 </>
               )}
