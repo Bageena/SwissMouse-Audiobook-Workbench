@@ -151,9 +151,7 @@ export default function App() {
                    if (prog.error) {
                        throw new Error(prog.error);
                    }
-                   if (prog.stage === 'completed') {
-                       break;
-                   }
+                   break;
                }
             }
          }

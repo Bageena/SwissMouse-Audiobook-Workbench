@@ -255,6 +255,7 @@ export interface AudiobookJob {
   sourceBitrate?: number;
   chapterStructure?: 'sequential_folders' | 'files';
   sourceKey?: string;
+  preparedAudioKey?: string;
   transcriptKey?: string;
   previewPath?: string;
   sourceCodec?: string;

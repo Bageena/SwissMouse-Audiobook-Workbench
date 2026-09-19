@@ -1301,20 +1301,28 @@ app.get('/api/step1/progress', (req, res) => {
 });
 
 let step1Abort: AbortController | undefined;
+let step1TaskRunning = false;
 // Cancel active Step 1 process
 app.post('/api/step1/cancel', (req, res) => {
-  if (!activeStep1ProgressState.isActive) {
+  if (!step1TaskRunning) {
     return res.status(400).json({ error: 'No active Step 1 processing job.' });
   }
 
-  activeStep1ProgressState.isCancelling = true;
-  activeStep1ProgressState.canCancel = false;
-  activeStep1ProgressState.liveStatusMessage = 'Cancelling processing... Safely preserving existing project files and cleaning up intermediate buffers.';
-  logStep1(`User clicked Cancel Processing. Safe shutdown in progress.`);
-
   step1Abort?.abort();
+  activeStep1ProgressState.isActive = false;
+  activeStep1ProgressState.stage = 'cancelled';
+  activeStep1ProgressState.label = 'Processing cancelled';
+  activeStep1ProgressState.currentTask = 'Ready to restart with updated settings';
+  activeStep1ProgressState.currentStageNumber = 0;
+  activeStep1ProgressState.percentage = 0;
+  activeStep1ProgressState.isCancelling = false;
+  activeStep1ProgressState.canCancel = false;
+  activeStep1ProgressState.error = null;
+  activeStep1ProgressState.summary = null;
+  activeStep1ProgressState.liveStatusMessage = 'Processing cancelled. Completed audio preparation is preserved for the next run.';
+  logStep1(`User cancelled processing. Completed audio preparation was preserved.`);
 
-  res.json({ status: 'ok', message: 'Cancellation signal sent.' });
+  res.json({ status: 'ok', message: 'Processing cancelled.', progress: activeStep1ProgressState });
 });
 
 // ----------------------------------------------------
@@ -2191,7 +2199,7 @@ app.post('/api/youtube/download', (req, res, next) => requireFeatures(
   if (!['best','mp3','m4a','flac','opus','wav'].includes(format)) return res.status(400).json({error: 'Unsupported audio format.'});
   const targetJob = jobId ? jobs.find(j => j.id === jobId) : undefined;
   if (jobId && !targetJob) return res.status(404).json({error: 'Job not found'});
-  if (youtubeImports.has(jobId || '') || activeStep1ProgressState.isActive || targetJob?.exports?.some(e => ['queued','running'].includes(e.status))) return res.status(409).json({error: 'Wait for the active import, processing or export to complete.'});
+  if (youtubeImports.has(jobId || '') || step1TaskRunning || targetJob?.exports?.some(e => ['queued','running'].includes(e.status))) return res.status(409).json({error: 'Wait for the active import, processing or export to complete.'});
   const status = await getYtDlpStatus();
   if (status.status !== 'installed') {
     return res.status(400).json({
@@ -2233,7 +2241,7 @@ app.post('/api/youtube/download', (req, res, next) => requireFeatures(
         job.inputMethod = 'youtube';
         job.mergeMethod = 'quick';
         job.status = 'draft';
-        job.mergedMp3 = null; job.previewPath = undefined; job.sourceKey = undefined;
+        job.mergedMp3 = null; job.previewPath = undefined; job.sourceKey = undefined; job.preparedAudioKey = undefined;
         job.transcription = null; job.transcriptWords = []; job.transcriptKey = undefined;
         job.existingChapters = []; job.chapters = []; job.candidates = [];
         job.outputM4b = null; job.validation = null; job.exports = [];
@@ -2485,7 +2493,7 @@ const logStep1 = (msg: string) => {
 
 // Step 1: Process Step 1 (Supports both 'whisperx' and 'existing_files' workflows)
 const handleStep1Process = async (req: any, res: any) => {
-  if (activeStep1ProgressState.isActive) return res.status(409).json({ error: 'Another source is being processed.' });
+  if (step1TaskRunning) return res.status(409).json({ error: 'Another source is being processed or finishing cancellation.' });
   jobIdForStep1 = req.params.id;
   const job = jobs.find(j => j.id === req.params.id);
   if (!job) {
@@ -2504,6 +2512,9 @@ const handleStep1Process = async (req: any, res: any) => {
     outputFolderPath = job.outputFolderPath || currentOutputFolder,
     parts = null,
   } = req.body || {};
+
+  const previousMergeMethod = job.mergeMethod;
+  const previousPreparedDurations = job.parts.map(part => part.durationSeconds);
 
   // Update job settings
   job.chapterSource = chapterSource;
@@ -2566,6 +2577,7 @@ const handleStep1Process = async (req: any, res: any) => {
 
   const controller = new AbortController();
   step1Abort = controller;
+  step1TaskRunning = true;
   const signal = controller.signal;
   // Run the heavy processing in the background
   (async () => {
@@ -2592,16 +2604,34 @@ const handleStep1Process = async (req: any, res: any) => {
         return;
       }
       const sourceKey = await fingerprint(sourcePaths, {});
+      const preparedAudioKey = await fingerprint(sourcePaths, { mergeMethod });
       signal.throwIfAborted();
       const sameSource = job.sourceKey === sourceKey;
+      const existingMaster = job.mergedMp3?.fullPath;
+      const reusePreparedAudio = sameSource && Boolean(existingMaster && fs.existsSync(existingMaster)) && (
+        job.preparedAudioKey === preparedAudioKey || (!job.preparedAudioKey && previousMergeMethod === mergeMethod)
+      );
       job.status = 'draft'; job.outputM4b = null; job.validation = null; job.exports = [];
-      job.mergedMp3 = null; job.chapters = []; job.candidates = [];
+      if (!reusePreparedAudio) {
+        job.mergedMp3 = null;
+        job.previewPath = undefined;
+        job.preparedAudioKey = undefined;
+      }
+      job.chapters = []; job.candidates = [];
       job.transcriptWords = []; job.transcription = null; job.transcriptKey = undefined;
       if (!sameSource) { job.existingChapters = []; job.sourceTags = {}; job.importedMetadata = undefined; }
       const intermediatesDir = path.join(job.outputFolderPath || currentOutputFolder, 'intermediates', job.id);
       if (sourcePaths.some(p => { const relative = path.relative(intermediatesDir,p); return !relative.startsWith('..') && !path.isAbsolute(relative); })) throw new Error('Move source files outside this project’s intermediate directory before processing.');
       fs.mkdirSync(intermediatesDir, { recursive: true });
-      const prepared = await prepareMaster(MANAGED_FFMPEG_PATH, MANAGED_FFPROBE_PATH, sourcePaths, intermediatesDir, mergeMethod, logStep1, signal);
+      const prepared = reusePreparedAudio
+        ? {
+            master: existingMaster!,
+            media,
+            durations: job.parts.map((part, index) => previousPreparedDurations[index] || part.durationSeconds || media[index].durationSeconds),
+            normalized: mergeMethod === 'standard',
+          }
+        : await prepareMaster(MANAGED_FFMPEG_PATH, MANAGED_FFPROBE_PATH, sourcePaths, intermediatesDir, mergeMethod, logStep1, signal);
+      if (reusePreparedAudio) logStep1('Reusing prepared master audio; skipping PCM conversion and stitching.');
       const master = prepared.master;
       job.sourceBitrate = Math.max(...media.map(m => m.bitrate));
       const masterInfo = inspect(MANAGED_FFPROBE_PATH, master);
@@ -2611,6 +2641,9 @@ const handleStep1Process = async (req: any, res: any) => {
       job.totalSizeBytes = sourcePaths.reduce((sum,p)=>sum+fs.statSync(p).size,0);
       job.parts.forEach((part, i) => { part.durationSeconds = prepared.durations[i]; part.bitrate = media[i].bitrate; });
       job.mergedMp3 = { filename: path.basename(master), fullPath: master, duration: masterInfo.durationSeconds, bitrate: masterInfo.bitrate, sizeBytes: fs.statSync(master).size };
+      job.sourceKey = sourceKey;
+      job.preparedAudioKey = preparedAudioKey;
+      saveJobs();
       if (!sameSource && sourcePaths.length === 1) {
         job.existingChapters = media[0].chapters;
         const tags = Object.fromEntries(Object.entries(media[0].tags).map(([k,v])=>[k.toLowerCase(),String(v)]));
@@ -2623,9 +2656,13 @@ const handleStep1Process = async (req: any, res: any) => {
         }
         job.importedMetadata = JSON.parse(JSON.stringify(job.metadata));
       }
-      job.sourceKey = sourceKey;
-      job.previewPath = path.join(intermediatesDir, 'analysis.wav');
-      await makePreview(MANAGED_FFMPEG_PATH, master, job.previewPath, signal);
+      const reusablePreview = reusePreparedAudio && job.previewPath && fs.existsSync(job.previewPath);
+      if (reusablePreview) {
+        logStep1('Reusing existing analysis preview.');
+      } else {
+        job.previewPath = path.join(intermediatesDir, 'analysis.wav');
+        await makePreview(MANAGED_FFMPEG_PATH, master, job.previewPath, signal);
+      }
       signal.throwIfAborted();
       saveJobs();
       // WORKFLOW A: Use existing MP3 files as individual chapters
@@ -2916,7 +2953,11 @@ const handleStep1Process = async (req: any, res: any) => {
       activeStep1ProgressState.isCancelling = false;
       activeStep1ProgressState.canCancel = false;
       activeStep1ProgressState.stage = 'cancelled';
-      activeStep1ProgressState.liveStatusMessage = 'Processing cancelled. Source files are preserved.';
+      activeStep1ProgressState.label = 'Processing cancelled';
+      activeStep1ProgressState.currentTask = 'Ready to restart with updated settings';
+      activeStep1ProgressState.currentStageNumber = 0;
+      activeStep1ProgressState.percentage = 0;
+      activeStep1ProgressState.liveStatusMessage = 'Processing cancelled. Completed audio preparation is preserved for the next run.';
       return;
     }
     console.error("Fatal Step 1 Background Error:", err);
@@ -2925,6 +2966,9 @@ const handleStep1Process = async (req: any, res: any) => {
     activeStep1ProgressState.isActive = false;
     activeStep1ProgressState.stage = 'error';
     activeStep1ProgressState.error = err.message;
+  } finally {
+    step1TaskRunning = false;
+    step1Abort = undefined;
   }
   })();
 };
@@ -3141,7 +3185,7 @@ app.post('/api/jobs/:id/metadata', (req, res) => {
 app.post('/api/jobs/:id/build-m4b', requireFeatures(['audio_export'], 'Audio export'), async (req, res) => {
   const job = jobs.find(j => j.id === req.params.id);
   if (!job?.mergedMp3?.fullPath || job.status === 'draft') return res.status(400).json({ error: 'Complete Step 1 first.' });
-  if (activeStep1ProgressState.isActive) return res.status(409).json({ error: 'Wait for source processing to complete.' });
+  if (step1TaskRunning) return res.status(409).json({ error: 'Wait for source processing to complete.' });
   try {
     const paths = job.parts.map(part => path.resolve(APP_ROOT, job.sourceFolderPath || '', part.name));
     if (job.sourceKey !== await fingerprint(paths, {})) return res.status(409).json({ error: 'Source audio changed. Run Step 1 again to refresh the transcript and review timeline.' });
@@ -3282,6 +3326,9 @@ app.post('/api/jobs/:id/purge', (req, res) => {
     }
 
     job.mergedMp3 = null;
+    job.previewPath = undefined;
+    job.sourceKey = undefined;
+    job.preparedAudioKey = undefined;
     job.transcription = null;
     job.parts = [];
     job.status = job.outputM4b ? 'built' : 'draft';
@@ -3297,6 +3344,9 @@ app.post('/api/jobs/:id/purge', (req, res) => {
 
   if (purgeType === 'intermediate') {
     job.mergedMp3 = null;
+    job.previewPath = undefined;
+    job.sourceKey = undefined;
+    job.preparedAudioKey = undefined;
     job.transcription = null;
     job.status = job.outputM4b ? 'built' : 'draft';
     saveJobs();

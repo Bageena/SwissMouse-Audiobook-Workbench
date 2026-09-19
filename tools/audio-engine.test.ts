@@ -119,6 +119,17 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     assert.equal(pcm.book.sourceBitrate,128);
     assert.equal(pcm.book.sourceCodec,'pcm_s24le');
     assert.deepEqual(pcm.book.chapters.map((c:any)=>[c.title,c.start]),[['1','00:00:00.000'],['2','00:00:03.000'],['10','00:00:06.000']]);
+    const preparedMasterPath=pcm.book.mergedMp3.fullPath;
+    const preparedMasterMtime=fs.statSync(preparedMasterPath).mtimeMs;
+    const rerunParts=pcm.scan.files.map((file:any)=>({name:file.relativePath,sourceRelativePath:file.relativePath}));
+    await request('/api/jobs/'+pcm.book.id+'/process-step1',{sourceFolderPath:loose,mergeMethod:'standard',chapterSource:'existing_files',selectedModelId:'medium',parts:rerunParts});
+    let rerunProgress:any;
+    for(let i=0;i<200;i++){rerunProgress=await request('/api/step1/progress');if(!rerunProgress.isActive)break;await new Promise(resolve=>setTimeout(resolve,100));}
+    const rerunBook=await request('/api/jobs/'+pcm.book.id);
+    assert.equal(rerunProgress.stage,'completed',JSON.stringify(rerunProgress));
+    assert.equal(rerunBook.mergedMp3.fullPath,preparedMasterPath);
+    assert.equal(fs.statSync(preparedMasterPath).mtimeMs,preparedMasterMtime);
+    assert.ok(rerunProgress.logs.some((line:string)=>line.includes('Reusing prepared master audio')));
     const encoded=await request('/api/jobs/'+pcm.book.id+'/build-m4b',{outputFormats:['mp3']});
     assert.equal(encoded.exports[0].status,'success',JSON.stringify(encoded));
     assert.equal(inspect(fp,encoded.exports[0].fullPath).bitrate,128);
