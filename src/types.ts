@@ -40,7 +40,7 @@ export interface WorkbenchConfig {
     bitrate_stereo: string;
     sample_rate: number;
   };
-  lead_in_seconds: number;
+  lead_in_seconds: number; // Maximum lead-in, refined to an existing Whisper word timestamp.
 }
 
 export interface AudioPart {
@@ -61,7 +61,13 @@ export interface AlignedWord {
   confidence?: number;
 }
 
+export type HeadingType = 'numbered_chapter' | 'front_matter' | 'chapter_like' | 'section_divider' | 'back_matter';
+
 export interface ChapterCandidate {
+  transcriptWordIndex?: number;
+  headingType?: HeadingType;
+  chapterNumber?: number;
+  recovered?: boolean;
   candidate_id: number;
   candidate_start: string;
   candidate_end: string;
@@ -78,10 +84,20 @@ export interface ChapterCandidate {
 }
 
 export interface ChapterEntry {
+  transcriptWordIndex?: number;
+  headingType?: HeadingType;
+  chapterNumber?: number;
+  recovered?: boolean;
   id: string;
-  start: string; // HH:MM:SS.mmm
+  start: string; // HH:MM:SS.mmm; blank only while a generated placeholder is incomplete
+  end?: string; // HH:MM:SS.mmm
   title: string;
   notes?: string;
+  isMissing?: boolean;
+  startManuallyEdited?: boolean;
+  endManuallyEdited?: boolean;
+  titleManuallyEdited?: boolean;
+  manuallyInserted?: boolean;
 }
 
 export interface ValidationReport {
@@ -252,6 +268,8 @@ export interface YtDlpStatusInfo {
 }
 
 export interface AudiobookJob {
+  pipelineSteps?: Partial<Record<RerunnablePipelineStep, PipelineStepState>>;
+  staleSteps?: PipelineResultStep[];
   sourceBitrate?: number;
   chapterStructure?: 'sequential_folders' | 'files';
   sourceKey?: string;
@@ -324,6 +342,13 @@ export interface AudiobookJob {
   // Persisted word-level timestamps from completed WhisperX output. Chapter
   // Review renders these actual words and never invents transcript text.
   transcriptWords?: AlignedWord[];
+  transcriptSegments?: Array<{
+    id: number;
+    start: number;
+    end: number;
+    text: string;
+    words: Array<{ word: string; start: number; end: number; probability?: number }>;
+  }>;
 
   candidates: ChapterCandidate[];
   chapters: ChapterEntry[];
@@ -343,6 +368,16 @@ export interface AudiobookJob {
 
   validation?: ValidationReport | null;
   logs: JobLog[];
+}
+
+export type RerunnablePipelineStep = 'generating_waveform' | 'transcribing_whisper' | 'detecting_chapters' | 'extracting_chapters' | 'metadata_processing';
+export type PipelineResultStep = 'chapter_detection' | 'chapter_review' | 'export' | 'validation';
+export type PipelineStepStatus = 'current' | 'running' | 'stale' | 'failed';
+export interface PipelineStepState {
+  status: PipelineStepStatus;
+  hasOutput: boolean;
+  error?: string;
+  updatedAt?: string;
 }
 
 // ----------------------------------------------------
@@ -430,18 +465,30 @@ export type Step1ProcessStage =
   | 'transcribing_whisper'
   | 'aligning_timestamps'
   | 'extracting_chapters'
+  | 'generating_waveform'
+  | 'detecting_chapters'
   | 'saving_project'
   | 'completed'
   | 'cancelled'
   | 'error';
 
+export interface Step1ProgressStage {
+  key: Step1ProcessStage;
+  label: string;
+  desc: string;
+}
+
 export interface Step1ProcessState {
+  jobId?: string;
+  rerunStep?: RerunnablePipelineStep;
   isActive: boolean;
   stage: Step1ProcessStage;
   label: string; // e.g. "Processing audiobook source…"
   currentTask: string;
   currentStageNumber: number;
   totalStages: number;
+  stages: Step1ProgressStage[];
+  failedStage?: Step1ProcessStage | null;
   currentCount?: number;
   totalCount?: number;
   percentage: number; // 0 - 100

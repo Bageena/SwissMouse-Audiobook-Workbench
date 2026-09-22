@@ -10,6 +10,7 @@ export const Step4BuildM4b: React.FC<{job: AudiobookJob; config: WorkbenchConfig
   const [cue, setCue] = useState(true);
   const [bitrates, setBitrates] = useState<Partial<Record<OutputAudioFormat,number>>>({});
   const recommended = defaultBitrate(job.sourceBitrate);
+  const chaptersAreStale = job.staleSteps?.some(step => step === 'chapter_detection' || step === 'chapter_review') ?? false;
   return <div className="space-y-5 bg-white border rounded-xl p-6">
     <div><h2 className="text-lg font-bold">Export your finished audiobook</h2><p className="text-sm text-stone-600 mt-1">Choose one or more file types, then create copies with your reviewed chapters and book details. Your original files are never changed.</p></div>
     <div className="rounded-lg border border-stone-200 bg-stone-50 p-3 text-sm text-stone-700"><strong>Imported audio:</strong> {job.sourceFormat?.toUpperCase()} / {job.sourceCodec}; {job.sourceBitrate ? `${job.sourceBitrate} kbps` : 'bitrate could not be measured'}. <span title="Bitrate is the amount of audio data used each second. Higher numbers make larger files but cannot improve an already lower-quality source.">About bitrate</span>: SwissMouse recommends {recommended} kbps when conversion is needed.</div>
@@ -26,7 +27,8 @@ export const Step4BuildM4b: React.FC<{job: AudiobookJob; config: WorkbenchConfig
     </fieldset>
     <label className="block text-sm" title="A CUE file is a small sidecar chapter list. Some players can use it when embedded chapters are unavailable."><input type="checkbox" disabled={isBuilding} checked={cue} onChange={e => setCue(e.target.checked)} /> Also create a CUE chapter file</label>
     <p className="text-xs text-stone-600">SwissMouse checks the exported file’s metadata and chapter list. Test playback in your preferred player afterward; player support differs, especially for WAV, Ogg, and Opus. Cover art cannot be embedded in WAV, Ogg, or Opus exports.</p>
-    <button className="px-4 py-2 bg-amber-600 text-white rounded disabled:opacity-40" title={exportAvailability.tooltip} disabled={!exportAvailability.ready || isBuilding || !selected.length || !job.mergedMp3 || !job.chapters.length} onClick={() => onBuildM4b(selected, convert, cue, Object.fromEntries(outputFormats.map(f=>[f,bitrates[f] ?? recommended])))}>{isBuilding ? 'Exporting…' : 'Export selected formats'}</button>
+    {chaptersAreStale && <p className="rounded border border-orange-300 bg-orange-50 p-2 text-xs font-medium text-orange-800">Rerun Chapter Detection and review the refreshed chapters before exporting.</p>}
+    <button className="px-4 py-2 bg-amber-600 text-white rounded disabled:opacity-40" title={chaptersAreStale ? 'Rerun and review chapter detection before exporting' : exportAvailability.tooltip} disabled={chaptersAreStale || !exportAvailability.ready || isBuilding || !selected.length || !job.mergedMp3 || !job.chapters.length} onClick={() => onBuildM4b(selected, convert, cue, Object.fromEntries(outputFormats.map(f=>[f,bitrates[f] ?? recommended])))}>{isBuilding ? 'Exporting…' : 'Export selected formats'}</button>
     <div aria-live="polite" className="space-y-2">{job.exports?.map(item => <div className="border rounded p-3 text-sm" key={item.format}>
       <strong>{item.format.toUpperCase()}</strong>: {item.status} {item.progress}% {item.mode === 'copy' ? '— audio copied' : item.mode === 'convert' ? '— audio converted' : ''}
       <p className="break-all">{item.fullPath || item.filename}</p><p className="text-red-700">{item.error}</p>{item.warnings?.map(w => <p key={w}>{w}</p>)}

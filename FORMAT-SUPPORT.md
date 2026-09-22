@@ -58,15 +58,24 @@ Run on Windows:
 npm install
 npm run lint
 npm run build
-# Download the official parser reference before the metadata test (PowerShell):
-New-Item -ItemType Directory -Force audio-test-reference
-Invoke-WebRequest https://raw.githubusercontent.com/advplyr/audiobookshelf/master/server/utils/prober.js -OutFile audio-test-reference/prober.cjs
 npm run test:audio
 ```
 
 The tests use FFmpeg/FFprobe on PATH, or `TEST_FFMPEG` / `TEST_FFPROBE` executable paths. They create isolated `audio-test-*` fixture folders and preserve them for inspection. The HTTP test uses the built server and copies the test binaries into its private runtime. No production jobs are used.
 
-The metadata test executes the actual reference parser against tags read from exported fixtures, rather than reproducing its logic. Set `TEST_ABS_PROBER` to use an existing checkout's `server/utils/prober.js`. The reference tested on September 15, 2026 has SHA-256 `91ce699b6d7927491e508c6d0dd30f25f7179506ef58503a1d25c653fde1a3fa`; upstream changes may change expectations.
+The default metadata test uses `tools/fixtures/audiobook-metadata.json`: small, synthetic book metadata, expected FFprobe tags (including WAV's `TIT3` subtitle spelling), and expected parser output fields. It exports and reads back all seven formats without downloading anything. The fixture contains no third-party parser code or audiobook content.
+
+A separate optional compatibility test executes Audiobookshelf's actual `tryGrabTags` and `parseTags` functions against the exported tags. It expects the upstream `server/utils/prober.js` source at `audio-test-reference/prober.cjs`, relative to the working directory, or at the path specified by `TEST_ABS_PROBER`. This file contains JavaScript parser functions, not test audio or metadata. When absent, only this compatibility check skips with an explanatory message; local metadata checks still run. A local replacement parser would not establish compatibility with Audiobookshelf, so the test does not substitute one. The application never loads this reference file.
+
+To enable the optional check, point `TEST_ABS_PROBER` at an existing Audiobookshelf checkout's `server/utils/prober.js`, or download it locally (PowerShell):
+
+```powershell
+New-Item -ItemType Directory -Force audio-test-reference
+Invoke-WebRequest https://raw.githubusercontent.com/advplyr/audiobookshelf/master/server/utils/prober.js -OutFile audio-test-reference/prober.cjs
+npm run test:audio
+```
+
+The release workflow downloads and checksum-verifies this optional parser to include the compatibility check in release testing. The reference tested on September 15, 2026 has SHA-256 `91ce699b6d7927491e508c6d0dd30f25f7179506ef58503a1d25c653fde1a3fa`; upstream changes may change expectations. The downloaded reference remains ignored by Git.
 
 The automated tests cover:
 

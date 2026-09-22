@@ -7,6 +7,7 @@ import {
   ChapterSourceType,
   AudioMergeMethodType,
   OutputAudioFormat,
+  RerunnablePipelineStep,
 } from './types';
 import { Header } from './components/Header';
 import { Step1MergeDetect } from './components/Step1MergeDetect';
@@ -163,6 +164,44 @@ export default function App() {
       await refreshCurrentJob(currentJob.id);
       setShowLogsDrawer(true);
     } finally {
+      setIsProcessingStep1(false);
+    }
+  };
+
+  const handleRerunStep = async (step: RerunnablePipelineStep, confirmed = false): Promise<void> => {
+    if (!currentJob) return;
+    setIsProcessingStep1(true);
+    try {
+      const start = async (confirmReplaceManualChapters: boolean) => {
+        const response = await fetch(`/api/jobs/${currentJob.id}/rerun/${step}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirmReplaceManualChapters }),
+        });
+        const data = await response.json();
+        return { response, data };
+      };
+      let { response, data } = await start(confirmed);
+      if (response.status === 409 && data.requiresConfirmation) {
+        const accepted = window.confirm(data.error);
+        if (!accepted) return;
+        ({ response, data } = await start(true));
+      }
+      if (!response.ok) throw new Error(data.error || 'Step rerun failed');
+      while (true) {
+        await new Promise(resolve => setTimeout(resolve, 600));
+        const progressResponse = await fetch('/api/step1/progress');
+        if (!progressResponse.ok) continue;
+        const progress = await progressResponse.json();
+        if (!progress.isActive) {
+          if (progress.error) throw new Error(progress.error);
+          break;
+        }
+      }
+    } catch (error) {
+      console.error('Step rerun failed:', error);
+      setShowLogsDrawer(true);
+    } finally {
+      await refreshCurrentJob(currentJob.id);
       setIsProcessingStep1(false);
     }
   };
@@ -454,6 +493,9 @@ export default function App() {
                   { step: 5, label: '5. Validate', desc: 'FFprobe container check & playback review' },
                 ].map((item) => {
                   const isActive = activeStep === item.step;
+                  const isStale = (item.step === 2 && currentJob.staleSteps?.some(step => step === 'chapter_detection' || step === 'chapter_review'))
+                    || (item.step === 4 && currentJob.staleSteps?.includes('export'))
+                    || (item.step === 5 && currentJob.staleSteps?.includes('validation'));
                   const isCompleted =
                     (item.step === 1 && currentJob.status !== 'draft') ||
                     (item.step === 2 && currentJob.chapters.length > 0 && currentJob.status !== 'draft') ||
@@ -467,7 +509,9 @@ export default function App() {
                       id={`tab-step-${item.step}`}
                       onClick={() => setActiveStep(item.step as 1 | 2 | 3 | 4 | 5)}
                       className={`p-3 rounded-lg text-left transition-all cursor-pointer border ${
-                        isActive
+                        isStale
+                          ? 'bg-orange-50 border-orange-300 ring-1 ring-orange-300/40'
+                          : isActive
                           ? 'bg-amber-50/70 border-amber-400 ring-1 ring-amber-400/40'
                           : 'bg-stone-50 border-stone-200/80 hover:bg-stone-100/70'
                       }`}
@@ -480,7 +524,9 @@ export default function App() {
                         >
                           {item.label}
                         </span>
-                        {isCompleted && (
+                        {isStale ? (
+                          <span className="text-[9px] font-bold uppercase text-orange-700">Needs rerun</span>
+                        ) : isCompleted && (
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                         )}
                       </div>
@@ -499,6 +545,7 @@ export default function App() {
                 job={currentJob}
                 config={config}
                 onRunStep1={handleRunStep1}
+                onRerunStep={handleRerunStep}
                 isRunning={isProcessingStep1}
                 onNextStep={() => setActiveStep(2)}
                 onUpdateJobSettings={handleUpdateJobSettings}
@@ -509,7 +556,6 @@ export default function App() {
             {activeStep === 2 && (
               <Step2ChapterReview
                 job={currentJob}
-                leadInSeconds={config.lead_in_seconds}
                 onSaveChapters={handleSaveChapters}
                 onNextStep={() => setActiveStep(3)}
               />
@@ -519,6 +565,8 @@ export default function App() {
               <Step3Metadata
                 job={currentJob}
                 onSaveMetadata={handleSaveMetadata}
+                onRerunMetadata={() => handleRerunStep('metadata_processing')}
+                isRerunning={isProcessingStep1}
                 onNextStep={() => setActiveStep(4)}
               />
             )}

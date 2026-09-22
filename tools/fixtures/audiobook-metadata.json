@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "title": "Book title", "subtitle": "Subtitle", "author": "Author One; Author Two",
+    "narrator": "Narrator One; Narrator Two", "series": "Book series", "seriesSequence": "2.5",
+    "genres": ["Fiction", "Fantasy"], "publishedYear": "2024", "releaseDate": "2024-09-01",
+    "publisher": "Publisher", "language": "eng", "isbn": "9780000000001", "asin": "B000000001",
+    "description": "A description.", "copyright": "Copyright fixture", "explicit": true, "abridged": false
+  },
+  "expectedTags": {
+    "album": "Book title", "title": "Book title", "subtitle": "Subtitle", "artist": "Author One; Author Two",
+    "composer": "Narrator One; Narrator Two", "series": "Book series", "series-part": "2.5",
+    "genre": "Fiction; Fantasy", "publisher": "Publisher", "date": "2024", "language": "eng",
+    "isbn": "9780000000001", "asin": "B000000001", "releasetime": "2024-09-01",
+    "copyright": "Copyright fixture", "explicit": "1", "abridged": "0"
+  },
+  "tagNamesByFormat": { "wav": { "subtitle": "tit3" } },
+  "descriptionTagByFormat": {
+    "m4b": "description", "m4a": "description", "mp3": "description",
+    "flac": "desc", "ogg": "desc", "opus": "desc", "wav": "desc"
+  },
+  "expectedParserOutput": {
+    "file_tag_album": "Book title", "file_tag_title": "Book title", "file_tag_subtitle": "Subtitle",
+    "file_tag_artist": "Author One; Author Two", "file_tag_composer": "Narrator One; Narrator Two",
+    "file_tag_series": "Book series", "file_tag_seriespart": "2.5", "file_tag_genre": "Fiction; Fantasy",
+    "file_tag_publisher": "Publisher", "file_tag_date": "2024", "file_tag_language": "eng",
+    "file_tag_isbn": "9780000000001", "file_tag_asin": "B000000001", "file_tag_description": "A description."
+  }
+}

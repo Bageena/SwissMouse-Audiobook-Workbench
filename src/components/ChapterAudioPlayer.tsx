@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { AlignedWord } from '../types';
+import { AudioWaveform, WaveformMarker } from './AudioWaveform';
 import {
   Play,
   Pause,
@@ -41,6 +42,10 @@ interface ChapterAudioPlayerProps {
   onWordClick?: (timestamp: string, word: string, seconds: number) => void;
   totalDurationSeconds: number;
   audioSrc: string;
+  waveformSrc?: string;
+  chapterMarkers?: WaveformMarker[];
+  onChapterMarker?: (id: string) => void;
+  onSeek?: (seconds: number) => void;
 }
 
 export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
@@ -52,6 +57,10 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   onWordClick,
   totalDurationSeconds,
   audioSrc,
+  waveformSrc,
+  chapterMarkers = [],
+  onChapterMarker = () => {},
+  onSeek,
 }) => {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(audioSrc);
@@ -194,12 +203,14 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   };
 
   // Nudge playback -5s or +5s
-  const handleSeekOffset = (offset: number) => {
-    const nextTime = Math.min(duration, Math.max(0, currentTime + offset));
+  const seekTo = (seconds: number) => {
+    const nextTime = Math.min(duration, Math.max(0, seconds));
     setCurrentTime(nextTime);
-    if (audioRef.current && audioUrl) {
-      audioRef.current.currentTime = nextTime;
-    }
+    if (audioRef.current && audioUrl) audioRef.current.currentTime = nextTime;
+    onSeek?.(nextTime);
+  };
+  const handleSeekOffset = (offset: number) => {
+    seekTo(currentTime + offset);
   };
 
   // Word Click Handler: snaps chapter timestamp to this clicked word!
@@ -327,6 +338,11 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
           </button>
         </div>
       </div>
+
+      <AudioWaveform url={audioUrl === audioSrc ? waveformSrc : undefined}
+        duration={duration} currentTime={currentTime} playing={isPlaying} audioRef={audioRef}
+        markers={chapterMarkers} selectedId={activeTrack.sourceType === 'chapter' ? activeTrack.id : undefined}
+        onSeek={seekTo} onMarker={onChapterMarker} />
 
       {/* Interactive Transcribe / Word Alignment Section (Click any word to update timestamp) */}
       <div className="bg-stone-50 rounded-lg p-3 border border-stone-200 text-xs space-y-2">
@@ -459,11 +475,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
               step="0.5"
               value={currentTime}
               onChange={(e) => {
-                const val = parseFloat(e.target.value);
-                setCurrentTime(val);
-                if (audioRef.current && audioUrl) {
-                  audioRef.current.currentTime = val;
-                }
+                seekTo(parseFloat(e.target.value));
               }}
               className="w-full h-1.5 bg-stone-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
             />

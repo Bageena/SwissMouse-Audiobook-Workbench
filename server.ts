@@ -1,16 +1,21 @@
 import { StatusCache } from './tools/status-cache';
+import { rebuildAnalysis, waveformSlice } from './tools/audio-analysis';
+import { detectChapterHeadings } from './tools/chapter-detection';
+import { buildTranscriptWords, findTranscriptWordIndex, refineChapterStartIndex } from './src/utils/wordAlignment';
 import { PACKAGE_STATUS_SCRIPT } from './tools/package-status';
 import { youtubeUrl, youtubeBaseArgs, downloadYoutubeAudio } from './tools/youtube-audio';
 import { inspect, fingerprint, makePreview, exportAudio, validateChapters } from './tools/audio-engine';
 import { prepareMaster } from './tools/source-audio';
 import { audiobookTags } from './tools/audiobook-metadata';
 import { naturalPathCompare, sourceChapterGroups } from './src/utils/sourceStructure';
+import { applyDefaultChapterEnds, parseChapterTimestamp, parseCsvRow, validateChapterEntries } from './src/utils/chapters';
+import { beginStepRerun, canRerunStep, completeStepRerun, failStepRerun, hasManualChapterWork, markDependentResultsStale } from './src/utils/pipelineRerun';
 import { outputFormats, canCopy, defaultBitrate, bitrateOptions, stitchCompatibility } from './src/audioFormats';
 import { transcriptionEngines, chooseFasterWhisperAttempts, PYTHON_DLL_SETUP, type NormalizedTranscription, type TranscriptionEngineId } from './tools/transcription-engine';
 import { evaluateRequirementReadiness, selectedMissingRequirements } from './tools/requirements';
 import { missingDependencies, missingRequirementsTooltip } from './tools/feature-dependencies';
 import type { FeatureId } from './tools/feature-dependencies';
-import type { WorkbenchConfig, ChapterEntry, AudiobookMetadata, AudiobookJob, HardwareInfo, SpeechModelInfo, InstallRepairProgress, Step1ProcessState, HardwareEnvironmentInfo, RequirementsReport, BaseRequirementItem, FolderScanResult, DiscoveredAudioFile, UnsupportedFileItem, YtDlpStatusInfo, YtDlpStatusState, YouTubeVideoInfo, YouTubeAudioFormat, ChapterCandidate, CoverArtInfo, OutputAudioFormat } from './src/types';
+import type { WorkbenchConfig, ChapterEntry, AudiobookMetadata, AudiobookJob, HardwareInfo, SpeechModelInfo, InstallRepairProgress, Step1ProcessState, Step1ProcessStage, Step1ProgressStage, HardwareEnvironmentInfo, RequirementsReport, BaseRequirementItem, FolderScanResult, DiscoveredAudioFile, UnsupportedFileItem, YtDlpStatusInfo, YtDlpStatusState, YouTubeVideoInfo, YouTubeAudioFormat, ChapterCandidate, CoverArtInfo, OutputAudioFormat, RerunnablePipelineStep } from './src/types';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -508,7 +513,7 @@ function generateFFMetaContent(chapters: ChapterEntry[], totalDurationSeconds: n
   for (let i = 0; i < chapters.length; i++) {
     const chap = chapters[i];
     const startMs = parseTimestampToMs(chap.start);
-    const endMs = i + 1 < chapters.length ? parseTimestampToMs(chapters[i + 1].start) : totalDurationMs;
+    const endMs = parseChapterTimestamp(chap.end) ?? (i + 1 < chapters.length ? parseTimestampToMs(chapters[i + 1].start) - 1 : totalDurationMs);
     content += `[CHAPTER]\nTIMEBASE=1/1000\nSTART=${startMs}\nEND=${endMs}\ntitle=${escapeFFMeta(chap.title)}\n`;
   }
   return content;
@@ -550,6 +555,22 @@ app.get('/api/jobs/:id/audio-preview', (req, res) => {
     return res.status(404).json({ error: 'Merged review audio is unavailable. Run Step 1 first.' });
   }
   res.type('audio/wav').sendFile(path.resolve(audioPath));
+});
+
+app.get('/api/jobs/:id/waveform', async (req, res) => {
+  const job = jobs.find(job => job.id === req.params.id);
+  if (!job?.previewPath || job.status === 'draft') return res.status(404).json({ error: 'Waveform unavailable until audio preparation completes.' });
+  const start = Number(req.query.start), duration = Number(req.query.duration), pixels = Number(req.query.pixels);
+  if (!Number.isFinite(start) || start < 0 || !Number.isFinite(duration) || duration <= 0 || !Number.isFinite(pixels) || pixels < 1 || pixels > 4096) return res.status(400).json({ error: 'Invalid waveform viewport' });
+  try {
+    res.set('Cache-Control', 'no-store').json(await waveformSlice(job.previewPath, start, duration, pixels));
+  } catch (e) {
+    const message = `Waveform analysis unavailable: ${e.message}`;
+    console.warn(`[${job.id}] ${message}`);
+    job.logs.push({ timestamp: new Date().toISOString(), level: 'ERROR', message });
+    saveJobs();
+    res.status(503).json({ error: 'Waveform unavailable. Audio playback is still available.' });
+  }
 });
 
 // ----------------------------------------------------
@@ -838,6 +859,8 @@ let activeStep1ProgressState: Step1ProcessState = {
   currentTask: 'Idle',
   currentStageNumber: 0,
   totalStages: 6,
+  stages: [],
+  failedStage: null,
   percentage: 0,
   isDeterminate: true,
   elapsedSeconds: 0,
@@ -851,6 +874,154 @@ let activeStep1ProgressState: Step1ProcessState = {
 
 let activeStep1Timer: NodeJS.Timeout | null = null;
 let activeStep1StartTime = 0;
+
+const speechRecognitionStages: Step1ProgressStage[] = [
+  { key: 'scanning_folder', label: 'Inspect source audio', desc: 'Verify each input file and read its audio metadata.' },
+  { key: 'merging_audio', label: 'Prepare master audio', desc: 'Normalize and stitch audio, or verify a direct stitch.' },
+  { key: 'generating_waveform', label: 'Create preview and waveform', desc: 'Generate the review PCM and its waveform data.' },
+  { key: 'transcribing_whisper', label: 'Speech recognition', desc: 'Transcribe the recording with the selected local Whisper engine.' },
+  { key: 'detecting_chapters', label: 'Detect chapter candidates', desc: 'Find headings and refine their timestamps from the transcript.' },
+  { key: 'saving_project', label: 'Finalize for review', desc: 'Save the transcript and proposed chapter markers for review.' },
+];
+
+const directChapterStages: Step1ProgressStage[] = [
+  { key: 'scanning_folder', label: 'Inspect source audio', desc: 'Verify each input file and read its audio metadata.' },
+  { key: 'merging_audio', label: 'Prepare master audio', desc: 'Normalize and stitch audio, or verify a direct stitch.' },
+  { key: 'generating_waveform', label: 'Create preview and waveform', desc: 'Generate the review PCM and its waveform data.' },
+  { key: 'extracting_chapters', label: 'Create chapters from files', desc: 'Derive chapter markers from the source-file structure.' },
+  { key: 'saving_project', label: 'Finalize for review', desc: 'Save the chapter markers for review.' },
+];
+
+function buildChapterCandidates(
+  transcriptSegments: NormalizedTranscription['segments'],
+  transcriptWords: ReturnType<typeof buildTranscriptWords>,
+  engine: TranscriptionEngineId,
+): ChapterCandidate[] {
+  const headings = detectChapterHeadings(transcriptSegments);
+  const leadIn = Math.max(0, currentConfig.lead_in_seconds ?? 1.5);
+  return headings.map((heading, headingIndex) => {
+    const rawTime = heading.start;
+    const endTime = heading.end;
+    const headingWordIndex = heading.transcriptWordIndex !== undefined
+      ? heading.transcriptWordIndex
+      : findTranscriptWordIndex(transcriptWords, rawTime - 0.02);
+    const hasHeadingWord = headingWordIndex < transcriptWords.length;
+    const contextStart = Math.max(0, headingWordIndex - 18);
+    const contextEnd = Math.min(transcriptWords.length, headingWordIndex + 26);
+    const contextWords = hasHeadingWord ? transcriptWords.slice(contextStart, contextEnd) : [];
+    const headingEndIndex = findTranscriptWordIndex(transcriptWords, endTime + 0.000001);
+    const headingWords = hasHeadingWord ? transcriptWords.slice(headingWordIndex, headingEndIndex) : [];
+    const refinedStartIndex = hasHeadingWord ? refineChapterStartIndex(transcriptWords, headingWordIndex, leadIn) : headingWordIndex;
+    const refinedStart = transcriptWords[refinedStartIndex]?.startSeconds ?? rawTime;
+    return {
+      candidate_id: headingIndex + 1,
+      candidate_start: formatTimestamp(refinedStart),
+      candidate_end: formatTimestamp(endTime),
+      matched_text: heading.text,
+      context_before: contextWords.filter(word => word.startSeconds < rawTime).map(word => word.word).join(' '),
+      context_after: contextWords.filter(word => word.startSeconds > endTime).map(word => word.word).join(' '),
+      confidence: headingWords.length ? String(headingWords.reduce((sum, word) => sum + (word.confidence ?? 0), 0) / headingWords.length) : '0',
+      proposed_title: heading.text,
+      headingType: heading.headingType,
+      chapterNumber: heading.chapterNumber,
+      recovered: heading.recovered,
+      transcriptWordIndex: hasHeadingWord ? refinedStartIndex : undefined,
+      status: headingIndex === 0 ? 'approved' : 'review',
+      notes: `${engine === 'faster-whisper' ? 'Faster Whisper' : 'OpenAI Whisper'} detected at ${formatTimestamp(rawTime)}${refinedStart < rawTime ? ` with ${leadIn}s maximum lead-in` : ''}`,
+      words: contextWords,
+    };
+  });
+}
+
+async function transcribeExistingPreview(job: AudiobookJob, signal: AbortSignal) {
+  if (!job.previewPath || !fs.existsSync(job.previewPath)) throw new Error('Generate the review preview before rerunning transcription.');
+  const model = speechModels.find(item => item.id === (job.selectedModelId || 'small')) || speechModels[1];
+  const hw = await getHardwareInfo();
+  const requestedEngine = requestEngine(undefined);
+  const venvPython = getVenvPython();
+  if (!fs.existsSync(venvPython)) throw new Error('The private transcription runtime is not ready. Open System Requirements and choose Install Missing Requirements.');
+  fs.mkdirSync(TORCH_CACHE_DIR, { recursive: true });
+  fs.mkdirSync(MATPLOTLIB_CACHE_DIR, { recursive: true });
+  fs.mkdirSync(OPENAI_WHISPER_MODEL_CACHE_DIR, { recursive: true });
+  const normalizedPath = path.join(path.dirname(job.previewPath), `${path.parse(job.previewPath).name}.rerun-${Date.now()}.transcript.json`);
+  try {
+  const runtimeEnv = { ...transcriptionRuntimeEnv(), HF_HOME: WHISPERX_MODEL_CACHE_DIR, TORCH_HOME: TORCH_CACHE_DIR, MPLCONFIGDIR: MATPLOTLIB_CACHE_DIR };
+  let normalized: NormalizedTranscription | undefined;
+  let lastEngineError: unknown;
+  const runEngine = async (engine: TranscriptionEngineId, device: 'cpu' | 'cuda', computeType: string) => {
+    logStep1(`Running ${engine === 'faster-whisper' ? 'Faster Whisper' : 'OpenAI Whisper'} on ${device.toUpperCase()} (${computeType}).`);
+    return transcriptionEngines[engine].transcribe({
+      pythonPath: venvPython, audioPath: job.previewPath!, outputPath: normalizedPath,
+      modelId: engine === 'openai-whisper' && model.id === 'large-v3-turbo' ? 'turbo' : model.id,
+      fasterModelRepository: FASTER_WHISPER_REPOSITORIES[model.id], engine, device, computeType,
+      fasterCacheDir: WHISPERX_MODEL_CACHE_DIR, openAiCacheDir: path.join(OPENAI_WHISPER_MODEL_CACHE_DIR, model.id),
+      language: 'en', signal, env: runtimeEnv,
+    });
+  };
+  const runOpenAi = async () => {
+    const attempts: Array<{ device: 'cpu' | 'cuda'; computeType: string }> = hw.mode === 'gpu'
+      ? [{ device: 'cuda', computeType: 'float16' }, { device: 'cpu', computeType: 'float32' }]
+      : [{ device: 'cpu', computeType: 'float32' }];
+    for (const attempt of attempts) {
+      try { return await runEngine('openai-whisper', attempt.device, attempt.computeType); }
+      catch (error) { lastEngineError = error; if (attempt.device === 'cuda') logStep1('GPU transcription failed. Retrying on CPU.'); }
+    }
+  };
+  if (requestedEngine === 'faster-whisper') {
+    for (const attempt of chooseFasterWhisperAttempts(hw.mode === 'gpu')) {
+      try { normalized = await runEngine('faster-whisper', attempt.device, attempt.computeType); break; }
+      catch (error) { lastEngineError = error; if (attempt.device === 'cuda') logStep1('GPU transcription failed. Retrying on CPU.'); }
+    }
+    if (!normalized) normalized = await runOpenAi();
+  } else normalized = await runOpenAi();
+  if (!normalized) throw lastEngineError || new Error('No transcription engine could be initialized.');
+  if (normalized.segments.some(segment => segment.text?.trim() && !segment.words?.some(word => Number.isFinite(word.start) && Number.isFinite(word.end)))) {
+    throw new Error('The transcription engine returned speech segments without word timestamps');
+  }
+  const transcriptWords = buildTranscriptWords(normalized.segments);
+  const wordsCount = normalized.segments.reduce((total, segment) => total + segment.words.length, 0);
+  return {
+    segments: normalized.segments,
+    words: transcriptWords,
+    transcription: {
+      model: model.name, profile: model.id, language: normalized.language || 'en', engine: normalized.engine,
+      device: normalized.device, computeType: normalized.computeType, segmentsCount: normalized.segments.length,
+      wordsCount, completedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+    },
+  };
+  } finally {
+    if (fs.existsSync(normalizedPath)) fs.unlinkSync(normalizedPath);
+  }
+}
+
+function setStep1Stage(stage: Step1ProcessStage, task: string, logDetail?: string) {
+  const previousStage = activeStep1ProgressState.stage;
+  const previousIndex = activeStep1ProgressState.stages.findIndex(item => item.key === previousStage);
+  const index = activeStep1ProgressState.stages.findIndex(item => item.key === stage);
+  const definition = activeStep1ProgressState.stages[index];
+  if (previousIndex >= 0 && previousStage !== stage) {
+    logStep1(`Stage ${previousIndex + 1}/${activeStep1ProgressState.totalStages} completed: ${activeStep1ProgressState.stages[previousIndex].label}.`);
+  }
+  activeStep1ProgressState.stage = stage;
+  activeStep1ProgressState.currentStageNumber = index >= 0 ? index + 1 : 0;
+  activeStep1ProgressState.label = definition?.label || task;
+  activeStep1ProgressState.currentTask = task;
+  activeStep1ProgressState.liveStatusMessage = task;
+  if (logDetail) logStep1(`Stage ${index + 1}/${activeStep1ProgressState.totalStages} started: ${logDetail}`);
+}
+
+function failStep1Stage(error: unknown) {
+  const detail = error instanceof Error ? error.message : String(error);
+  const failedStage = activeStep1ProgressState.stage;
+  const definition = activeStep1ProgressState.stages.find(item => item.key === failedStage);
+  activeStep1ProgressState.isActive = false;
+  activeStep1ProgressState.canCancel = false;
+  activeStep1ProgressState.failedStage = failedStage;
+  activeStep1ProgressState.stage = 'error';
+  activeStep1ProgressState.error = `${definition?.label || 'Processing'} failed: ${detail}`;
+  activeStep1ProgressState.liveStatusMessage = activeStep1ProgressState.error;
+  logStep1(`ERROR: ${activeStep1ProgressState.error}`);
+}
 
 // Detailed hardware environment detection
 const hardwareSnapshot = new StatusCache<HardwareEnvironmentInfo>(10 * 60_000);
@@ -2550,21 +2721,26 @@ const handleStep1Process = async (req: any, res: any) => {
 
   // Initialize live Step 1 progress state
   activeStep1StartTime = Date.now();
+  const stages = chapterSource === 'existing_files' ? directChapterStages : speechRecognitionStages;
   activeStep1ProgressState = {
+    jobId: job.id,
     isActive: true,
     stage: 'scanning_folder',
     label: chapterSource === 'existing_files' ? 'Scanning & validating input audio files' : 'Scanning input audio files',
     currentTask: `Verifying ${job.parts.length} source audio files...`,
     currentStageNumber: 1,
-    totalStages: chapterSource === 'existing_files' ? 3 : 6,
-    percentage: 10,
-    isDeterminate: true,
+    totalStages: stages.length,
+    stages,
+    failedStage: null,
+    percentage: 0,
+    isDeterminate: false,
     elapsedSeconds: 0,
     liveStatusMessage: `Discovered ${job.parts.length} input files. Checking format & integrity.`,
     logs: [
       `[${new Date().toLocaleTimeString()}] Step 1 initiated for: ${job.name}`,
       `[${new Date().toLocaleTimeString()}] Target output folder: ${job.outputFolderPath || currentOutputFolder}`,
       `[${new Date().toLocaleTimeString()}] Workflow: ${chapterSource === 'existing_files' ? 'Direct Audio File Preservation' : 'Whisper Speech Recognition'}`,
+      `[${new Date().toLocaleTimeString()}] Stage 1/${stages.length} started: Inspect source audio`,
     ],
     canCancel: true,
     isCancelling: false,
@@ -2623,6 +2799,10 @@ const handleStep1Process = async (req: any, res: any) => {
       const intermediatesDir = path.join(job.outputFolderPath || currentOutputFolder, 'intermediates', job.id);
       if (sourcePaths.some(p => { const relative = path.relative(intermediatesDir,p); return !relative.startsWith('..') && !path.isAbsolute(relative); })) throw new Error('Move source files outside this project’s intermediate directory before processing.');
       fs.mkdirSync(intermediatesDir, { recursive: true });
+      setStep1Stage('merging_audio', reusePreparedAudio
+        ? 'Using the previously prepared master audio.'
+        : 'Preparing a single review master from the source audio.',
+        reusePreparedAudio ? 'Reuse prepared master audio' : 'Prepare master audio');
       const prepared = reusePreparedAudio
         ? {
             master: existingMaster!,
@@ -2663,23 +2843,25 @@ const handleStep1Process = async (req: any, res: any) => {
         }
       }
       const reusablePreview = reusePreparedAudio && job.previewPath && fs.existsSync(job.previewPath);
+      setStep1Stage('generating_waveform', reusablePreview
+        ? 'Reusing the existing review preview and waveform data.'
+        : 'Generating the review preview and waveform data.',
+        reusablePreview ? 'Reuse preview and waveform data' : 'Generate preview and waveform data');
       if (reusablePreview) {
-        logStep1('Reusing existing analysis preview.');
+        logStep1('Reusing existing analysis preview and waveform data.');
       } else {
         job.previewPath = path.join(intermediatesDir, 'analysis.wav');
-        await makePreview(MANAGED_FFMPEG_PATH, master, job.previewPath, signal);
+        await makePreview(MANAGED_FFMPEG_PATH, master, job.previewPath, signal, logStep1, true);
+        logStep1('Preview PCM and waveform data created successfully.');
       }
       signal.throwIfAborted();
+      job.pipelineSteps = completeStepRerun(job.pipelineSteps, 'generating_waveform', now());
       saveJobs();
       // WORKFLOW A: Use existing MP3 files as individual chapters
       // ----------------------------------------------------
   if (chapterSource === 'existing_files') {
-    activeStep1ProgressState.stage = 'probing_media';
-    activeStep1ProgressState.currentStageNumber = 2;
-    activeStep1ProgressState.percentage = 45;
-    activeStep1ProgressState.label = 'Extracting existing file durations & chapter tags';
-    activeStep1ProgressState.currentTask = 'Reading durations and metadata from individual audio tracks';
-    logStep1(`Probing ${job.parts.length} files with FFprobe...`);
+    setStep1Stage('extracting_chapters', 'Creating chapter markers from source-file order and embedded chapters.', 'Create chapters from source files');
+    logStep1(`Using durations and embedded chapter tags from ${job.parts.length} inspected files.`);
 
     job.logs.push({
       timestamp: now(),
@@ -2699,19 +2881,15 @@ const handleStep1Process = async (req: any, res: any) => {
     }));
     job.chapters = directChapters;
     job.candidates = []; // No AI candidates needed
+    job.pipelineSteps = completeStepRerun(job.pipelineSteps, 'extracting_chapters', now());
     job.status = 'transcribed';
+    job.staleSteps = [];
 
     if (sourcePaths.length === 1 && job.existingChapters?.length) job.chapters = [...job.existingChapters];
     job.ffmetaContent = generateFFMetaContent(job.chapters, job.totalDurationSeconds, job.metadata);
 
-    activeStep1ProgressState.stage = 'completed';
-    activeStep1ProgressState.currentStageNumber = 3;
-    activeStep1ProgressState.percentage = 100;
-    activeStep1ProgressState.label = 'Step 1 complete';
-    activeStep1ProgressState.currentTask = 'Chapters created successfully';
-    activeStep1ProgressState.isActive = false;
-    activeStep1ProgressState.canCancel = false;
-    activeStep1ProgressState.liveStatusMessage = `Created ${directChapters.length} chapters directly from existing files. Ready for Step 2 human review.`;
+    setStep1Stage('saving_project', 'Saving chapter markers for review.', 'Finalize direct chapter workflow');
+    logStep1(`Chapter markers created successfully (${directChapters.length} total).`);
     activeStep1ProgressState.summary = {
       totalFilesProcessed: job.parts.length,
       totalDurationSeconds: cumulativeSec,
@@ -2719,8 +2897,6 @@ const handleStep1Process = async (req: any, res: any) => {
       wordsTranscribed: 0,
       modelUsed: 'Direct File Preservation (Bypassed Whisper)',
     };
-    logStep1(`Step 1 complete. ${directChapters.length} chapters mapped in natural sequence.`);
-
     job.logs.push({
       timestamp: now(),
       level: 'INFO',
@@ -2728,6 +2904,16 @@ const handleStep1Process = async (req: any, res: any) => {
     });
 
     saveJobs();
+    activeStep1ProgressState.stage = 'completed';
+    activeStep1ProgressState.currentStageNumber = activeStep1ProgressState.totalStages;
+    activeStep1ProgressState.percentage = 0;
+    activeStep1ProgressState.label = 'Ready for chapter review';
+    activeStep1ProgressState.currentTask = 'Chapter markers saved successfully';
+    activeStep1ProgressState.isActive = false;
+    activeStep1ProgressState.canCancel = false;
+    activeStep1ProgressState.liveStatusMessage = `Created ${directChapters.length} chapters directly from existing files. Ready for Step 2 human review.`;
+    logStep1(`Stage ${activeStep1ProgressState.totalStages}/${activeStep1ProgressState.totalStages} completed: Direct chapter markers saved.`);
+    logStep1(`Step 1 completed in ${Math.round((Date.now() - activeStep1StartTime) / 1000)}s.`);
     return;
   }
 
@@ -2738,15 +2924,9 @@ const handleStep1Process = async (req: any, res: any) => {
   const hw = await getHardwareInfo();
 
   const mergedFilePath = job.previewPath;
-  // Stage 4: Transcribing with Local WhisperX
-  activeStep1ProgressState.stage = 'transcribing_whisper';
-  activeStep1ProgressState.currentStageNumber = 4;
-  activeStep1ProgressState.percentage = 62;
-  activeStep1ProgressState.label = `Transcribing speech (${model.name})`;
-  activeStep1ProgressState.currentTask = requestedEngine === 'faster-whisper'
+  setStep1Stage('transcribing_whisper', requestedEngine === 'faster-whisper'
     ? `Using Faster Whisper with ${hw.mode === 'gpu' ? 'automatic GPU acceleration' : 'optimized CPU transcription'}...`
-    : 'Using OpenAI Whisper compatibility mode...';
-  logStep1(`Initialized Whisper model: ${model.name} (${model.id})`);
+    : 'Using OpenAI Whisper compatibility mode...', `Speech recognition with ${model.name} (${model.id})`);
 
   // Do not create estimated transcript statistics. A prior demo implementation
   // filled these values before WhisperX had actually succeeded, which made a
@@ -2759,22 +2939,12 @@ const handleStep1Process = async (req: any, res: any) => {
     message: `${requestedEngine === 'faster-whisper' ? 'Faster Whisper' : 'OpenAI Whisper compatibility mode'} started with '${model.name}' (${hw.mode === 'gpu' ? 'GPU preferred' : 'CPU'}).`,
   });
 
-  // Stage 5: Detecting chapter markers
-  activeStep1ProgressState.stage = 'extracting_chapters';
-  activeStep1ProgressState.currentStageNumber = 5;
-  activeStep1ProgressState.percentage = 85;
-  activeStep1ProgressState.label = 'Detecting chapter headings & boundary tokens';
-  activeStep1ProgressState.currentTask = 'Alignment & lead-in window calculation...';
-  
-  const leadIn = currentConfig.lead_in_seconds || 1.5;
   let generatedCandidates: ChapterCandidate[] = [];
 
   try {
     if (!fs.existsSync(mergedFilePath)) {
-        const errorMsg = "Cannot run transcription because the merged audio file was not successfully created.";
-        logStep1(`ERROR: ${errorMsg}`);
-        activeStep1ProgressState.isActive = false;
-        activeStep1ProgressState.error = errorMsg;
+        const errorMsg = new Error('The review preview was not created, so speech recognition cannot begin.');
+        failStep1Stage(errorMsg);
         return;
     }
     
@@ -2796,7 +2966,7 @@ const handleStep1Process = async (req: any, res: any) => {
     let normalized: NormalizedTranscription | undefined;
     let lastEngineError: unknown;
     const runEngine = async (engine: TranscriptionEngineId, device: 'cpu' | 'cuda', computeType: string) => {
-      logStep1(`Transcription engine=${engine}, model=${model.id}, device=${device}, compute=${computeType}, cache=${engine === 'faster-whisper' ? WHISPERX_MODEL_CACHE_DIR : OPENAI_WHISPER_MODEL_CACHE_DIR}`);
+      logStep1(`Running ${engine === 'faster-whisper' ? 'Faster Whisper' : 'OpenAI Whisper'} on ${device.toUpperCase()} (${computeType}).`);
       return transcriptionEngines[engine].transcribe({
         pythonPath: venvPython, audioPath: mergedFilePath, outputPath: normalizedPath,
         modelId: engine === 'openai-whisper' && model.id === 'large-v3-turbo' ? 'turbo' : model.id,
@@ -2844,15 +3014,10 @@ const handleStep1Process = async (req: any, res: any) => {
     if (!normalized) throw lastEngineError || new Error('No transcription engine could be initialized.');
 
       const transcriptSegments = normalized.segments;
-      const transcriptWords = transcriptSegments.flatMap((segment: any) => (Array.isArray(segment.words) ? segment.words : []).map((word: any) => ({
-        word: String(word.word || '').trim(),
-        start: formatTimestamp(Number(word.start)),
-        startSeconds: Number(word.start),
-        endSeconds: Number(word.end),
-        confidence: typeof word.probability === 'number' ? word.probability : undefined,
-      })).filter((word: any) => word.word && Number.isFinite(word.startSeconds) && Number.isFinite(word.endSeconds)));
+      const transcriptWords = buildTranscriptWords(transcriptSegments);
       if (transcriptSegments.some((segment: any) => segment.text?.trim() && !segment.words?.some((word: any) => Number.isFinite(word.start) && Number.isFinite(word.end)))) throw new Error('The transcription engine returned speech segments without word timestamps');
       job.transcriptWords = transcriptWords;
+      job.transcriptSegments = transcriptSegments;
       job.transcriptKey = key;
       const transcriptWordCount = transcriptSegments.reduce((total: number, segment: any) => {
         if (Array.isArray(segment.words)) return total + segment.words.length;
@@ -2869,64 +3034,41 @@ const handleStep1Process = async (req: any, res: any) => {
         wordsCount: transcriptWordCount,
         completedAt: now(),
       };
-      
-      let candidateId = 1;
-      const chapterRegex = /(chapter\s*\d+|prologue|epilogue|introduction)/i;
-      
-      for (const segment of transcriptSegments) {
-        if (chapterRegex.test(segment.text)) {
-          const rawTime = segment.start;
-          const startTime = Math.max(0, rawTime - leadIn);
-          const endTime = segment.end;
-          const headingWordIndex = transcriptWords.findIndex((word: any) => word.startSeconds >= rawTime - 0.02);
-          const contextStart = Math.max(0, headingWordIndex - 18);
-          const contextEnd = Math.min(transcriptWords.length, headingWordIndex + 26);
-          const contextWords = headingWordIndex >= 0 ? transcriptWords.slice(contextStart, contextEnd) : [];
-          const headingWords = contextWords.filter((word: any) => word.startSeconds >= rawTime && word.startSeconds <= endTime);
-          
-          generatedCandidates.push({
-            candidate_id: candidateId++,
-            candidate_start: formatTimestamp(startTime),
-            candidate_end: formatTimestamp(endTime),
-            matched_text: segment.text.trim(),
-            context_before: contextWords.filter((word: any) => word.startSeconds < rawTime).map((word: any) => word.word).join(' '),
-            context_after: contextWords.filter((word: any) => word.startSeconds > endTime).map((word: any) => word.word).join(' '),
-            confidence: headingWords.length ? String(headingWords.reduce((sum: number, word: any) => sum + (word.confidence ?? 0), 0) / headingWords.length) : '0',
-            proposed_title: segment.text.trim(),
-            status: candidateId === 2 ? 'approved' : 'review',
-            notes: `${normalized.engine === 'faster-whisper' ? 'Faster Whisper' : 'OpenAI Whisper'} detected at ${formatTimestamp(rawTime)} with ${leadIn}s lead-in`,
-            words: contextWords,
-          });
-        }
-      }
-      logStep1(`${normalized.engine === 'faster-whisper' ? 'Faster Whisper' : 'OpenAI Whisper compatibility mode'} completed with ${transcriptSegments.length} segments and ${generatedCandidates.length} chapter candidates.`);
+      job.pipelineSteps = completeStepRerun(job.pipelineSteps, 'transcribing_whisper', now());
+      logStep1(`Speech recognition completed: ${transcriptSegments.length} segments and ${transcriptWordCount} words aligned.`);
+      setStep1Stage('detecting_chapters', 'Finding chapter headings and refining their timestamps.', 'Detect chapter candidates');
+      generatedCandidates = buildChapterCandidates(transcriptSegments, transcriptWords, normalized.engine);
+      logStep1(`Chapter candidate detection completed: ${generatedCandidates.length} candidate markers found.`);
+      job.pipelineSteps = completeStepRerun(job.pipelineSteps, 'detecting_chapters', now());
   } catch (err: any) {
     if (signal.aborted) throw err;
-    console.error("Local transcription execution error:", err);
-    logStep1(`ERROR: No configured transcription engine completed. Technical detail: ${err.message}.`);
-    job.logs.push({ timestamp: now(), level: 'ERROR', message: `Step 1 transcription failed. ${err.message}` });
+    console.error('Step 1 processing stage failed:', err);
+    const failedStage = activeStep1ProgressState.stage;
+    const failedLabel = activeStep1ProgressState.stages.find(item => item.key === failedStage)?.label || 'Processing';
+    job.logs.push({ timestamp: now(), level: 'ERROR', message: `${failedLabel} failed. ${err.message}` });
     saveJobs();
-    activeStep1ProgressState.isActive = false;
-    activeStep1ProgressState.canCancel = false;
-    activeStep1ProgressState.stage = 'error';
-    activeStep1ProgressState.error = 'Transcription could not start. Open System Requirements to repair the selected transcription setup.';
-    activeStep1ProgressState.liveStatusMessage = 'Transcription failed. Technical details were saved in the job log.';
+    failStep1Stage(err);
     return;
   }
 
   job.candidates = generatedCandidates;
 
-  // Generate draft chapters CSV entries from approved or high-confidence candidates
+  // Every detected candidate is included for human review, regardless of confidence.
   job.chapters = generatedCandidates.map((c, idx) => ({
     id: `chap-${idx + 1}`,
     start: c.candidate_start,
     title: c.proposed_title,
     notes: c.notes,
+    headingType: c.headingType,
+    chapterNumber: c.chapterNumber,
+    recovered: c.recovered,
+    transcriptWordIndex: c.transcriptWordIndex,
   }));
 
-  if (job.existingChapters?.length) job.chapters = [...job.existingChapters];
   if (!job.chapters.length || job.chapters[0].start !== '00:00:00.000') job.chapters.unshift({ id: 'opening', start: '00:00:00.000', title: 'Opening' });
+  setStep1Stage('saving_project', 'Saving transcript and candidate chapter markers for review.', 'Finalize chapter review data');
   job.status = 'transcribed';
+  job.staleSteps = [];
   job.logs.push({
     timestamp: now(),
     level: 'INFO',
@@ -2935,12 +3077,11 @@ const handleStep1Process = async (req: any, res: any) => {
 
   saveJobs();
 
-  // Stage 6: Completed
   activeStep1ProgressState.stage = 'completed';
-  activeStep1ProgressState.currentStageNumber = 6;
-  activeStep1ProgressState.percentage = 100;
-  activeStep1ProgressState.label = 'Step 1 complete';
-  activeStep1ProgressState.currentTask = 'Candidate chapters extracted';
+  activeStep1ProgressState.currentStageNumber = activeStep1ProgressState.totalStages;
+  activeStep1ProgressState.percentage = 0;
+  activeStep1ProgressState.label = 'Ready for chapter review';
+  activeStep1ProgressState.currentTask = 'Transcript and candidate chapters saved successfully';
   activeStep1ProgressState.isActive = false;
   activeStep1ProgressState.canCancel = false;
   activeStep1ProgressState.liveStatusMessage = `Step 1 complete. Extracted ${generatedCandidates.length} candidate markers. Ready for Step 2 review.`;
@@ -2951,7 +3092,8 @@ const handleStep1Process = async (req: any, res: any) => {
     wordsTranscribed: job.transcription.wordsCount,
     modelUsed: model.name,
   };
-  logStep1(`Completed Step 1 processing in ${Math.round((Date.now() - activeStep1StartTime) / 1000)}s.`);
+  logStep1(`Stage ${activeStep1ProgressState.totalStages}/${activeStep1ProgressState.totalStages} completed: Chapter review data saved.`);
+  logStep1(`Step 1 completed in ${Math.round((Date.now() - activeStep1StartTime) / 1000)}s.`);
   
   } catch (err: any) {
     if (signal.aborted) {
@@ -2966,12 +3108,12 @@ const handleStep1Process = async (req: any, res: any) => {
       activeStep1ProgressState.liveStatusMessage = 'Processing cancelled. Completed audio preparation is preserved for the next run.';
       return;
     }
-    console.error("Fatal Step 1 Background Error:", err);
-    job.logs.push({ timestamp: now(), level: 'ERROR', message: `Step 1 processing failed. ${err.message}` });
+    console.error('Fatal Step 1 background error:', err);
+    const failedStage = activeStep1ProgressState.stage;
+    const failedLabel = activeStep1ProgressState.stages.find(item => item.key === failedStage)?.label || 'Processing';
+    job.logs.push({ timestamp: now(), level: 'ERROR', message: `${failedLabel} failed. ${err.message}` });
     saveJobs();
-    activeStep1ProgressState.isActive = false;
-    activeStep1ProgressState.stage = 'error';
-    activeStep1ProgressState.error = err.message;
+    failStep1Stage(err);
   } finally {
     step1TaskRunning = false;
     step1Abort = undefined;
@@ -2988,6 +3130,131 @@ const requireStep1Dependencies = (req: any, res: any, next: any) => {
 app.post('/api/jobs/:id/merge-and-detect', requireStep1Dependencies, handleStep1Process);
 app.post('/api/jobs/:id/process-step1', requireStep1Dependencies, handleStep1Process);
 
+const rerunnableSteps = new Set<RerunnablePipelineStep>(['generating_waveform', 'transcribing_whisper', 'detecting_chapters', 'extracting_chapters', 'metadata_processing']);
+app.post('/api/jobs/:id/rerun/:step', async (req, res) => {
+  const job = jobs.find(item => item.id === req.params.id);
+  const step = req.params.step as RerunnablePipelineStep;
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (!rerunnableSteps.has(step)) return res.status(400).json({ error: 'This processing step cannot be rerun independently.' });
+  if (step1TaskRunning) return res.status(409).json({ error: 'Another processing step is already running.' });
+  if (!canRerunStep(job, step)) return res.status(400).json({ error: 'Required input for this step is unavailable.' });
+  if ((step === 'detecting_chapters' || step === 'extracting_chapters') && hasManualChapterWork(job) && req.body?.confirmReplaceManualChapters !== true) {
+    return res.status(409).json({
+      error: 'Rerunning this step will replace chapter names, Start and End timestamps, inserted chapters, and missing placeholders. Confirm to continue.',
+      requiresConfirmation: true,
+    });
+  }
+
+  const definition = [...speechRecognitionStages, ...directChapterStages].find(item => item.key === step)
+    || { key: step as Step1ProcessStage, label: 'Process metadata', desc: 'Regenerate chapter metadata from the current reviewed data.' };
+  const inferredOutput = step === 'generating_waveform' ? !!job.previewPath
+    : step === 'transcribing_whisper' ? !!job.transcription
+    : step === 'detecting_chapters' ? job.candidates.length > 0
+    : step === 'extracting_chapters' ? job.chapters.length > 0
+    : !!job.ffmetaContent;
+  const previousStepState = job.pipelineSteps?.[step] || (inferredOutput ? { status: 'current' as const, hasOutput: true } : undefined);
+  job.pipelineSteps = { ...job.pipelineSteps, [step]: beginStepRerun(previousStepState) };
+  if (step === 'transcribing_whisper' && job.candidates.length && !job.pipelineSteps.detecting_chapters) {
+    job.pipelineSteps.detecting_chapters = { status: 'current', hasOutput: true };
+  }
+  saveJobs();
+  jobIdForStep1 = job.id;
+  activeStep1StartTime = Date.now();
+  activeStep1ProgressState = {
+    jobId: job.id, rerunStep: step,
+    isActive: true, stage: definition.key, label: `Rerunning ${definition.label}`,
+    currentTask: definition.desc, currentStageNumber: 1, totalStages: 1, stages: [definition], failedStage: null,
+    percentage: 0, isDeterminate: false, elapsedSeconds: 0,
+    liveStatusMessage: `Rerunning only ${definition.label}. Previous successful output is preserved until completion.`,
+    logs: [`[${new Date().toLocaleTimeString()}] Rerun started: ${definition.label}`],
+    canCancel: true, isCancelling: false, error: null, summary: null,
+  };
+  const controller = new AbortController();
+  step1Abort = controller;
+  step1TaskRunning = true;
+  res.json({ status: 'started', step });
+
+  void (async () => {
+    try {
+      if (step === 'generating_waveform') {
+        await rebuildAnalysis(job.previewPath!);
+      } else if (step === 'transcribing_whisper') {
+        const replacement = await transcribeExistingPreview(job, controller.signal);
+        controller.signal.throwIfAborted();
+        job.transcriptSegments = replacement.segments;
+        job.transcriptWords = replacement.words;
+        job.transcription = replacement.transcription;
+        job.transcriptKey = undefined;
+      } else if (step === 'detecting_chapters') {
+        const words = job.transcriptWords?.length ? job.transcriptWords : buildTranscriptWords(job.transcriptSegments!);
+        const candidates = buildChapterCandidates(job.transcriptSegments!, words, job.transcription?.engine || 'openai-whisper');
+        const chapters: ChapterEntry[] = candidates.map((candidate, index) => ({
+          id: `chap-${index + 1}`, start: candidate.candidate_start, title: candidate.proposed_title,
+          notes: candidate.notes, headingType: candidate.headingType, chapterNumber: candidate.chapterNumber,
+          recovered: candidate.recovered, transcriptWordIndex: candidate.transcriptWordIndex,
+        }));
+        if (!chapters.length || chapters[0].start !== '00:00:00.000') chapters.unshift({ id: 'opening', start: '00:00:00.000', title: 'Opening' });
+        const replacementChapters = applyDefaultChapterEnds(chapters, job.totalDurationSeconds);
+        const replacementMetadata = generateFFMetaContent(replacementChapters, job.totalDurationSeconds, job.metadata);
+        controller.signal.throwIfAborted();
+        job.candidates = candidates;
+        job.chapters = replacementChapters;
+        job.ffmetaContent = replacementMetadata;
+      } else if (step === 'extracting_chapters') {
+        const relativeNames = job.parts.map(part => part.sourceRelativePath || part.name);
+        const structure = sourceChapterGroups(relativeNames);
+        const starts: number[] = [];
+        let cumulative = 0;
+        for (const part of job.parts) { starts.push(cumulative); cumulative += part.durationSeconds; }
+        const chapters = structure.groups.map((group, index) => ({
+          id: `chap-${index + 1}`, start: formatTimestamp(starts[group.indices[0]]), title: group.title,
+          notes: group.indices.map(i => relativeNames[i]).join(' → '),
+        }));
+        const replacementChapters = applyDefaultChapterEnds(chapters, job.totalDurationSeconds);
+        const replacementMetadata = generateFFMetaContent(replacementChapters, job.totalDurationSeconds, job.metadata);
+        controller.signal.throwIfAborted();
+        job.chapterStructure = structure.mode;
+        job.candidates = [];
+        job.chapters = replacementChapters;
+        job.ffmetaContent = replacementMetadata;
+      } else if (step === 'metadata_processing') {
+        const replacement = generateFFMetaContent(job.chapters, job.totalDurationSeconds, job.metadata);
+        controller.signal.throwIfAborted();
+        job.ffmetaContent = replacement;
+      }
+
+      const completedAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
+      job.pipelineSteps = completeStepRerun(job.pipelineSteps, step, completedAt);
+      if (step === 'detecting_chapters') job.staleSteps = (job.staleSteps || []).filter(item => item !== 'chapter_detection');
+      job.staleSteps = markDependentResultsStale(job.staleSteps, step);
+      job.logs.push({ timestamp: completedAt, level: 'INFO', message: `Rerun completed: ${definition.label}.` });
+      saveJobs();
+      activeStep1ProgressState = {
+        ...activeStep1ProgressState, isActive: false, stage: 'completed', label: `${definition.label} rerun complete`,
+        currentTask: 'Replacement output saved successfully.', percentage: 100, isDeterminate: true,
+        canCancel: false, liveStatusMessage: `${definition.label} is current.`,
+        summary: { rerunStep: step },
+      };
+      logStep1(`Rerun completed successfully: ${definition.label}.`);
+    } catch (error: any) {
+      const message = controller.signal.aborted ? 'Rerun cancelled. Previous successful output was preserved.' : error.message || String(error);
+      job.pipelineSteps = { ...job.pipelineSteps, [step]: failStepRerun(previousStepState, message) };
+      job.logs.push({ timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19), level: 'ERROR', message: `Rerun failed: ${definition.label}. ${message}` });
+      saveJobs();
+      activeStep1ProgressState.failedStage = definition.key;
+      activeStep1ProgressState.stage = controller.signal.aborted ? 'cancelled' : 'error';
+      activeStep1ProgressState.isActive = false;
+      activeStep1ProgressState.canCancel = false;
+      activeStep1ProgressState.error = message;
+      activeStep1ProgressState.liveStatusMessage = message;
+      logStep1(`Rerun failed: ${message}`);
+    } finally {
+      step1TaskRunning = false;
+      step1Abort = undefined;
+    }
+  })();
+});
+
 // Update & Validate Chapter List (replicates app/chapters.py validation)
 app.post('/api/jobs/:id/chapters', (req, res) => {
   const job = jobs.find(j => j.id === req.params.id);
@@ -2995,13 +3262,16 @@ app.post('/api/jobs/:id/chapters', (req, res) => {
     return res.status(404).json({ error: 'Job not found' });
   }
 
-  const { chapters } = req.body;
+  const { chapters: submittedChapters } = req.body;
+  const chapters = Array.isArray(submittedChapters) ? applyDefaultChapterEnds(submittedChapters, job.totalDurationSeconds) : submittedChapters;
   if (!Array.isArray(chapters) || chapters.length === 0) {
     return res.status(400).json({ error: 'Chapters list must contain at least one entry.' });
   }
 
   // Exact validation rules from chapters.py
   try {
+    const chapterError = validateChapterEntries(chapters, job.totalDurationSeconds);
+    if (chapterError) throw new Error(chapterError);
     for (let i = 0; i < chapters.length; i++) {
       const row = chapters[i];
       if (!row.start || !row.title || !row.title.trim()) {
@@ -3039,6 +3309,8 @@ app.post('/api/jobs/:id/chapters', (req, res) => {
 
   // Update chapters and generate ffmetadata preview
   job.chapters = chapters;
+  job.staleSteps = (job.staleSteps || []).filter(step => step !== 'chapter_review');
+  job.staleSteps = [...new Set([...job.staleSteps, 'export' as const, 'validation' as const])];
   job.ffmetaContent = generateFFMetaContent(chapters, job.totalDurationSeconds, job.metadata);
   
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
@@ -3179,6 +3451,8 @@ app.post('/api/jobs/:id/metadata', (req, res) => {
 
   // Re-generate FFmetadata with all updated tags
   job.ffmetaContent = generateFFMetaContent(job.chapters, job.totalDurationSeconds, job.metadata);
+  job.pipelineSteps = completeStepRerun(job.pipelineSteps, 'metadata_processing', now);
+  job.staleSteps = markDependentResultsStale(job.staleSteps, 'metadata_processing');
 
   if (job.status === 'transcribed') {
     job.status = 'metadata_ready';
@@ -3204,6 +3478,11 @@ app.post('/api/jobs/:id/metadata', (req, res) => {
 app.post('/api/jobs/:id/build-m4b', requireFeatures(['audio_export'], 'Audio export'), async (req, res) => {
   const job = jobs.find(j => j.id === req.params.id);
   if (!job?.mergedMp3?.fullPath || job.status === 'draft') return res.status(400).json({ error: 'Complete Step 1 first.' });
+  if (job.staleSteps?.some(step => step === 'chapter_detection' || step === 'chapter_review')) return res.status(409).json({ error: 'Rerun and review chapter detection before exporting.' });
+  const preparedChapters = applyDefaultChapterEnds(job.chapters, job.totalDurationSeconds);
+  const chapterError = validateChapterEntries(preparedChapters, job.totalDurationSeconds);
+  if (chapterError) return res.status(400).json({ error: `Fix chapter timestamps before exporting: ${chapterError}` });
+  job.chapters = preparedChapters;
   if (step1TaskRunning) return res.status(409).json({ error: 'Wait for source processing to complete.' });
   try {
     const paths = job.parts.map(part => path.resolve(APP_ROOT, job.sourceFolderPath || '', part.name));
@@ -3254,6 +3533,7 @@ app.post('/api/jobs/:id/build-m4b', requireFeatures(['audio_export'], 'Audio exp
     saveJobs();
   }
   const succeeded = job.exports.some(item => item.status === 'success');
+  if (succeeded) job.staleSteps = (job.staleSteps || []).filter(step => step !== 'export');
   res.status(succeeded ? 200 : 500).json({ status: succeeded ? 'ok' : 'error', error: succeeded ? undefined : job.exports.map(item => item.error).join('; '), exports: job.exports, outputM4b: job.outputM4b });
 });
 
@@ -3298,7 +3578,13 @@ app.post('/api/jobs/:id/validate', requireFeatures(['output_validation'], 'Outpu
   if (chaptersCount === 0) {
     status = 'FAIL';
     reason = 'No embedded chapters detected in container.';
-  } else if (chaptersCount !== job.chapters.length || inspected.chapters.some((c: any, i: number) => c.title !== job.chapters[i].title || Math.abs(parseTimestampToMs(c.start) - parseTimestampToMs(job.chapters[i].start)) > 25)) {
+  } else if (chaptersCount !== job.chapters.length || inspected.chapters.some((c: any, i: number) => {
+    const reviewed = job.chapters[i];
+    const checkEnd = ['m4b', 'm4a', 'mp3'].includes(job.outputM4b?.format || 'm4b');
+    return c.title !== reviewed.title
+      || Math.abs(parseTimestampToMs(c.start) - parseTimestampToMs(reviewed.start)) > 25
+      || (checkEnd && reviewed.end && Math.abs(parseTimestampToMs(c.end) - parseTimestampToMs(reviewed.end)) > 25);
+  })) {
     status = 'FAIL';
     reason = 'Exported chapters do not match the currently reviewed list.';
   } else if (diff > 0.15) {
@@ -3316,6 +3602,7 @@ app.post('/api/jobs/:id/validate', requireFeatures(['output_validation'], 'Outpu
   };
 
   job.status = status === 'FAIL' ? 'built' : 'validated';
+  if (status !== 'FAIL') job.staleSteps = (job.staleSteps || []).filter(step => step !== 'validation');
   saveJobs();
   job.logs.push({
     timestamp: now(),
@@ -3425,10 +3712,10 @@ app.get('/api/jobs/:id/export/chapters-csv', (req, res) => {
   const job = jobs.find(j => j.id === req.params.id);
   if (!job) return res.status(404).send('Job not found');
 
-  let csv = 'start,title\n';
+  let csv = 'start,end,title\n';
   for (const chap of job.chapters) {
     const escapeCsv = (val: string = '') => `"${val.replace(/"/g, '""')}"`;
-    csv += `${escapeCsv(chap.start)},${escapeCsv(chap.title)}\n`;
+    csv += `${escapeCsv(chap.start)},${escapeCsv(chap.end || '')},${escapeCsv(chap.title)}\n`;
   }
 
   res.setHeader('Content-Type', 'text/csv');
@@ -3462,16 +3749,21 @@ app.post('/api/jobs/:id/import/chapters-csv', (req, res) => {
   }
 
   const newChapters: ChapterEntry[] = [];
+  const headers = parseCsvRow(lines[0]).map(value => value.toLowerCase());
+  const startIndex = headers.indexOf('start');
+  const endIndex = headers.indexOf('end');
+  const titleIndex = headers.indexOf('title');
+  if (startIndex < 0 || titleIndex < 0) return res.status(400).json({ error: 'CSV headers must include start and title.' });
   // Parse CSV
   for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    const match = line.match(/^(".*?"|[^",\s]+)(?:\s*,\s*)(".*?"|.+)$/);
-    if (!match) continue;
-    const start = match[1].replace(/^"|"$/g, '').trim();
-    const title = match[2].replace(/^"|"$/g, '').trim();
+    const values = parseCsvRow(lines[i]);
+    const start = values[startIndex]?.trim() || '';
+    const title = values[titleIndex]?.trim() || '';
+    const end = endIndex >= 0 ? values[endIndex]?.trim() || '' : undefined;
     newChapters.push({
       id: `imported-${i}`,
       start,
+      ...(end !== undefined ? { end, endManuallyEdited: !!end } : {}),
       title,
     });
   }
@@ -3490,8 +3782,11 @@ app.post('/api/jobs/:id/import/chapters-csv', (req, res) => {
     return res.status(400).json({ error: e.message });
   }
 
-  job.chapters = newChapters;
-  job.ffmetaContent = generateFFMetaContent(newChapters, job.totalDurationSeconds);
+  const importedChapters = applyDefaultChapterEnds(newChapters, job.totalDurationSeconds);
+  const chapterError = validateChapterEntries(importedChapters, job.totalDurationSeconds);
+  if (chapterError) return res.status(400).json({ error: chapterError });
+  job.chapters = importedChapters;
+  job.ffmetaContent = generateFFMetaContent(job.chapters, job.totalDurationSeconds);
   res.json({ status: 'ok', chapters: job.chapters });
 });
 

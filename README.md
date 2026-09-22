@@ -19,7 +19,7 @@ If you can support financially, thank you. If you can't, you're still every bit 
 
 # SwissMouse
 
-Current release: `0.1.0-alpha.2`
+Current release: `0.1.0-alpha.3`
 
 The open source audiobook workbench.
 
@@ -84,6 +84,16 @@ See [verified format support and chapter repair](FORMAT-SUPPORT.md) for the inpu
 - Preserve original audio files; the app is designed not to overwrite, alter, or automatically delete them
 - Run locally as a Node.js web application
 - Open-source code available for inspection, learning, testing, and improvement
+
+## Player waveform
+
+Chapter Review includes a Canvas waveform with a five-minute default view, zooms from 30 seconds to Full Book, chapter flags, and click or keyboard seeking. Scroll over the waveform or use its pan slider to inspect another position; **Return to playhead** resumes automatic following. Chapter flags use the existing chapter navigation, and seeking uses the existing transcript word lookup without editing chapter timestamps. A local replacement audio file plays normally but has no generated waveform.
+
+Analysis shares the existing FFmpeg preview conversion: its 16 kHz mono PCM is split after resampling, so waveform generation adds no full-audio decoding pass. Older projects stream their existing PCM WAV once on demand, including RF64 previews. The server serves only the visible time range at a suitable resolution; the browser never decodes the full book for visualization.
+
+The versioned `analysis.wav.analysis.json` manifest references binary files in a sibling generation directory. Each 100 ms acoustic record contains five little-endian float32 values: peak, RMS, silence flag, consecutive silence duration in seconds, and signed RMS change. Position is `record index × 0.1 seconds`; the manifest duration defines the final partial window. Silence uses an RMS threshold of −50 dBFS. Separate peak levels aggregate maxima in groups of four, preserving brief transients. These acoustic features describe the preview PCM and are not currently inputs to chapter detection.
+
+Analysis uses bounded streaming buffers and approximately 0.91 MB of disk per audio hour. Preview size, modification time, change time, and cache version invalidate the manifest. Publication is atomic; earlier generations remain until project intermediate files are purged so active readers can finish. Waveform failures are logged and leave playback available. Run `npm run test:audio` for analysis, cache, navigation math, and existing audio/transcript regression tests.
 
 ## Development Note
 

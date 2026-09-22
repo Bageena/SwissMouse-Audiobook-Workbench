@@ -11,6 +11,7 @@ import {audiobookTags} from './audiobook-metadata';
 import {naturalPathCompare, sourceChapterGroups} from '../src/utils/sourceStructure';
 import vm from 'node:vm';
 import {downloadYoutubeAudio, youtubeUrl} from './youtube-audio';
+import metadataFixture from './fixtures/audiobook-metadata.json';
 const ff = process.env.TEST_FFMPEG || 'ffmpeg';
 const fp = process.env.TEST_FFPROBE || 'ffprobe';
 const binaryName = (name: string) => process.platform === 'win32' ? name + '.exe' : name;
@@ -90,6 +91,13 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     assert.ok(updated.metadata.cover.url.startsWith('data:image/'));
     const range=await fetch(base+'/api/jobs/'+job.id+'/audio-preview',{headers:{Range:'bytes=1000-1999'}});
     assert.equal(range.status,206);assert.equal((await range.arrayBuffer()).byteLength,1000);
+    const waveform = await fetch(base+'/api/jobs/'+job.id+'/waveform?start=0&duration=300&pixels=800');
+    assert.equal(waveform.status, 200);
+    const peaks = await waveform.json();
+    assert.ok(peaks.peaks.length > 0 && peaks.peaks.length <= 3201);
+    assert.ok(Math.abs(peaks.duration - 9) < 0.15);
+    const invalidWaveform = await fetch(base+'/api/jobs/'+job.id+'/waveform?start=-1&duration=300&pixels=800');
+    assert.equal(invalidWaveform.status, 400);
     const exports=await request('/api/jobs/'+job.id+'/build-m4b',{outputFormats});
     assert.equal(exports.exports.length,7);
     assert.ok(exports.exports.every((e:any)=>e.status==='success'),JSON.stringify(exports));
@@ -120,6 +128,22 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     assert.equal(pcm.book.sourceBitrate,128);
     assert.equal(pcm.book.sourceCodec,'pcm_s24le');
     assert.deepEqual(pcm.book.chapters.map((c:any)=>[c.title,c.start]),[['1','00:00:00.000'],['2','00:00:03.000'],['10','00:00:06.000']]);
+    const manuallyEdited = pcm.book.chapters.map((chapter:any,index:number)=>index === 0 ? {...chapter,title:'Manual opening',titleManuallyEdited:true} : chapter);
+    await request('/api/jobs/'+pcm.book.id+'/chapters',{chapters:manuallyEdited});
+    const unconfirmedRerun = await fetch(base+'/api/jobs/'+pcm.book.id+'/rerun/extracting_chapters',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    assert.equal(unconfirmedRerun.status,409);
+    assert.equal((await unconfirmedRerun.json()).requiresConfirmation,true);
+    assert.equal((await request('/api/jobs/'+pcm.book.id)).chapters[0].title,'Manual opening');
+    await request('/api/jobs/'+pcm.book.id+'/rerun/extracting_chapters',{confirmReplaceManualChapters:true});
+    let stageRerunProgress:any;
+    for(let i=0;i<100;i++){stageRerunProgress=await request('/api/step1/progress');if(!stageRerunProgress.isActive)break;await new Promise(resolve=>setTimeout(resolve,100));}
+    const stageRerunBook=await request('/api/jobs/'+pcm.book.id);
+    assert.equal(stageRerunProgress.stage,'completed',JSON.stringify(stageRerunProgress));
+    assert.equal(stageRerunProgress.rerunStep,'extracting_chapters');
+    assert.equal(stageRerunBook.chapters[0].title,'1');
+    assert.equal(stageRerunBook.pipelineSteps.extracting_chapters.status,'current');
+    assert.equal(stageRerunBook.pipelineSteps.generating_waveform.status,'current');
+    assert.ok(stageRerunBook.transcription == null);
     const preparedMasterPath=pcm.book.mergedMp3.fullPath;
     const preparedMasterMtime=fs.statSync(preparedMasterPath).mtimeMs;
     const rerunParts=pcm.scan.files.map((file:any)=>({name:file.relativePath,sourceRelativePath:file.relativePath}));
@@ -274,23 +298,36 @@ test('source bitrate defaults and conservative folder grouping',()=>{
   assert.equal(sourceChapterGroups(['extras/1.mp3','notes/1.mp3']).mode,'files');
   assert.equal(sourceChapterGroups(['01/1.mp3','notes/1.mp3']).mode,'files');
 });
-test('all friendly metadata fields survive each container and Audiobookshelf parser',async()=>{
-  const reference=process.env.TEST_ABS_PROBER || path.resolve('audio-test-reference/prober.cjs');
-  assert.ok(fs.existsSync(reference),'Download the official Audiobookshelf prober.js and set TEST_ABS_PROBER (see FORMAT-SUPPORT.md).');
-  const code=fs.readFileSync(reference,'utf8');
+async function exportMetadataFixture(format: typeof outputFormats[number], prefix: string) {
+  const output=path.join(root,`${prefix}.${format}`);
+  await exportAudio({ffmpeg:ff,ffprobe:fp,source:master,output,format,chapters,tags:audiobookTags(metadataFixture.metadata,undefined,{},format)});
+  const info=inspect(fp,output);
+  const tags=Object.fromEntries(Object.entries(info.tags).map(([k,v])=>[k.toLowerCase(),v]));
+  return {info,tags};
+}
+
+test('all friendly metadata fields survive each container (local fixture)',async()=>{
+  for(const format of outputFormats){
+    const {info,tags}=await exportMetadataFixture(format,'metadata');
+    const names: Record<string,string> = metadataFixture.tagNamesByFormat[format] || {};
+    for(const [key,value] of Object.entries(metadataFixture.expectedTags)) assert.equal(tags[names[key] || key],value,format+' '+key);
+    assert.equal(tags[metadataFixture.descriptionTagByFormat[format]],metadataFixture.metadata.description,format+' description');
+    assert.equal(info.chapters.length,chapters.length);
+  }
+});
+
+const absReference=process.env.TEST_ABS_PROBER || path.resolve('audio-test-reference/prober.cjs');
+test('exported metadata is compatible with the external Audiobookshelf parser',{
+  skip: !fs.existsSync(absReference) && `Optional Audiobookshelf parser not found at ${absReference}; set TEST_ABS_PROBER to prober.js to enable this compatibility check. Local metadata read-back is tested separately.`,
+},async()=>{
+  const code=fs.readFileSync(absReference,'utf8');
   const grab=code.slice(code.indexOf('function tryGrabTags('),code.indexOf('function parseMediaStreamInfo('));
   const parse=code.slice(code.indexOf('function parseTags('),code.indexOf('function getDefaultAudioStream('));
   const absParse=vm.runInNewContext(grab+'\n'+parse+'\nparseTags');
-  const meta={title:'Book title',subtitle:'Subtitle',author:'Author One; Author Two',narrator:'Narrator One; Narrator Two',series:'Book series',seriesSequence:'2.5',genres:['Fiction','Fantasy'],publishedYear:'2024',releaseDate:'2024-09-01',publisher:'Publisher',language:'eng',isbn:'9780000000001',asin:'B000000001',description:'A description.',copyright:'Copyright fixture',explicit:true,abridged:false};
   for(const format of outputFormats){
-    const output=path.join(root,'metadata.'+format);
-    await exportAudio({ffmpeg:ff,ffprobe:fp,source:master,output,format,chapters,tags:audiobookTags(meta,undefined,{},format)});
-    const info=inspect(fp,output);const tags=Object.fromEntries(Object.entries(info.tags).map(([k,v])=>[k.toLowerCase(),v]));
+    const {tags}=await exportMetadataFixture(format,'metadata-abs');
     const read=absParse({tags});
-    for(const [key,value] of Object.entries({album:meta.title,title:meta.title,subtitle:meta.subtitle,artist:meta.author,composer:meta.narrator,series:meta.series,seriespart:meta.seriesSequence,genre:'Fiction; Fantasy',publisher:meta.publisher,date:meta.publishedYear,language:meta.language,isbn:meta.isbn,asin:meta.asin,description:meta.description})) assert.equal(read['file_tag_'+key],value,format+' '+key);
-    assert.equal(tags.releasetime,meta.releaseDate,format+' release date');
-    assert.equal(tags.explicit,'1');assert.equal(tags.abridged,'0');
-    assert.equal(info.chapters.length,3);
+    for(const [key,value] of Object.entries(metadataFixture.expectedParserOutput)) assert.equal(read[key],value,format+' '+key);
   }
 });
 test('actual Whisper recognition with word alignment (requires runtime and TEST_WHISPER_AUDIO)', {skip:!fs.existsSync(path.resolve('runtime/venv/Scripts/python.exe')) || !process.env.TEST_WHISPER_AUDIO},async()=>{

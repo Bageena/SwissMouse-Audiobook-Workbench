@@ -24,12 +24,15 @@ import {
   FileText,
   ShieldAlert,
   HelpCircle,
+  RotateCcw,
 } from 'lucide-react';
 
 interface Step3MetadataProps {
   job: AudiobookJob;
   onSaveMetadata: (metadata: AudiobookMetadata) => Promise<void>;
   onNextStep: () => void;
+  onRerunMetadata?: () => Promise<void>;
+  isRerunning?: boolean;
 }
 
 export const GOODREADS_POPULAR_TAGS = [
@@ -74,6 +77,8 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
   job,
   onSaveMetadata,
   onNextStep,
+  onRerunMetadata,
+  isRerunning = false,
 }) => {
   // Initialize state from existing job metadata or fallback to job fields
   const [formData, setFormData] = useState<AudiobookMetadata>(() => {
@@ -323,7 +328,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
   return (
     <div className="space-y-6">
       {/* Step Header Banner */}
-      <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs">
+      <div className={`relative bg-white rounded-xl p-5 pb-12 border shadow-xs ${job.pipelineSteps?.metadata_processing?.status === 'stale' ? 'border-orange-300' : job.pipelineSteps?.metadata_processing?.status === 'failed' ? 'border-red-300' : 'border-stone-200/80'}`}>
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
@@ -379,6 +384,18 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
               Book details saved. They will be included in your next export.
             </span>
           </div>
+        )}
+        {onRerunMetadata && (
+          <button
+            type="button"
+            onClick={onRerunMetadata}
+            disabled={isRerunning || !job.metadata || !job.chapters.length}
+            title="Rerun this step"
+            aria-label="Rerun metadata processing"
+            className="absolute bottom-3 right-3 inline-flex h-7 w-7 items-center justify-center rounded border border-stone-300 bg-white text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            <RotateCcw className={`h-3.5 w-3.5 ${isRerunning && job.pipelineSteps?.metadata_processing?.status === 'running' ? 'animate-spin' : ''}`} />
+          </button>
         )}
       </div>
 

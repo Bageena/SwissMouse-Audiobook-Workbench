@@ -16,7 +16,8 @@ import { SourceSummary } from './SourceSummary';
 import { YouTubeAudioImport } from './YouTubeAudioImport';
 import { Step1ProgressPanel } from './Step1ProgressPanel';
 import { useDependencyStatus } from '../dependency-status';
-import { Step1ProcessState } from '../types';
+import { RerunnablePipelineStep, Step1ProcessState } from '../types';
+import { canRerunStep } from '../utils/pipelineRerun';
 import {
   Loader2, FolderOpen,
   FolderCheck,
@@ -58,6 +59,7 @@ interface Step1Props {
     outputFolderPath?: string;
     parts?: any[];
   }) => Promise<void>;
+  onRerunStep: (step: RerunnablePipelineStep) => Promise<void>;
   isRunning: boolean;
   onNextStep: () => void;
   onUpdateJobSettings?: (settings: Partial<AudiobookJob>) => void;
@@ -68,6 +70,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   job,
   config,
   onRunStep1,
+  onRerunStep,
   isRunning,
   onNextStep,
   onUpdateJobSettings,
@@ -733,6 +736,10 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const rerunnableStageCards: Step1ProcessState['stages'] = chapterSource === 'existing_files'
+    ? [{ key: 'generating_waveform', label: 'Create preview and waveform', desc: 'Generate review waveform data.' }, { key: 'extracting_chapters', label: 'Create chapters from files', desc: 'Derive markers from source files.' }]
+    : [{ key: 'generating_waveform', label: 'Create preview and waveform', desc: 'Generate review waveform data.' }, { key: 'transcribing_whisper', label: 'Speech recognition', desc: 'Transcribe the prepared audio.' }, { key: 'detecting_chapters', label: 'Detect chapter candidates', desc: 'Generate candidates from the transcript.' }];
+
   return (
     <div className="space-y-6">
       {/* Hidden native folder input (uses OS native folder-selection dialog) */}
@@ -855,12 +862,21 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
       </div>
 
       {/* Real-time Step 1 Processing Feedback Panel */}
-      {(isRunning || (step1Progress && (step1Progress.isActive || step1Progress.summary || step1Progress.error))) && step1Progress && (
+      {(job.status !== 'draft' || isRunning || (step1Progress && (step1Progress.isActive || step1Progress.summary || step1Progress.error))) && (
         <Step1ProgressPanel
-          progress={{
+          progress={step1Progress && (!step1Progress.jobId || step1Progress.jobId === job.id) ? {
             ...step1Progress,
             isActive: isRunning || step1Progress.isActive,
+            ...(step1Progress.rerunStep ? { stages: rerunnableStageCards, totalStages: rerunnableStageCards.length } : {}),
+          } : {
+            jobId: job.id, isActive: false, stage: 'completed', label: 'Processing complete', currentTask: 'Individual stages can be rerun.',
+            currentStageNumber: 0, totalStages: rerunnableStageCards.length,
+            stages: rerunnableStageCards,
+            percentage: 100, isDeterminate: true, elapsedSeconds: 0, liveStatusMessage: 'Processing complete.', logs: [], canCancel: false,
           }}
+          pipelineSteps={job.pipelineSteps}
+          onRerunStep={onRerunStep}
+          canRerunStep={(step) => canRerunStep(job, step)}
           onCancel={handleCancelStep1}
           onDismissSummary={() => setStep1Progress(null)}
         />

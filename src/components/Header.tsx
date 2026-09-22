@@ -70,7 +70,7 @@ export const Header: React.FC<HeaderProps> = ({
                 SwissMouse
               </span>
               <span className="text-xs px-2 py-0.5 rounded bg-stone-800 text-stone-300 font-mono">
-                v0.1.0-alpha.2
+                v0.1.0-alpha.3
               </span>
             </div>
             <p className="text-xs text-stone-400 hidden sm:block">

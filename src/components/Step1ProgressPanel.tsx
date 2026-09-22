@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Step1ProcessState } from '../types';
+import { PipelineStepState, RerunnablePipelineStep, Step1ProcessState } from '../types';
 import {
   RefreshCw,
   XCircle,
@@ -20,35 +20,42 @@ interface Step1ProgressPanelProps {
   progress: Step1ProcessState;
   onCancel: () => void;
   onDismissSummary?: () => void;
+  pipelineSteps?: Partial<Record<RerunnablePipelineStep, PipelineStepState>>;
+  onRerunStep?: (step: RerunnablePipelineStep) => Promise<void>;
+  canRerunStep?: (step: RerunnablePipelineStep) => boolean;
 }
 
 export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
   progress,
   onCancel,
   onDismissSummary,
+  pipelineSteps,
+  onRerunStep,
+  canRerunStep,
 }) => {
   const [showLogs, setShowLogs] = useState<boolean>(false);
 
-  // Stages breakdown
-  const stages = [
-    { key: 'scanning', label: '1. Scan & Verify Source', desc: 'Inspect local audio files and verify formats' },
-    { key: 'probing', label: '2. Probing Audio Streams', desc: 'FFprobe sample rates, bitrates, and durations' },
-    { key: 'merging', label: '3. Audio Merge', desc: 'PCM decode or quick stream-copy stitch' },
-    { key: 'transcribing', label: '4. Speech Recognition', desc: 'Local Whisper transcription' },
-    { key: 'detecting_chapters', label: '5. Chapter Candidate Detection', desc: 'Phoneme alignment & title token extraction' },
-    { key: 'completed', label: '6. Review Ready', desc: 'Prepare markers for Step 2 human review' },
-  ];
+  // The server supplies this list with the job. This avoids a second, easily
+  // divergent mapping between pipeline stages and the display.
+  const stages = progress.stages;
 
   const getStageStatus = (stageIndex: number) => {
-    const currentNum = progress.currentStageNumber;
+    const step = stages[stageIndex]?.key as RerunnablePipelineStep;
+    const persisted = pipelineSteps?.[step]?.status;
+    const currentIndex = stages.findIndex(stage => stage.key === progress.stage);
+    const failedIndex = stages.findIndex(stage => stage.key === progress.failedStage);
+    if (progress.isActive && stageIndex === currentIndex) return 'active';
+    if (persisted === 'failed') return 'error';
+    if (persisted === 'stale') return 'stale';
+    if (persisted === 'current') return 'done';
     if (progress.stage === 'error') {
-      if (stageIndex === currentNum - 1) return 'error';
-      if (stageIndex < currentNum - 1) return 'done';
+      if (stageIndex === failedIndex) return 'error';
+      if (failedIndex >= 0 && stageIndex < failedIndex) return 'done';
       return 'pending';
     }
     if (progress.stage === 'completed') return 'done';
-    if (stageIndex < currentNum - 1) return 'done';
-    if (stageIndex === currentNum - 1) return 'active';
+    if (stageIndex < currentIndex) return 'done';
+    if (stageIndex === currentIndex) return 'active';
     return 'pending';
   };
 
@@ -140,30 +147,6 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
         </div>
       </div>
 
-      {/* Progress Bar & Percentage */}
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between text-xs">
-          <span className="font-semibold text-stone-700">
-            {progress.stage === 'completed' ? 'Extraction 100% finished' : progress.label}
-          </span>
-          <span className="font-mono font-bold text-amber-800 text-sm">
-            {progress.percentage}%
-          </span>
-        </div>
-        <div className="w-full bg-stone-100 rounded-full h-3 overflow-hidden border border-stone-200">
-          <div
-            className={`h-full transition-all duration-300 rounded-full ${
-              progress.stage === 'completed'
-                ? 'bg-emerald-600'
-                : progress.stage === 'error'
-                ? 'bg-red-500'
-                : 'bg-amber-600'
-            }`}
-            style={{ width: `${Math.max(5, progress.percentage)}%` }}
-          />
-        </div>
-      </div>
-
       {/* Step Sequence Indicators */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1">
         {stages.map((stg, idx) => {
@@ -171,19 +154,21 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
           return (
             <div
               key={stg.key}
-              className={`p-2 rounded-lg border text-left space-y-1 transition-all ${
+              className={`relative min-h-28 p-2 pb-9 rounded-lg border text-left space-y-1 transition-all ${
                 status === 'done'
                   ? 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
                   : status === 'active'
                   ? 'bg-amber-50 border-amber-400 text-amber-950 shadow-xs ring-1 ring-amber-400/50'
                   : status === 'error'
                   ? 'bg-red-50 border-red-300 text-red-950'
+                  : status === 'stale'
+                  ? 'bg-orange-50 border-orange-300 text-orange-950'
                   : 'bg-stone-50 border-stone-200 text-stone-400 opacity-70'
               }`}
             >
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-bold tracking-tight uppercase truncate">
-                  Stage {idx + 1}
+                  Stage {idx + 1} of {stages.length}
                 </span>
                 {status === 'done' ? (
                   <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[2.5]" />
@@ -191,13 +176,28 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
                   <RefreshCw className="w-3 h-3 text-amber-600 animate-spin" />
                 ) : status === 'error' ? (
                   <XCircle className="w-3 h-3 text-red-600" />
+                ) : status === 'stale' ? (
+                  <AlertCircle className="w-3 h-3 text-orange-600" />
                 ) : null}
               </div>
               <p className={`text-[11px] font-semibold leading-tight line-clamp-1 ${
                 status === 'active' ? 'text-amber-900' : ''
               }`}>
-                {stg.label.split('. ')[1]}
+                {stg.label}
               </p>
+              <p className="text-[10px] leading-tight opacity-75 line-clamp-2">{stg.desc}</p>
+              {onRerunStep && ['generating_waveform', 'transcribing_whisper', 'detecting_chapters', 'extracting_chapters'].includes(stg.key) && (
+                <button
+                  type="button"
+                  onClick={() => onRerunStep(stg.key as RerunnablePipelineStep)}
+                  disabled={progress.isActive || !canRerunStep?.(stg.key as RerunnablePipelineStep)}
+                  title="Rerun this step"
+                  aria-label={`Rerun ${stg.label}`}
+                  className="absolute bottom-2 right-2 inline-flex h-6 w-6 items-center justify-center rounded border border-current/20 bg-white/80 hover:bg-white disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  <RotateCcw className={`h-3.5 w-3.5 ${progress.rerunStep === stg.key && progress.isActive ? 'animate-spin' : ''}`} />
+                </button>
+              )}
             </div>
           );
         })}

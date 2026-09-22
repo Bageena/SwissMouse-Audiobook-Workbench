@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { canCopy, outputFormats, type ExportFormat } from '../src/audioFormats';
 import { preserveMp4Metadata } from './mp4-metadata';
 import { writeWavMetadata } from './wav-metadata';
+import { PcmAnalysis } from './audio-analysis';
 const run = promisify(execFile);
 function readWavCues(file: string, rate: number) {
   const fd=fs.openSync(file,'r'); const points=new Map<number,number>();const labels=new Map<number,string>();
@@ -48,7 +49,7 @@ export function inspect(probe: string, file: string) {
   }
   if (!audio || !Number.isFinite(duration) || duration <= 0) throw new Error('No readable audio stream with a measured duration');
   const tags = { ...audio.tags, ...data.format.tags };
-  const chapters = (data.chapters || []).map((c: any, i: number) => ({ id: `existing-${i}`, start: timestamp(Number(c.start_time)), title: c.tags?.title || `Chapter ${i + 1}` }));
+  const chapters = (data.chapters || []).map((c: any, i: number) => ({ id: `existing-${i}`, start: timestamp(Number(c.start_time)), end: timestamp(Number(c.end_time)), title: c.tags?.title || `Chapter ${i + 1}` }));
   if (!chapters.length) for (const key of Object.keys(tags).sort()) {
     if (/^chapter\d+$/i.test(key)) chapters.push({ id: key, start: tags[key], title: tags[`${key}NAME`] || tags[`${key}name`] || key });
   }
@@ -70,19 +71,46 @@ export async function fingerprint(files: string[], settings: unknown) {
   return hash.digest('hex');
 }
 const escape = (s: unknown) => String(s).replace(/([\\=;#\n\r])/g, '\\$1');
-export function validateChapters(chapters: {start: string; title: string}[], duration: number) {
+export function validateChapters(chapters: {start: string; end?: string; title: string; isMissing?: boolean}[], duration: number) {
   let previous = -1;
   if (!chapters.length) throw new Error('Review at least one chapter before exporting');
   if (seconds(chapters[0].start) !== 0) throw new Error('Add an Opening chapter at 00:00:00.000. MP4 chapter tracks require a chapter at time zero.');
-  for (const chapter of chapters) {
+  for (let index = 0; index < chapters.length; index++) {
+    const chapter = chapters[index];
     const start = seconds(chapter.start);
-    if (!chapter.title.trim() || start <= previous || start >= duration) throw new Error('Chapter titles must be nonempty and starts must increase within the recording');
+    const end = chapter.end ? seconds(chapter.end) : (chapters[index + 1] ? seconds(chapters[index + 1].start) - 0.001 : duration);
+    const nextStart = chapters[index + 1] ? seconds(chapters[index + 1].start) : undefined;
+    if (chapter.isMissing || !chapter.title.trim() || start <= previous || start >= duration) throw new Error('Chapter titles must be nonempty and starts must increase within the recording');
+    if (end <= start || end > duration || (nextStart !== undefined && end >= nextStart)) throw new Error(`Invalid end timestamp for ${chapter.title}`);
     previous = start;
   }
 }
-export async function makePreview(ffmpeg: string, source: string, output: string, signal?: AbortSignal) {
+export async function makePreview(ffmpeg: string, source: string, output: string, signal?: AbortSignal, log: (message: string) => void = console.warn, requireWaveform = false) {
   if(path.resolve(source).toLowerCase()===path.resolve(output).toLowerCase()) throw new Error('Analysis audio must be separate from the source');
-  await run(ffmpeg, ['-v', 'error', '-y', '-i', source, '-map', '0:a:0', '-map_metadata', '-1', '-vn', '-c:a', 'pcm_s16le', '-ar', '16000', '-ac', '1', '-rf64', 'auto', output], { windowsHide: true, signal });
+  let analysis: PcmAnalysis | undefined;
+  let waveformError: Error | undefined;
+  try { analysis = new PcmAnalysis(output); } catch (e: any) { waveformError = e; log(`Waveform analysis failed: ${e.message}`); }
+  try {
+    await new Promise<void>((resolve, reject) => {
+      // Split the existing preview PCM pass after resampling; no additional decode.
+      const child = spawn(ffmpeg, ['-v', 'error', '-y', '-i', source,
+        '-filter_complex', '[0:a:0]aformat=sample_fmts=s16:sample_rates=16000:channel_layouts=mono,asplit=2[preview][analysis]',
+        '-map', '[preview]', '-map_metadata', '-1', '-c:a', 'pcm_s16le', '-rf64', 'auto', output,
+        '-map', '[analysis]', '-c:a', 'pcm_s16le', '-f', 's16le', 'pipe:1'], { windowsHide: true, signal });
+      let error = '';
+      child.stderr.on('data', chunk => { error = (error + chunk).slice(-8000); });
+      child.stdout.on('data', chunk => {
+        try { analysis?.push(chunk); } catch (e: any) { waveformError = e; log(`Waveform analysis failed: ${e.message}`); try { analysis?.abort(); } catch {} analysis = undefined; }
+      });
+      child.on('error', reject);
+      child.on('close', code => code === 0 ? resolve() : reject(new Error(error || 'Preview conversion failed')));
+    });
+    if (analysis) {
+      try { await analysis.finish(); } catch (e: any) { waveformError = e; log(`Waveform analysis failed: ${e.message}`); try { analysis.abort(); } catch {} }
+    }
+    if (waveformError && requireWaveform) throw new Error(`Waveform generation failed: ${waveformError.message}`);
+    return { waveformAvailable: !waveformError };
+  } catch (e) { try { analysis?.abort(); } catch {} throw e; }
 }
 // Append small RIFF chunks without loading an audiobook's sample data in memory.
 function wavCues(file: string, chapters: {start: string; title: string}[], rate: number) {
@@ -105,7 +133,7 @@ function wavCues(file: string, chapters: {start: string; title: string}[], rate:
     else { const n = Buffer.alloc(4); n.writeUInt32LE(size - 8); fs.writeSync(fd, n, 0, 4, 4); }
   } finally { fs.closeSync(fd); }
 }
-export async function exportAudio(options: {ffmpeg: string; ffprobe: string; source: string; output: string; format: ExportFormat; chapters: {start: string; title: string}[]; tags?: Record<string, string>; cover?: string | null; convert?: boolean; bitrate?: string; cue?: boolean; onProgress?: (n: number) => void}) {
+export async function exportAudio(options: {ffmpeg: string; ffprobe: string; source: string; output: string; format: ExportFormat; chapters: {start: string; end?: string; title: string; isMissing?: boolean}[]; tags?: Record<string, string>; cover?: string | null; convert?: boolean; bitrate?: string; cue?: boolean; onProgress?: (n: number) => void}) {
   const o = options;
   if (!outputFormats.includes(o.format)) throw new Error('Unsupported output format');
   if (path.resolve(o.source).toLowerCase() === path.resolve(o.output).toLowerCase() || fs.existsSync(o.output)) throw new Error('Output already exists; choose a new output name');
@@ -118,7 +146,7 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   const tagged = ['flac', 'ogg', 'opus'].includes(o.format);
   if (tagged) o.chapters.forEach((c, i) => { const key = `CHAPTER${String(i + 1).padStart(3, '0')}`; tags[key] = c.start; tags[key + 'NAME'] = c.title; });
   let meta = ';FFMETADATA1\n' + Object.entries(tags).map(([k, v]) => `${escape(k)}=${escape(v)}\n`).join('');
-  if (!tagged && o.format !== 'wav') o.chapters.forEach((c, i) => { meta += `[CHAPTER]\nTIMEBASE=1/1000\nSTART=${Math.round(seconds(c.start) * 1000)}\nEND=${Math.round((o.chapters[i + 1] ? seconds(o.chapters[i + 1].start) : source.durationSeconds) * 1000)}\ntitle=${escape(c.title)}\n`; });
+  if (!tagged && o.format !== 'wav') o.chapters.forEach((c, i) => { meta += `[CHAPTER]\nTIMEBASE=1/1000\nSTART=${Math.round(seconds(c.start) * 1000)}\nEND=${Math.round((c.end ? seconds(c.end) : o.chapters[i + 1] ? seconds(o.chapters[i + 1].start) - 0.001 : source.durationSeconds) * 1000)}\ntitle=${escape(c.title)}\n`; });
   const metaPath = o.output + '.ffmeta'; fs.writeFileSync(metaPath, meta);
   const args = ['-v', 'error', '-n', '-i', o.source, '-i', metaPath];
   if (o.cover) args.push('-i', o.cover);
@@ -145,7 +173,12 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   o.onProgress?.(90);
   const result = inspect(o.ffprobe, o.output);
   if (Math.abs(result.durationSeconds - source.durationSeconds) > 0.15) throw new Error('Output duration does not cover the complete source');
-  if (result.chapters.length !== o.chapters.length || result.chapters.some((c: any, i: number) => c.title !== o.chapters[i].title || Math.abs(seconds(c.start) - seconds(o.chapters[i].start)) > 0.025)) throw new Error('Chapter read-back verification failed');
+  if (result.chapters.length !== o.chapters.length || result.chapters.some((c: any, i: number) => {
+    const expected = o.chapters[i];
+    const expectedEnd = expected.end ? seconds(expected.end) : (o.chapters[i + 1] ? seconds(o.chapters[i + 1].start) - 0.001 : source.durationSeconds);
+    const endMismatch = !tagged && o.format !== 'wav' && Math.abs(seconds(c.end) - expectedEnd) > 0.025;
+    return c.title !== expected.title || Math.abs(seconds(c.start) - seconds(expected.start)) > 0.025 || endMismatch;
+  })) throw new Error('Chapter read-back verification failed');
   if (o.cue !== false) {
     const clean = (s: string) => s.replace(/["\r\n]/g, ' ');
     fs.writeFileSync(o.output + '.cue', `FILE "${clean(path.basename(o.output))}" ${o.format === 'mp3' ? 'MP3' : 'WAVE'}\n` + o.chapters.map((c, i) => {
