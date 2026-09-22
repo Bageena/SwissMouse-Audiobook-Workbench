@@ -7,6 +7,7 @@ import { canCopy, outputFormats, type ExportFormat } from '../src/audioFormats';
 import { preserveMp4Metadata } from './mp4-metadata';
 import { writeWavMetadata } from './wav-metadata';
 import { PcmAnalysis } from './audio-analysis';
+import { planChapterExport } from '../src/utils/chapterExport';
 const run = promisify(execFile);
 function readWavCues(file: string, rate: number) {
   const fd=fs.openSync(file,'r'); const points=new Map<number,number>();const labels=new Map<number,string>();
@@ -139,18 +140,30 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   if (path.resolve(o.source).toLowerCase() === path.resolve(o.output).toLowerCase() || fs.existsSync(o.output)) throw new Error('Output already exists; choose a new output name');
   const source = inspect(o.ffprobe, o.source);
   validateChapters(o.chapters, source.durationSeconds);
-  const copy = !o.convert && !o.bitrate && canCopy(source.codec, o.format);
+  const plan = planChapterExport(o.chapters, source.durationSeconds);
+  const chapters = plan.chapters;
+  const copy = !plan.trimmed && !o.convert && !o.bitrate && canCopy(source.codec, o.format);
   const tags = Object.fromEntries(Object.entries(source.tags).map(([k,v])=>[k.toLowerCase(),String(v)]));
   for(const [key,value] of Object.entries(o.tags || {})) tags[key.toLowerCase()] = value;
   for (const key of Object.keys(tags)) if (/^chapter\d+/i.test(key) || ['major_brand', 'minor_version', 'compatible_brands', 'encoder'].includes(key)) delete tags[key];
   const tagged = ['flac', 'ogg', 'opus'].includes(o.format);
-  if (tagged) o.chapters.forEach((c, i) => { const key = `CHAPTER${String(i + 1).padStart(3, '0')}`; tags[key] = c.start; tags[key + 'NAME'] = c.title; });
+  if (tagged) chapters.forEach((c, i) => { const key = `CHAPTER${String(i + 1).padStart(3, '0')}`; tags[key] = c.start; tags[key + 'NAME'] = c.title; });
   let meta = ';FFMETADATA1\n' + Object.entries(tags).map(([k, v]) => `${escape(k)}=${escape(v)}\n`).join('');
-  if (!tagged && o.format !== 'wav') o.chapters.forEach((c, i) => { meta += `[CHAPTER]\nTIMEBASE=1/1000\nSTART=${Math.round(seconds(c.start) * 1000)}\nEND=${Math.round((c.end ? seconds(c.end) : o.chapters[i + 1] ? seconds(o.chapters[i + 1].start) - 0.001 : source.durationSeconds) * 1000)}\ntitle=${escape(c.title)}\n`; });
+  if (!tagged && o.format !== 'wav') chapters.forEach((c, i) => { meta += `[CHAPTER]\nTIMEBASE=1/1000\nSTART=${Math.round(seconds(c.start) * 1000)}\nEND=${Math.round((c.end ? seconds(c.end) : chapters[i + 1] ? seconds(chapters[i + 1].start) - 0.001 : plan.durationSeconds) * 1000)}\ntitle=${escape(c.title)}\n`; });
   const metaPath = o.output + '.ffmeta'; fs.writeFileSync(metaPath, meta);
   const args = ['-v', 'error', '-n', '-i', o.source, '-i', metaPath];
   if (o.cover) args.push('-i', o.cover);
-  args.push('-map', '0:a:0', '-map_metadata', '1', '-map_metadata:s:a', '-1', '-map_chapters', tagged || o.format === 'wav' ? '-1' : '1');
+  const filterPath = o.output + '.filters';
+  if (plan.trimmed) {
+    const inputs = plan.ranges.map((_, i) => `[cut${i}]`);
+    const graph = [`[0:a:0]asplit=${plan.ranges.length}${inputs.join('')}`,
+      ...plan.ranges.map((range, i) => `${inputs[i]}atrim=start=${range.start / 1000}:end=${range.end / 1000},asetpts=PTS-STARTPTS[part${i}]`),
+      `${plan.ranges.map((_, i) => `[part${i}]`).join('')}concat=n=${plan.ranges.length}:v=0:a=1[edited]`];
+    fs.writeFileSync(filterPath, graph.join(';\n'));
+    // FFmpeg's file-valued option syntax avoids Windows command-line limits.
+    args.push('-/filter_complex', filterPath);
+  }
+  args.push('-map', plan.trimmed ? '[edited]' : '0:a:0', '-map_metadata', '1', '-map_metadata:s:a', '-1', '-map_chapters', tagged || o.format === 'wav' ? '-1' : '1');
   if (['m4b','m4a'].includes(o.format) && tags.language) args.push('-metadata:s:a:0', 'language=' + tags.language);
   const coverSupported = ['m4b', 'm4a', 'mp3', 'flac'].includes(o.format);
   if (coverSupported && (o.cover || (o.cover === undefined && source.artwork))) args.push('-map', o.cover ? '2:v:0' : `0:${source.artwork.index}`, '-c:v', 'copy', '-disposition:v:0', 'attached_pic');
@@ -161,33 +174,34 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   if (o.format === 'wav') args.push('-rf64', 'auto');
   args.push('-progress','pipe:1',o.output);
   o.onProgress?.(10);
-  await new Promise<void>((resolve,reject)=>{
+  try { await new Promise<void>((resolve,reject)=>{
     const process=spawn(o.ffmpeg,args,{windowsHide:true});let error='';let pending='';let last=10;
     process.stderr.on('data',chunk=>{error=(error+chunk).slice(-8000);});
-    process.stdout.on('data',chunk=>{pending+=chunk;const lines=pending.split('\n');pending=lines.pop()||'';for(const line of lines){const match=/^out_time_us=(\d+)/.exec(line);if(match){const n=Math.min(89,Math.max(10,Math.floor(Number(match[1])/1e6/source.durationSeconds*89)));if(n>last){last=n;o.onProgress?.(n);}}}});
+    process.stdout.on('data',chunk=>{pending+=chunk;const lines=pending.split('\n');pending=lines.pop()||'';for(const line of lines){const match=/^out_time_us=(\d+)/.exec(line);if(match){const n=Math.min(89,Math.max(10,Math.floor(Number(match[1])/1e6/plan.durationSeconds*89)));if(n>last){last=n;o.onProgress?.(n);}}}});
     process.on('error',reject);process.on('close',code=>code===0?resolve():reject(new Error(error || 'FFmpeg export failed')));
-  });
+  }); } finally { if (plan.trimmed) fs.rmSync(filterPath, { force: true }); }
   if (['m4b','m4a'].includes(o.format)) preserveMp4Metadata(source.rawFormatName.includes('mov') ? o.source : undefined,o.output,tags,o.cover===null);
-  if (o.format === 'wav') wavCues(o.output, o.chapters, inspect(o.ffprobe, o.output).sampleRate);
+  if (o.format === 'wav') wavCues(o.output, chapters, inspect(o.ffprobe, o.output).sampleRate);
   if (o.format === 'wav') writeWavMetadata(o.output,tags);
   o.onProgress?.(90);
   const result = inspect(o.ffprobe, o.output);
-  if (Math.abs(result.durationSeconds - source.durationSeconds) > 0.15) throw new Error('Output duration does not cover the complete source');
-  if (result.chapters.length !== o.chapters.length || result.chapters.some((c: any, i: number) => {
-    const expected = o.chapters[i];
-    const expectedEnd = expected.end ? seconds(expected.end) : (o.chapters[i + 1] ? seconds(o.chapters[i + 1].start) - 0.001 : source.durationSeconds);
+  if (Math.abs(result.durationSeconds - plan.durationSeconds) > 0.15) throw new Error('Output duration does not match the reviewed chapter ranges');
+  if (result.chapters.length !== chapters.length || result.chapters.some((c: any, i: number) => {
+    const expected = chapters[i];
+    const expectedEnd = expected.end ? seconds(expected.end) : (chapters[i + 1] ? seconds(chapters[i + 1].start) - 0.001 : plan.durationSeconds);
     const endMismatch = !tagged && o.format !== 'wav' && Math.abs(seconds(c.end) - expectedEnd) > 0.025;
     return c.title !== expected.title || Math.abs(seconds(c.start) - seconds(expected.start)) > 0.025 || endMismatch;
   })) throw new Error('Chapter read-back verification failed');
   if (o.cue !== false) {
     const clean = (s: string) => s.replace(/["\r\n]/g, ' ');
-    fs.writeFileSync(o.output + '.cue', `FILE "${clean(path.basename(o.output))}" ${o.format === 'mp3' ? 'MP3' : 'WAVE'}\n` + o.chapters.map((c, i) => {
+    fs.writeFileSync(o.output + '.cue', `FILE "${clean(path.basename(o.output))}" ${o.format === 'mp3' ? 'MP3' : 'WAVE'}\n` + chapters.map((c, i) => {
       const frames = Math.round(seconds(c.start) * 75);
       return `  TRACK ${String(i + 1).padStart(2, '0')} AUDIO\n    TITLE "${clean(c.title)}"\n    INDEX 01 ${String(Math.floor(frames / 4500)).padStart(2, '0')}:${String(Math.floor(frames / 75) % 60).padStart(2, '0')}:${String(frames % 75).padStart(2, '0')}\n`;
     }).join(''));
   }
   o.onProgress?.(100);
   const warnings: string[] = !coverSupported && (source.artwork || o.cover) ? ['Artwork cannot be embedded by this exporter; original artwork remains in the project.'] : [];
+  if (plan.trimmed) warnings.push(`Removed ${plan.removedSeconds.toFixed(3)} seconds outside chapter ranges. Audio was re-encoded for precise cuts; source timestamps remain unchanged in the editor.`);
   const readTags=Object.fromEntries(Object.entries(result.tags).map(([k,v])=>[k.toLowerCase(),v]));
   const represented = (key: string, value: string) => {
     if (readTags[key] === value) return true;

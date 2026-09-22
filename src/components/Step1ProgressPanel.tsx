@@ -23,6 +23,7 @@ interface Step1ProgressPanelProps {
   pipelineSteps?: Partial<Record<RerunnablePipelineStep, PipelineStepState>>;
   onRerunStep?: (step: RerunnablePipelineStep) => Promise<void>;
   canRerunStep?: (step: RerunnablePipelineStep) => boolean;
+  processingAction?: React.ReactNode;
 }
 
 export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
@@ -32,6 +33,7 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
   pipelineSteps,
   onRerunStep,
   canRerunStep,
+  processingAction,
 }) => {
   const [showLogs, setShowLogs] = useState<boolean>(false);
 
@@ -55,7 +57,6 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
     }
     if (progress.stage === 'completed') return 'done';
     if (stageIndex < currentIndex) return 'done';
-    if (stageIndex === currentIndex) return 'active';
     return 'pending';
   };
 
@@ -85,7 +86,7 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
             ) : progress.stage === 'completed' ? (
               <CheckCircle2 className="w-5 h-5" />
             ) : (
-              <RefreshCw className="w-5 h-5 animate-spin" />
+              <RefreshCw className={`w-5 h-5 ${progress.isActive ? 'animate-spin' : ''}`} />
             )}
           </div>
           <div>
@@ -111,6 +112,7 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
 
         {/* Action button & timer */}
         <div className="flex items-center space-x-3 self-end sm:self-auto">
+          {processingAction}
           {progress.isActive && progress.elapsedSeconds > 0 && (
             <div className="flex items-center space-x-1 text-xs text-stone-500 font-mono">
               <Clock className="w-3.5 h-3.5" />

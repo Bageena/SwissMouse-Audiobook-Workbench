@@ -80,7 +80,27 @@ export function getTranscriptWordsNear(
   seconds: number,
   windowSeconds: number = 25
 ): AlignedWord[] {
-  return words.filter(word => Math.abs(word.startSeconds - seconds) <= windowSeconds);
+  return words.slice(findTranscriptWordIndex(words, seconds - windowSeconds), findTranscriptWordIndex(words, seconds + windowSeconds + 0.000001));
+}
+
+/** A bounded, stable word page for playback; selection never changes DOM focus. */
+export function playbackTranscriptWindow(words: AlignedWord[], seconds: number) {
+  const nearest = findClosestTranscriptWordIndex(words, seconds);
+  const offset = Math.max(0, Math.floor(Math.max(0, nearest) / 40) * 40 - 15);
+  const word = words[nearest];
+  const previous = nearest > 0 ? words[nearest - 1] : undefined;
+  const active = word && seconds >= word.startSeconds && seconds < word.endSeconds ? nearest
+    : previous && seconds >= previous.startSeconds && seconds < previous.endSeconds ? nearest - 1 : -1;
+  return { offset, active, nearest };
+}
+
+/** Scroll only this pane, never its ancestors or the keyboard focus. */
+export function revealTranscriptWord(container: HTMLElement, word: HTMLElement): void {
+  const pane = container.getBoundingClientRect();
+  const target = word.getBoundingClientRect();
+  if (target.top < pane.top || target.bottom > pane.bottom) {
+    container.scrollTop += target.top - pane.top - (container.clientHeight - target.height) / 2;
+  }
 }
 
 /**

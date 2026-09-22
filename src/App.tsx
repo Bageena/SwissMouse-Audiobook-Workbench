@@ -13,20 +13,25 @@ import { Header } from './components/Header';
 import { Step1MergeDetect } from './components/Step1MergeDetect';
 import { Step2ChapterReview } from './components/Step2ChapterReview';
 import { Step3Metadata } from './components/Step3Metadata';
-import { Step4BuildM4b } from './components/Step4BuildM4b';
+import { Step4Export } from './components/Step4Export';
 import { Step5Validate } from './components/Step5Validate';
-import { PurgeModal } from './components/PurgeModal';
+import { CleanupModal, CleanupType } from './components/CleanupModal';
 import { ConfigModal } from './components/ConfigModal';
 import { NewJobModal } from './components/NewJobModal';
 import { RequirementsModal } from './components/RequirementsModal';
 import { LogsDrawer } from './components/LogsDrawer';
-import { CheckCircle2, Clock, HardDrive, AlertCircle, Plus, ArrowRight, Trash2 } from 'lucide-react';
+import { CheckCircle2, Clock, HardDrive, Plus, ArrowRight, Trash2, BookOpen } from 'lucide-react';
+import { CustomTheme, ThemeDiscoveryResponse, applyTheme, getStoredTheme, isAppTheme, persistTheme } from './theme';
 
 export default function App() {
   const [jobs, setJobs] = useState<AudiobookJob[]>([]);
   const [currentJobId, setCurrentJobId] = useState<string | null>(localStorage.getItem('workbench_active_job_id'));
   const [config, setConfig] = useState<WorkbenchConfig | null>(null);
   const [activeStep, setActiveStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [theme, setTheme] = useState<string>(getStoredTheme);
+  const [customThemes, setCustomThemes] = useState<CustomTheme[]>([]);
+  const [themeWarnings, setThemeWarnings] = useState<string[]>([]);
+  const [isReloadingThemes, setIsReloadingThemes] = useState(false);
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isProcessingStep1, setIsProcessingStep1] = useState<boolean>(false);
@@ -91,6 +96,51 @@ export default function App() {
     }
   }, [currentJobId]);
 
+  const reloadCustomThemes = async () => {
+    setIsReloadingThemes(true);
+    try {
+      const response = await fetch('/api/themes');
+      if (!response.ok) throw new Error('Could not scan the custom themes folder.');
+      const discovery: ThemeDiscoveryResponse = await response.json();
+      setCustomThemes(discovery.themes);
+      setThemeWarnings(discovery.warnings);
+      const selected = getStoredTheme();
+      const customTheme = discovery.themes.find(candidate => candidate.id === selected);
+      if (isAppTheme(selected)) {
+        setTheme(selected);
+        applyTheme(selected);
+      } else if (customTheme) {
+        setTheme(selected);
+        applyTheme(selected, customTheme);
+      } else {
+        setTheme('light');
+        persistTheme('light');
+      }
+    } catch (error) {
+      console.error('Failed to load custom themes:', error);
+      setThemeWarnings([error instanceof Error ? error.message : 'Could not load custom themes.']);
+      if (!isAppTheme(getStoredTheme())) {
+        setTheme('light');
+        persistTheme('light');
+      }
+    } finally {
+      setIsReloadingThemes(false);
+    }
+  };
+
+  useEffect(() => { void reloadCustomThemes(); }, []);
+
+  const handleThemeChange = (nextTheme: string) => {
+    const customTheme = customThemes.find(candidate => candidate.id === nextTheme);
+    setTheme(nextTheme);
+    persistTheme(nextTheme, customTheme);
+  };
+
+  const handleOpenThemesFolder = async () => {
+    const response = await fetch('/api/themes/open-folder', { method: 'POST' });
+    if (!response.ok) throw new Error('Could not open the custom themes folder.');
+  };
+
   const currentJob = jobs.find((j) => j.id === currentJobId) || null;
 
   // Handler for closing the project
@@ -126,6 +176,7 @@ export default function App() {
     chapterSource?: ChapterSourceType;
     mergeMethod?: AudioMergeMethodType;
     selectedModelId?: string;
+    transcriptionSettings?: AudiobookJob['transcriptionSettings'];
     sourceFolderPath?: string;
     outputFolderPath?: string;
     parts?: any[];
@@ -292,17 +343,21 @@ export default function App() {
     }
   };
 
-  // Purge Handler
-  const handlePurge = async (purgeType: 'temp' | 'intermediate' | 'job', confirmation?: string) => {
-    if (!currentJob) return;
-    const res = await fetch(`/api/jobs/${currentJob.id}/purge`, {
+  // Storage Cleanup Handler
+  const handleCleanup = async (cleanupType: CleanupType, confirmation?: string) => {
+    const isProjectCleanup = cleanupType.startsWith('project-');
+    if (isProjectCleanup && !currentJob) throw new Error('Open a book before choosing a book-specific cleanup option.');
+    const res = await fetch(isProjectCleanup ? `/api/jobs/${currentJob!.id}/purge` : '/api/cleanup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ purgeType, confirmation }),
+      body: JSON.stringify(isProjectCleanup
+        ? { purgeType: cleanupType.replace('project-', ''), confirmation }
+        : { cleanupType, confirmation }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Purge failed');
-    await refreshCurrentJob(currentJob.id);
+    if (!res.ok) throw new Error(data.error || 'Cleanup failed');
+    if (Array.isArray(data.jobs)) setJobs(data.jobs);
+    else if (currentJob) await refreshCurrentJob(currentJob.id);
     alert(data.message);
   };
 
@@ -406,6 +461,15 @@ export default function App() {
     return `${m}m ${s}s`;
   };
 
+  const statusLabel = (status: AudiobookJob['status']) => ({
+    draft: 'Getting started',
+    merged: 'Ready to review',
+    transcribed: 'Ready to review',
+    metadata_ready: 'Details saved',
+    built: 'Exported',
+    validated: 'Complete',
+  }[status] || status.replaceAll('_', ' '));
+
   if (isLoading || !config) {
     return (
       <div className="min-h-screen bg-stone-100 flex items-center justify-center p-4">
@@ -420,7 +484,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-stone-100 flex flex-col font-sans">
+    <div className="app-shell min-h-screen flex flex-col font-sans">
       {/* Top Header */}
       <Header
         jobs={jobs}
@@ -436,19 +500,19 @@ export default function App() {
       />
 
       {/* Main Workspace */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      <main className="flex-1 max-w-[1480px] w-full mx-auto px-3 sm:px-5 lg:px-7 py-4 sm:py-6 space-y-5">
         {currentJob ? (
           <>
             {/* Book Meta & Step Progress Navigation */}
-            <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs space-y-4">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-stone-100 pb-4">
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <h1 className="text-xl font-bold text-stone-900 tracking-tight">
+            <section className="workspace-overview rounded-2xl border border-stone-200/80 bg-white p-4 shadow-sm sm:p-5">
+              <div className="flex flex-col gap-3 border-b border-stone-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="truncate text-xl font-bold tracking-tight text-stone-950">
                       {currentJob.name}
                     </h1>
-                    <span className="px-2 py-0.5 rounded text-xs font-mono font-semibold bg-stone-100 text-stone-700 uppercase border border-stone-200">
-                      {currentJob.status}
+                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${currentJob.status === 'validated' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}`}>
+                      {statusLabel(currentJob.status)}
                     </span>
                   </div>
                   {(currentJob.author || currentJob.narrator) && (
@@ -460,37 +524,26 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="flex flex-col items-end space-y-2">
-                    <div className="flex items-center space-x-4 text-xs font-mono text-stone-600">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-medium text-stone-500">
                         <span className="flex items-center space-x-1.5">
                             <Clock className="w-3.5 h-3.5 text-stone-400" />
                             <span>{formatDuration(currentJob.totalDurationSeconds)}</span>
                         </span>
-                        <span>•</span>
                         <span>{currentJob.parts.length} source parts</span>
-                        <span>•</span>
                         <span className="flex items-center space-x-1.5">
                             <HardDrive className="w-3.5 h-3.5 text-stone-400" />
                             <span>{(currentJob.totalSizeBytes / (1024 * 1024)).toFixed(1)} MB</span>
                         </span>
-                    </div>
-                    <button 
-                        onClick={handleCloseProject}
-                        className="text-[11px] font-semibold text-stone-500 hover:text-stone-900 flex items-center space-x-1 cursor-pointer transition-colors"
-                    >
-                        <span>&larr; Close Project & Return to Dashboard</span>
-                    </button>
                 </div>
               </div>
 
-              {/* 5 Step Pipeline Navigation Tabs */}
-              <nav aria-label="Workbench Steps" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+              <nav aria-label="Audiobook creation steps" className="step-nav -mx-1 mt-4 flex gap-2 overflow-x-auto px-1 pb-1 lg:grid lg:grid-cols-5 lg:overflow-visible">
                 {[
-                  { step: 1, label: '1. Staging', desc: 'Import and Workflow' },
-                  { step: 2, label: '2. Build Chapters', desc: 'Audit and Edit Chapters' },
-                  { step: 3, label: '3. Metadata', desc: 'Edit Metadata & Artwork' },
-                  { step: 4, label: '4. Export', desc: 'Preserve audio or convert selected formats' },
-                  { step: 5, label: '5. Validate', desc: 'FFprobe container check & playback review' },
+                  { step: 1, label: 'Add audio', desc: 'Choose files and find chapters' },
+                  { step: 2, label: 'Review chapters', desc: 'Check names and timing' },
+                  { step: 3, label: 'Book details', desc: 'Cover, author, and description' },
+                  { step: 4, label: 'Export', desc: 'Create your audiobook' },
+                  { step: 5, label: 'Final check', desc: 'Confirm the finished file' },
                 ].map((item) => {
                   const isActive = activeStep === item.step;
                   const isStale = (item.step === 2 && currentJob.staleSteps?.some(step => step === 'chapter_detection' || step === 'chapter_review'))
@@ -508,36 +561,30 @@ export default function App() {
                       key={item.step}
                       id={`tab-step-${item.step}`}
                       onClick={() => setActiveStep(item.step as 1 | 2 | 3 | 4 | 5)}
-                      className={`p-3 rounded-lg text-left transition-all cursor-pointer border ${
+                      className={`min-w-[168px] rounded-xl border p-3 text-left transition-all lg:min-w-0 ${
                         isStale
                           ? 'bg-orange-50 border-orange-300 ring-1 ring-orange-300/40'
                           : isActive
-                          ? 'bg-amber-50/70 border-amber-400 ring-1 ring-amber-400/40'
-                          : 'bg-stone-50 border-stone-200/80 hover:bg-stone-100/70'
+                          ? 'bg-stone-900 border-stone-900 text-white shadow-sm'
+                          : 'bg-stone-50 border-stone-200 hover:bg-white hover:border-stone-300'
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span
-                          className={`text-xs font-bold ${
-                            isActive ? 'text-amber-900' : 'text-stone-800'
-                          }`}
-                        >
-                          {item.label}
-                        </span>
+                        <span className="flex items-center gap-2 text-xs font-bold"><span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${isActive ? 'bg-white/15 text-white' : 'bg-white text-stone-500 ring-1 ring-stone-200'}`}>{item.step}</span>{item.label}</span>
                         {isStale ? (
                           <span className="text-[9px] font-bold uppercase text-orange-700">Needs rerun</span>
                         ) : isCompleted && (
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                         )}
                       </div>
-                      <p className="text-[11px] text-stone-500 mt-0.5 truncate">
+                      <p className={`mt-1 text-[11px] ${isActive ? 'text-stone-300' : 'text-stone-500'}`}>
                         {item.desc}
                       </p>
                     </button>
                   );
                 })}
               </nav>
-            </div>
+            </section>
 
             {/* Active Step Content */}
             {activeStep === 1 && (
@@ -555,6 +602,7 @@ export default function App() {
 
             {activeStep === 2 && (
               <Step2ChapterReview
+                key={currentJob.id}
                 job={currentJob}
                 onSaveChapters={handleSaveChapters}
                 onNextStep={() => setActiveStep(3)}
@@ -572,7 +620,7 @@ export default function App() {
             )}
 
             {activeStep === 4 && (
-              <Step4BuildM4b
+              <Step4Export
                 job={currentJob}
                 config={config}
                 onBuildM4b={handleBuildM4b}
@@ -590,18 +638,19 @@ export default function App() {
             )}
           </>
         ) : (
-          <div className="space-y-6">
-            <div className="bg-white rounded-xl p-8 border border-stone-200 shadow-xs">
-                <div className="flex items-center justify-between mb-8">
+          <div className="space-y-5">
+            <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-6 lg:p-8">
+                <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                        <h2 className="text-2xl font-bold text-stone-900">Audiobook Projects</h2>
-                        <p className="text-sm text-stone-500 mt-1">Select an active book to begin processing or create a new project.</p>
+                        <p className="mb-1 text-xs font-bold uppercase tracking-[0.16em] text-amber-700">Your library</p>
+                        <h2 className="text-2xl font-bold tracking-tight text-stone-950">Audiobooks</h2>
+                        <p className="mt-1 text-sm text-stone-500">Pick up where you left off or start a new book.</p>
                     </div>
-                    <div className="flex items-center space-x-3">
+                    <div className="flex flex-wrap items-center gap-2">
                         {selectedJobIds.length > 0 && (
                             <button
                                 onClick={handleDeleteMultiple}
-                                className="flex items-center space-x-2 px-4 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 text-sm font-semibold rounded-lg cursor-pointer transition-all border border-red-200"
+                                className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-sm font-semibold text-red-700 transition hover:bg-red-100"
                             >
                                 <Trash2 className="w-4 h-4" />
                                 <span>Delete {selectedJobIds.length} Selected</span>
@@ -609,21 +658,21 @@ export default function App() {
                         )}
                         <button
                             onClick={() => setShowNewJobModal(true)}
-                            className="flex items-center space-x-2 px-5 py-2.5 bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold rounded-lg cursor-pointer transition-all shadow-sm"
+                            className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-amber-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-800"
                         >
                             <Plus className="w-4 h-4" />
-                            <span>Create New Book</span>
+                            <span>Add book</span>
                         </button>
                     </div>
                 </div>
 
                 {jobs.length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                         {jobs.map((job) => (
                             <div
                                 key={job.id}
                                 onClick={() => handleOpenProject(job.id)}
-                                className={`relative bg-stone-50 hover:bg-white p-5 pt-8 rounded-xl border transition-all hover:shadow-md group cursor-pointer ${
+                                className={`group relative rounded-2xl border bg-stone-50 p-5 pt-9 transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-md ${
                                     selectedJobIds.includes(job.id) ? 'border-amber-500 ring-1 ring-amber-500/20 bg-amber-50/10' : 'border-stone-200 hover:border-amber-400'
                                 }`}
                             >
@@ -649,9 +698,9 @@ export default function App() {
                                     <div className="flex flex-col items-end space-y-2">
                                         <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
                                             job.status === 'validated' ? 'bg-emerald-100 text-emerald-700' :
-                                            job.status === 'draft' ? 'bg-stone-200 text-stone-600' : 'bg-amber-100 text-amber-700'
+                                            job.status === 'draft' ? 'bg-stone-200 text-stone-600' : 'bg-amber-100 text-amber-800'
                                         }`}>
-                                            {job.status}
+                                            {statusLabel(job.status)}
                                         </span>
                                         <button
                                             onClick={(e) => handleDeleteProject(e, job.id, job.name)}
@@ -671,7 +720,7 @@ export default function App() {
                                         <span>•</span>
                                         <span>{job.parts.length} files</span>
                                     </div>
-                                    <span className="text-amber-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1">
+                                    <span className="flex items-center gap-1 font-bold text-amber-700 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
                                         <span>Open</span>
                                         <ArrowRight className="w-3 h-3" />
                                     </span>
@@ -680,31 +729,31 @@ export default function App() {
                         ))}
                     </div>
                 ) : (
-                    <div className="py-20 text-center border-2 border-dashed border-stone-200 rounded-xl">
-                        <div className="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-4 text-stone-400">
-                            <HardDrive className="w-8 h-8" />
+                    <div className="rounded-2xl border-2 border-dashed border-stone-200 py-16 text-center">
+                        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-50 text-amber-700">
+                            <BookOpen className="h-8 w-8" />
                         </div>
-                        <h3 className="text-lg font-semibold text-stone-900">No books found</h3>
-                        <p className="text-sm text-stone-500 max-w-xs mx-auto mt-2">Get started by creating your first audiobook processing project.</p>
+                        <h3 className="text-lg font-semibold text-stone-900">Your shelf is ready</h3>
+                        <p className="mx-auto mt-2 max-w-sm text-sm text-stone-500">Add an audiobook to combine its audio, review chapters, and create a finished file.</p>
                         <button
                             onClick={() => setShowNewJobModal(true)}
-                            className="mt-6 px-4 py-2 bg-stone-900 text-white rounded-lg text-sm font-medium hover:bg-stone-800 transition-colors"
+                            className="mt-6 inline-flex min-h-10 items-center gap-2 rounded-xl bg-amber-700 px-4 text-sm font-semibold text-white hover:bg-amber-800"
                         >
-                            Create Project
+                            <Plus className="h-4 w-4" /> Add your first book
                         </button>
                     </div>
                 )}
-            </div>
+            </section>
 
             {/* Quick Start / Help Card */}
-            <div className="bg-amber-50/50 rounded-xl p-6 border border-amber-200/50 flex items-start space-x-4">
-                <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center text-amber-700 shrink-0">
+            <div className="flex items-start gap-3 rounded-2xl border border-stone-200 bg-white p-4">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
                     <CheckCircle2 className="w-5 h-5" />
                 </div>
                 <div>
-                    <h3 className="text-sm font-bold text-amber-900">Single Project Focus</h3>
-                    <p className="text-xs text-amber-800/80 mt-1 leading-relaxed max-w-2xl">
-                        The Workbench now operates in <strong>Single Project Mode</strong> to ensure that audio imports, WhisperX transcriptions, and metadata tags are always perfectly assigned to the correct book. Select a book from the list above to resume your work, or create a new one to begin a fresh import.
+                    <h3 className="text-sm font-bold text-stone-900">One book at a time</h3>
+                    <p className="mt-1 max-w-2xl text-xs leading-relaxed text-stone-600">
+                        SwissMouse keeps each book’s audio, chapters, and details together. Open any book above to safely resume it.
                     </p>
                 </div>
             </div>
@@ -720,17 +769,24 @@ export default function App() {
       />
 
       {/* Modals */}
-      {showPurgeModal && currentJob && (
-        <PurgeModal
+      {showPurgeModal && (
+        <CleanupModal
           job={currentJob}
           onClose={() => setShowPurgeModal(false)}
-          onPurge={handlePurge}
+          onCleanup={handleCleanup}
         />
       )}
 
       {showConfigModal && (
         <ConfigModal
           config={config}
+          theme={theme}
+          customThemes={customThemes}
+          themeWarnings={themeWarnings}
+          isReloadingThemes={isReloadingThemes}
+          onThemeChange={handleThemeChange}
+          onReloadThemes={reloadCustomThemes}
+          onOpenThemesFolder={handleOpenThemesFolder}
           onClose={() => setShowConfigModal(false)}
           onSaveConfig={handleSaveConfig}
         />

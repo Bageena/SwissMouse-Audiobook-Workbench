@@ -1,6 +1,6 @@
+import { YouTubeIcon } from './YouTubeIcon';
 import React, { useState, useEffect } from 'react';
 import {
-  Video,
   Download,
   AlertTriangle,
   CheckCircle2,
@@ -251,16 +251,16 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
       {/* 1. Mandatory Legal & Rights Responsibility Notice */}
       <div
         id="youtube-legal-notice"
-        className="bg-stone-900/90 border border-amber-500/30 rounded-xl p-4.5 text-stone-300 text-xs leading-relaxed flex items-start gap-3 shadow-md"
+        className="bg-amber-50 border border-amber-200 rounded-xl p-4.5 text-stone-700 text-xs leading-relaxed flex items-start gap-3 shadow-xs"
       >
-        <div className="w-5 h-5 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center flex-shrink-0 text-amber-400 mt-0.5">
+        <div className="w-5 h-5 rounded-full bg-amber-100 border border-amber-200 flex items-center justify-center flex-shrink-0 text-amber-600 mt-0.5">
           <ShieldCheck className="w-3.5 h-3.5" />
         </div>
         <div>
-          <span className="font-semibold text-amber-300 block mb-0.5">
+          <span className="font-semibold text-amber-800 block mb-0.5">
             Make sure you have permission
           </span>
-          <p className="text-stone-300">
+          <p className="text-stone-700">
             Download only content you own, have permission to download, or are otherwise authorized to use. You are responsible for complying with YouTube’s Terms of Service, copyright law, and all applicable rights restrictions.
           </p>
         </div>
@@ -269,29 +269,29 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
       {/* 2. Dependency Management Box */}
       <div
         id="ytdlp-management-panel"
-        className="bg-stone-900 border border-stone-800 rounded-xl p-4.5 space-y-3"
+        className="bg-stone-50 border border-stone-200 rounded-xl p-4.5 space-y-3"
       >
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-800 pb-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-200 pb-3">
           <div className="flex items-center gap-2">
-            <Terminal className="w-4 h-4 text-stone-400" />
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-300">
+            <Terminal className="w-4 h-4 text-stone-500" />
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-700">
               Tools needed for YouTube import
             </h4>
           </div>
 
           <div className="flex items-center gap-2">
             {isLoadingStatus ? (
-              <span className="text-xs text-stone-400 flex items-center gap-1.5">
-                <RefreshCw className="w-3 h-3 animate-spin text-amber-400" />
+              <span className="text-xs text-stone-500 flex items-center gap-1.5">
+                <RefreshCw className="w-3 h-3 animate-spin text-amber-600" />
                 Checking status...
               </span>
             ) : isToolInstalled ? (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium">
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 yt-dlp {ytDlpStatus?.version || 'Ready'}
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-medium">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-600 text-xs font-medium">
                 <AlertTriangle className="w-3.5 h-3.5" />
                 yt-dlp Not Installed
               </span>
@@ -301,11 +301,11 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
 
         {/* Binary Details & Status Rows */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-          <div className="bg-stone-950/60 border border-stone-800/80 rounded-lg p-3">
-            <div className="text-stone-400 font-medium mb-1">YouTube download tool (yt-dlp)</div>
+          <div className="bg-white border border-stone-200 rounded-lg p-3">
+            <div className="text-stone-500 font-medium mb-1">YouTube download tool (yt-dlp)</div>
             {isToolInstalled ? (
               <div className="space-y-0.5">
-                <div className="font-mono text-stone-200 truncate" title={ytDlpStatus?.executablePath}>
+                <div className="font-mono text-stone-800 truncate" title={ytDlpStatus?.executablePath}>
                   {ytDlpStatus?.executablePath}
                 </div>
                 <div className="text-[11px] text-stone-500">
@@ -313,26 +313,26 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="text-amber-400">
+              <div className="text-amber-600">
                 yt-dlp is required for YouTube Audio Import. Install it to fetch video information and download audio.
               </div>
             )}
           </div>
 
-          <div className="bg-stone-950/60 border border-stone-800/80 rounded-lg p-3">
-            <div className="text-stone-400 font-medium mb-1">Audio processing tool (FFmpeg)</div>
+          <div className="bg-white border border-stone-200 rounded-lg p-3">
+            <div className="text-stone-500 font-medium mb-1">Audio processing tool (FFmpeg)</div>
             {isFfmpegReady ? (
               <div className="space-y-0.5">
-                <div className="font-mono text-stone-200">
+                <div className="font-mono text-stone-800">
                   Installed ({ytDlpStatus?.ffmpegVersion || 'available'})
                 </div>
-                <div className="text-[11px] text-emerald-400 flex items-center gap-1">
+                <div className="text-[11px] text-emerald-700 flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3" />
                   Ready to extract, combine, and convert audio
                 </div>
               </div>
             ) : (
-              <div className="text-amber-400 text-[11px]">
+              <div className="text-amber-600 text-[11px]">
                 FFmpeg is required to extract, merge, and convert audio. Install or configure FFmpeg before downloading converted audio formats.
               </div>
             )}
@@ -347,7 +347,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
               type="button"
               disabled={isManagingTool}
               onClick={handleInstallYtDlp}
-              className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-stone-950 font-semibold text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
             >
               <Download className="w-3.5 h-3.5" />
               {isManagingTool ? 'Installing...' : 'Install yt-dlp'}
@@ -359,7 +359,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
                 type="button"
                 disabled={isManagingTool}
                 onClick={handleUpdateYtDlp}
-                className="px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                className="px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-50"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isManagingTool ? 'animate-spin' : ''}`} />
                 Update yt-dlp
@@ -370,7 +370,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
                 type="button"
                 disabled={isManagingTool}
                 onClick={() => setShowUninstallConfirm(true)}
-                className="px-3 py-1.5 rounded-lg bg-stone-800/80 hover:bg-red-950/40 text-stone-400 hover:text-red-300 border border-stone-800 hover:border-red-900/50 text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                className="px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-red-50 text-stone-500 hover:text-red-700 border border-stone-200 hover:border-red-200 text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-50"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 Uninstall yt-dlp
@@ -382,7 +382,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
             type="button"
             onClick={checkStatus}
             disabled={isLoadingStatus}
-            className="px-2.5 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-stone-200 border border-stone-800 text-xs flex items-center gap-1 transition-colors ml-auto"
+            className="px-2.5 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-500 hover:text-stone-900 border border-stone-200 text-xs flex items-center gap-1 transition-colors ml-auto"
             title="Check whether the required tools are ready"
           >
             <RefreshCw className={`w-3 h-3 ${isLoadingStatus ? 'animate-spin' : ''}`} />
@@ -392,21 +392,21 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
 
         {/* Tool Action Message */}
         {toolActionMessage && (
-          <div className="text-xs px-3 py-2 rounded-lg bg-stone-950 border border-stone-800 text-stone-300 flex items-center gap-2">
-            <Info className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+          <div className="text-xs px-3 py-2 rounded-lg bg-white border border-stone-200 text-stone-700 flex items-center gap-2">
+            <Info className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
             <span>{toolActionMessage}</span>
           </div>
         )}
 
         {/* Uninstall Confirmation Modal */}
         {showUninstallConfirm && (
-          <div className="p-3 bg-red-950/40 border border-red-800/60 rounded-lg text-xs space-y-2">
-            <div className="font-semibold text-red-200 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-400" />
+          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs space-y-2">
+            <div className="font-semibold text-red-700 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-600" />
               Confirm yt-dlp Removal
             </div>
-            <p className="text-stone-300">
-              This will safely remove only the optional local executable in <code className="text-red-300 font-mono">runtime/bin/yt-dlp.exe</code>. Your downloaded audio files, Whisper models, and audiobook jobs will remain completely untouched.
+            <p className="text-stone-700">
+              This will safely remove only the optional local executable in <code className="text-red-700 font-mono">runtime/bin/yt-dlp.exe</code>. Your downloaded audio files, Whisper models, and audiobook jobs will remain completely untouched.
             </p>
             <div className="flex gap-2 pt-1">
               <button
@@ -419,7 +419,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
               <button
                 type="button"
                 onClick={() => setShowUninstallConfirm(false)}
-                className="px-3 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-300"
+                className="px-3 py-1 rounded bg-stone-100 hover:bg-stone-200 text-stone-700"
               >
                 Cancel
               </button>
@@ -429,13 +429,13 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
       </div>
 
       {/* 3. YouTube URL Input & Inspection Area */}
-      <div className="bg-stone-900 border border-stone-800 rounded-xl p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <label htmlFor="youtube-url-input" className="text-xs font-semibold uppercase tracking-wider text-stone-300 flex items-center gap-2">
-            <Video className="w-4 h-4 text-red-500" />
+      <div className="bg-stone-50 border border-stone-200 rounded-xl p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <label htmlFor="youtube-url-input" className="text-xs font-semibold uppercase tracking-wider text-stone-700 flex items-center gap-2">
+            <YouTubeIcon className="w-4 h-4 text-red-500" />
             YouTube link
           </label>
-          <span className="text-[11px] text-stone-400">
+          <span className="text-[11px] text-stone-500">
             Accepts youtube.com/watch, youtu.be, and shorts links
           </span>
         </div>
@@ -450,13 +450,13 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
               placeholder="https://www.youtube.com/watch?v=..."
               disabled={!inspectionAvailability.ready || isFetchingInfo || isDownloading}
               title={inspectionAvailability.tooltip}
-              className="w-full bg-stone-950 border border-stone-700 rounded-lg px-3.5 py-2.5 text-stone-100 placeholder-stone-600 text-sm font-mono focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 disabled:opacity-50"
+              className="w-full bg-white border border-stone-300 rounded-lg pl-3.5 pr-10 py-2.5 text-stone-900 placeholder-stone-400 text-sm font-mono focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 disabled:opacity-50"
             />
             {url && (
               <button
                 type="button"
                 onClick={() => setUrl('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-500 hover:text-stone-300 p-1"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-500 hover:text-stone-900 p-1"
                 title="Clear URL"
               >
                 <XCircle className="w-4 h-4" />
@@ -470,7 +470,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
             disabled={!inspectionAvailability.ready || !isUrlValid || isFetchingInfo || isDownloading}
             title={inspectionAvailability.tooltip}
             onClick={handleFetchVideoInfo}
-            className="px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-stone-950 font-semibold text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+            className="px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
           >
             {isFetchingInfo ? (
               <>
@@ -488,8 +488,8 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
 
         {/* Validation or Inspection Error */}
         {fetchError && (
-          <div className="p-3.5 rounded-lg bg-red-950/40 border border-red-800/60 text-xs text-red-200 flex items-start gap-2.5">
-            <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+          <div className="p-3.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
             <div className="space-y-1">
               <span className="font-semibold block">Could not check this link</span>
               <p>{fetchError}</p>
@@ -498,16 +498,16 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
         )}
 
         {!isToolInstalled && (
-          <div className="p-3 rounded-lg bg-stone-950 border border-amber-800/40 text-xs text-amber-300 flex items-center justify-between gap-3">
+          <div className="p-3 rounded-lg bg-white border border-amber-200 text-xs text-amber-800 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
               <span>yt-dlp is required for YouTube Audio Import. Install it to fetch video information and download audio.</span>
             </div>
             <button
               type="button"
               onClick={handleInstallYtDlp}
               disabled={isManagingTool}
-              className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-stone-950 font-semibold text-xs flex-shrink-0"
+              className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs flex-shrink-0"
             >
               Install yt-dlp
             </button>
@@ -519,16 +519,16 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
       {videoInfo && (
         <div
           id="inspected-video-card"
-          className="bg-stone-900 border border-amber-900/40 rounded-xl p-5 space-y-5 shadow-lg"
+          className="bg-stone-50 border border-stone-200 rounded-xl p-5 space-y-5 shadow-xs"
         >
-          <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+          <div className="flex items-center justify-between border-b border-stone-200 pb-3">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-200">
+              <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-800">
                 Video found
               </h4>
             </div>
-            <span className="text-xs text-stone-400">
+            <span className="text-xs text-stone-500">
               Nothing downloads until you choose Download audio
             </span>
           </div>
@@ -540,33 +540,33 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
                 src={videoInfo.thumbnailUrl}
                 alt={videoInfo.title}
                 referrerPolicy="no-referrer"
-                className="w-full md:w-48 h-28 object-cover rounded-lg border border-stone-800 shadow bg-stone-950 flex-shrink-0"
+                className="w-full md:w-48 h-28 object-cover rounded-lg border border-stone-200 shadow bg-white flex-shrink-0"
               />
             ) : (
-              <div className="w-full md:w-48 h-28 rounded-lg bg-stone-950 border border-stone-800 flex items-center justify-center text-stone-600 flex-shrink-0">
+              <div className="w-full md:w-48 h-28 rounded-lg bg-white border border-stone-200 flex items-center justify-center text-stone-600 flex-shrink-0">
                 <Music className="w-8 h-8" />
               </div>
             )}
 
             {/* Metadata Information */}
             <div className="space-y-2 flex-1 min-w-0">
-              <h3 className="text-base font-semibold text-stone-100 leading-snug">
+              <h3 className="text-base font-semibold text-stone-900 leading-snug">
                 {videoInfo.title}
               </h3>
-              <div className="flex flex-wrap items-center gap-3 text-xs text-stone-400">
-                <span className="text-stone-300 font-medium">{videoInfo.uploader}</span>
+              <div className="flex flex-wrap items-center gap-3 text-xs text-stone-500">
+                <span className="text-stone-700 font-medium">{videoInfo.uploader}</span>
                 <span>•</span>
-                <span className="flex items-center gap-1 font-mono text-amber-300">
+                <span className="flex items-center gap-1 font-mono text-amber-800">
                   <Clock className="w-3 h-3" />
                   {videoInfo.durationFormatted}
                 </span>
                 <span>•</span>
-                <span className="text-stone-400">
+                <span className="text-stone-500">
                   Audio Quality: {videoInfo.audioBitrate || 'Best'}
                 </span>
               </div>
               {videoInfo.description && (
-                <p className="text-xs text-stone-400 line-clamp-2 leading-relaxed">
+                <p className="text-xs text-stone-500 line-clamp-2 leading-relaxed">
                   {videoInfo.description}
                 </p>
               )}
@@ -574,12 +574,12 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
           </div>
 
           {/* Audio Output Format Selection */}
-          <div className="border-t border-stone-800 pt-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold uppercase tracking-wider text-stone-300">
+          <div className="border-t border-stone-200 pt-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-stone-700">
                 Choose downloaded audio format
               </label>
-              <span className="text-[11px] text-stone-400">
+              <span className="text-[11px] text-stone-500">
                 The downloaded file will be added to this project
               </span>
             </div>
@@ -599,27 +599,27 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
                   onClick={() => setSelectedFormat(opt.id as YouTubeAudioFormat)}
                   className={`p-2.5 rounded-lg border text-left transition-all ${
                     selectedFormat === opt.id
-                      ? 'bg-amber-500/15 border-amber-500/50 text-amber-200'
-                      : 'bg-stone-950/60 border-stone-800 hover:border-stone-700 text-stone-300'
+                      ? 'bg-amber-50 border-amber-400 text-amber-800'
+                      : 'bg-white border-stone-200 hover:border-stone-300 text-stone-700'
                   }`}
                 >
                   <div className="font-semibold text-xs">{opt.label}</div>
-                  <div className="text-[10px] text-stone-400 mt-0.5">{opt.sub}</div>
+                  <div className="text-[10px] text-stone-500 mt-0.5">{opt.sub}</div>
                 </button>
               ))}
             </div>
 
             {selectedFormat === 'mp3' && (
-              <p className="text-[11px] text-stone-400 flex items-center gap-1.5">
-                <Info className="w-3 h-3 text-amber-400" />
+              <p className="text-[11px] text-stone-500 flex items-center gap-1.5">
+                <Info className="w-3 h-3 text-amber-600" />
                 MP3 conversion re-encodes source audio via FFmpeg. Best available preserves the source audio.
               </p>
             )}
           </div>
 
           {/* Download Action Section */}
-          <div className="border-t border-stone-800 pt-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-            <div className="text-xs text-stone-400">
+          <div className="border-t border-stone-200 pt-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="text-xs text-stone-500">
               Ready to download the audio and add it to this audiobook project.
             </div>
 
@@ -629,7 +629,7 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
               disabled={isDownloading || !downloadAvailability.ready}
               title={downloadAvailability.tooltip}
               onClick={() => handleDownloadAudio(false)}
-              className="px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md hover:shadow-emerald-950/40 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-5 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-xs hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isDownloading ? (
                 <>
@@ -647,8 +647,8 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
 
           {/* Download Status & Errors */}
           {downloadError && (
-            <div className="p-3.5 rounded-lg bg-red-950/40 border border-red-800/60 text-xs text-red-200 flex items-start gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+            <div className="p-3.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
               <div className="space-y-1 flex-1">
                 <span className="font-semibold block">Download Failed</span>
                 <p>{downloadError}</p>
@@ -657,12 +657,12 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
           )}
 
           {downloadSuccess && (
-            <div className="p-3.5 rounded-lg bg-emerald-950/40 border border-emerald-800/60 text-xs text-emerald-200 flex items-center justify-between gap-2.5">
+            <div className="p-3.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-700 flex items-center justify-between gap-2.5">
               <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                <CheckCircle2 className="w-4 h-4 text-emerald-700 flex-shrink-0" />
                 <span>{downloadSuccess}</span>
               </div>
-              <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold text-[11px]">
+              <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-semibold text-[11px]">
                 Imported to Project
               </span>
             </div>

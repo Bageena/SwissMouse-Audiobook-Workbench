@@ -1,0 +1,9 @@
+{
+  "name": "Quiet Lavender",
+  "id": "example-theme",
+  "version": "1.0",
+  "author": "SwissMouse",
+  "description": "An example custom theme that inherits the Light theme.",
+  "extends": "light",
+  "css": "theme.css"
+}

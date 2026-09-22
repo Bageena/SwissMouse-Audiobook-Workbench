@@ -15,12 +15,16 @@ await mkdir(releaseDirectory, { recursive: true });
 
 const releaseFiles = [
   '.env.example',
+  'CUSTOM-THEMES.md',
   'FORMAT-SUPPORT.md',
+  'TRANSCRIPTION.md',
+  'LIBRIVOX.md',
   'metadata.json',
   'package-lock.json',
   'package.json',
   'README.md',
   'Start Audiobook Workbench.bat',
+  'themes',
   'dist',
 ];
 

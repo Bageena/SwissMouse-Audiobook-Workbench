@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { ChapterEntry } from '../src/types';
-import { applyDefaultChapterEnds, insertMissingChapterPlaceholders, isIncompleteChapter, prepareChapters, validateChapterEntries } from '../src/utils/chapters';
+import { applyChapterNumberFormat, applyDefaultChapterEnds, getSessionChapterNumberFormat, insertMissingChapterPlaceholders, isIncompleteChapter, prepareChapters, validateChapterEntries } from '../src/utils/chapters';
+import { planChapterExport } from '../src/utils/chapterExport';
 
 const chapter = (number: number, start: string): ChapterEntry => ({
   id: `chapter-${number}`,
@@ -74,4 +75,52 @@ test('automatic recalculation preserves manual starts and ends', () => {
   const result = applyDefaultChapterEnds(chapters, 1200);
   assert.equal(result[0].start, '00:00:05.000');
   assert.equal(result[0].end, '00:08:00.000');
+});
+
+test('number modes rename all automatic chapters, preserve prose/manual titles and timestamps', () => {
+  const source = [
+    { ...chapter(1, '00:00:00.000'), title: 'Chapter One', end: '00:00:09.999' },
+    { id: 'legacy', start: '00:00:10.000', title: 'Chapter II' },
+    { ...chapter(3, '00:00:20.000'), title: 'The Return' },
+    { ...chapter(4, '00:00:30.000'), titleManuallyEdited: true },
+    { id: 'prose', start: '00:00:40.000', title: 'Chapter Sunset' },
+  ];
+  for (const [mode, titles] of [
+    ['numerical', ['Chapter 1', 'Chapter 2']], ['roman', ['Chapter I', 'Chapter II']], ['written', ['Chapter One', 'Chapter Two']],
+  ] as const) {
+    const result = applyChapterNumberFormat(source, mode);
+    assert.deepEqual(result.slice(0, 2).map(c => c.title), titles);
+    assert.deepEqual(result.slice(2), source.slice(2));
+    assert.deepEqual(result.map(c => [c.start, c.end]), source.map(c => [c.start, c.end]));
+  }
+  assert.equal(getSessionChapterNumberFormat('no-browser-storage'), 'numerical');
+});
+
+test('number format accepts detected spacing and punctuation without renaming prose', () => {
+  const chapters = ['Chapter Twenty Three', 'CHAPTER: 23', 'Chapter One Hundred and Twelve', 'Chapter Twenty\u2011Three', 'Chapter One More Thing']
+    .map((title, index) => ({ id: String(index), start: '00:00:00.000', title }));
+  assert.deepEqual(applyChapterNumberFormat(chapters, 'numerical').map(c => c.title),
+    ['Chapter 23', 'Chapter 23', 'Chapter 112', 'Chapter 23', 'Chapter One More Thing']);
+});
+
+test('export plan closes gaps, trims the tail, and remaps markers without mutating source entries', () => {
+  const source = [
+    { ...chapter(1, '00:00:00.000'), end: '00:00:02.000' },
+    { ...chapter(2, '00:00:03.000'), end: '00:00:04.000' },
+    { ...chapter(3, '00:00:05.000'), end: '00:00:08.000' },
+  ];
+  const plan = planChapterExport(source, 9);
+  assert.equal(plan.durationSeconds, 6);
+  assert.equal(plan.removedSeconds, 3);
+  assert.deepEqual(plan.chapters.map(c => c.start), ['00:00:00.000', '00:00:02.000', '00:00:03.000']);
+  assert.equal(source[1].start, '00:00:03.000');
+  assert.throws(() => planChapterExport([{ ...source[0], end: '00:00:03.500' }, source[1]], 9), /overlapping/i);
+});
+
+test('automatic 1ms separators preserve the full recording and copy path', () => {
+  const source = prepareChapters([chapter(1, '00:00:00.000'), chapter(2, '00:00:03.000')], 9);
+  const plan = planChapterExport(source, 9);
+  assert.equal(plan.trimmed, false);
+  assert.equal(plan.durationSeconds, 9);
+  assert.equal(plan.chapters, source);
 });

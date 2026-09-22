@@ -1,9 +1,13 @@
+import { probeBackendCapabilities } from './tools/transcription-capabilities';
+import { transcriptionSettings, selectTranscriptionAttempt, capabilityLabel, type BackendCapabilities, type TranscriptionBackend } from './src/transcription';
+import { sourceProcessingKeys, transcriptionRequestKey, transcriptionResultKey, reusableTranscription, processingKey } from './tools/transcription-cache';
 import { StatusCache } from './tools/status-cache';
 import { rebuildAnalysis, waveformSlice } from './tools/audio-analysis';
 import { detectChapterHeadings } from './tools/chapter-detection';
 import { buildTranscriptWords, findTranscriptWordIndex, refineChapterStartIndex } from './src/utils/wordAlignment';
 import { PACKAGE_STATUS_SCRIPT } from './tools/package-status';
 import { youtubeUrl, youtubeBaseArgs, downloadYoutubeAudio } from './tools/youtube-audio';
+import { mountLibriVox } from './tools/librivox-import';
 import { inspect, fingerprint, makePreview, exportAudio, validateChapters } from './tools/audio-engine';
 import { prepareMaster } from './tools/source-audio';
 import { audiobookTags } from './tools/audiobook-metadata';
@@ -11,9 +15,11 @@ import { naturalPathCompare, sourceChapterGroups } from './src/utils/sourceStruc
 import { applyDefaultChapterEnds, parseChapterTimestamp, parseCsvRow, validateChapterEntries } from './src/utils/chapters';
 import { beginStepRerun, canRerunStep, completeStepRerun, failStepRerun, hasManualChapterWork, markDependentResultsStale } from './src/utils/pipelineRerun';
 import { outputFormats, canCopy, defaultBitrate, bitrateOptions, stitchCompatibility } from './src/audioFormats';
-import { transcriptionEngines, chooseFasterWhisperAttempts, PYTHON_DLL_SETUP, type NormalizedTranscription, type TranscriptionEngineId } from './tools/transcription-engine';
-import { evaluateRequirementReadiness, selectedMissingRequirements } from './tools/requirements';
+import { planChapterExport } from './src/utils/chapterExport';
+import { transcriptionEngines, transcribeWithFallback, PYTHON_DLL_SETUP, type NormalizedTranscription, type TranscriptionEngineId } from './tools/transcription-engine';
+import { evaluateRequirementReadiness, selectedMissingRequirements, pytorchBuildOptions, pytorchInstallPlan, parseNvidiaCudaVersion } from './tools/requirements';
 import { missingDependencies, missingRequirementsTooltip } from './tools/feature-dependencies';
+import { discoverCustomThemes, isSafeThemeAssetName } from './tools/custom-themes';
 import type { FeatureId } from './tools/feature-dependencies';
 import type { WorkbenchConfig, ChapterEntry, AudiobookMetadata, AudiobookJob, HardwareInfo, SpeechModelInfo, InstallRepairProgress, Step1ProcessState, Step1ProcessStage, Step1ProgressStage, HardwareEnvironmentInfo, RequirementsReport, BaseRequirementItem, FolderScanResult, DiscoveredAudioFile, UnsupportedFileItem, YtDlpStatusInfo, YtDlpStatusState, YouTubeVideoInfo, YouTubeAudioFormat, ChapterCandidate, CoverArtInfo, OutputAudioFormat, RerunnablePipelineStep } from './src/types';
 import express from 'express';
@@ -124,6 +130,8 @@ const PORT = Number(process.env.PORT) || 3000;
 // drives never turn the caller's current directory into the application root.
 const APP_ROOT = path.resolve(process.env.APP_ROOT || process.cwd());
 const appPath = (...segments: string[]) => path.join(APP_ROOT, ...segments);
+const CUSTOM_THEMES_DIR = appPath('themes');
+const CUSTOM_THEME_LOG = appPath('logs', 'custom-themes.log');
 const RUNTIME_DIR = appPath('runtime');
 const PORTABLE_PYTHON_DIR = path.join(RUNTIME_DIR, 'python');
 const isWin = os.platform() === 'win32';
@@ -131,6 +139,20 @@ const PORTABLE_PYTHON_EXE = isWin ? path.join(PORTABLE_PYTHON_DIR, 'tools', 'pyt
 const RUNTIME_BIN_DIR = appPath('runtime', 'bin');
 const MANAGED_FFMPEG_PATH = path.join(RUNTIME_BIN_DIR, isWin ? 'ffmpeg.exe' : 'ffmpeg');
 const MANAGED_FFPROBE_PATH = path.join(RUNTIME_BIN_DIR, isWin ? 'ffprobe.exe' : 'ffprobe');
+
+function scanCustomThemes() {
+  const discovery = discoverCustomThemes(CUSTOM_THEMES_DIR);
+  if (discovery.warnings.length > 0) {
+    const timestamp = new Date().toISOString();
+    const lines = discovery.warnings.map(warning => `[${timestamp}] WARNING ${warning}`);
+    try {
+      fs.mkdirSync(path.dirname(CUSTOM_THEME_LOG), { recursive: true });
+      fs.appendFileSync(CUSTOM_THEME_LOG, `${lines.join('\n')}\n`, 'utf8');
+    } catch (error) { console.warn('[Themes] Cannot write theme diagnostic log:', error); }
+    for (const warning of discovery.warnings) console.warn(`[Themes] ${warning}`);
+  }
+  return discovery;
+}
 
 // FFmpeg.org links Windows users to this build provider. The installer verifies
 // the published SHA-256 before extracting its two application-local binaries.
@@ -933,62 +955,56 @@ function buildChapterCandidates(
   });
 }
 
-async function transcribeExistingPreview(job: AudiobookJob, signal: AbortSignal) {
-  if (!job.previewPath || !fs.existsSync(job.previewPath)) throw new Error('Generate the review preview before rerunning transcription.');
+function validatedTranscriptionSettingsMap(input: unknown): AudiobookJob['transcriptionSettings'] {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid transcription settings');
+  return Object.fromEntries(Object.entries(input).map(([engine, value]) => {
+    if (engine !== 'faster-whisper' && engine !== 'openai-whisper') throw new Error('Unknown transcription engine');
+    return [engine, transcriptionSettings(engine, value)];
+  }));
+}
+async function transcriptionPlan(job: AudiobookJob, preparedAudioKey: string, engine = requestEngine(undefined)) {
   const model = speechModels.find(item => item.id === (job.selectedModelId || 'small')) || speechModels[1];
-  const hw = await getHardwareInfo();
-  const requestedEngine = requestEngine(undefined);
-  const venvPython = getVenvPython();
-  if (!fs.existsSync(venvPython)) throw new Error('The private transcription runtime is not ready. Open System Requirements and choose Install Missing Requirements.');
-  fs.mkdirSync(TORCH_CACHE_DIR, { recursive: true });
-  fs.mkdirSync(MATPLOTLIB_CACHE_DIR, { recursive: true });
-  fs.mkdirSync(OPENAI_WHISPER_MODEL_CACHE_DIR, { recursive: true });
+  const settings = transcriptionSettings(engine, job.transcriptionSettings?.[engine]);
+  const capability = await getBackendCapabilities(engine, true);
+  const attempt = selectTranscriptionAttempt(capability, settings, model.id);
+  const requestKey = transcriptionRequestKey(preparedAudioKey, model.id, settings, capability, attempt);
+  logStep1(`${engine}: ${capabilityLabel(capability, settings.device)}; runtime ${capability.runtimeVersion || 'unknown'}; GPU initialization ${capability.initialization}.${capability.reason ? ' Reason: ' + capability.reason : ''}`);
+  return { engine, model, settings, capability, requestKey };
+}
+async function transcribeExistingPreview(job: AudiobookJob, signal: AbortSignal, plan?: Awaited<ReturnType<typeof transcriptionPlan>>) {
+  if (!job.previewPath || !fs.existsSync(job.previewPath)) throw new Error('Generate the review preview before rerunning transcription.');
+  if (!plan) {
+    const sources = job.parts.map(part => path.resolve(APP_ROOT, job.sourceFolderPath || '', part.name));
+    const keys = await sourceProcessingKeys(sources, job.mergeMethod || 'standard');
+    if (keys.sourceKey !== job.sourceKey || keys.preparedAudioKey !== job.preparedAudioKey) throw new Error('Source audio or preparation settings changed. Run full source processing before retranscribing.');
+    plan = await transcriptionPlan(job, keys.preparedAudioKey);
+  }
+  const { engine, model, settings, capability, requestKey } = plan;
+  const python = getVenvPython();
+  if (!fs.existsSync(python)) throw new Error('The private transcription runtime is not ready. Open System Requirements.');
+  for (const dir of [TORCH_CACHE_DIR, MATPLOTLIB_CACHE_DIR, OPENAI_WHISPER_MODEL_CACHE_DIR]) fs.mkdirSync(dir, { recursive: true });
   const normalizedPath = path.join(path.dirname(job.previewPath), `${path.parse(job.previewPath).name}.rerun-${Date.now()}.transcript.json`);
   try {
-  const runtimeEnv = { ...transcriptionRuntimeEnv(), HF_HOME: WHISPERX_MODEL_CACHE_DIR, TORCH_HOME: TORCH_CACHE_DIR, MPLCONFIGDIR: MATPLOTLIB_CACHE_DIR };
-  let normalized: NormalizedTranscription | undefined;
-  let lastEngineError: unknown;
-  const runEngine = async (engine: TranscriptionEngineId, device: 'cpu' | 'cuda', computeType: string) => {
-    logStep1(`Running ${engine === 'faster-whisper' ? 'Faster Whisper' : 'OpenAI Whisper'} on ${device.toUpperCase()} (${computeType}).`);
-    return transcriptionEngines[engine].transcribe({
-      pythonPath: venvPython, audioPath: job.previewPath!, outputPath: normalizedPath,
-      modelId: engine === 'openai-whisper' && model.id === 'large-v3-turbo' ? 'turbo' : model.id,
-      fasterModelRepository: FASTER_WHISPER_REPOSITORIES[model.id], engine, device, computeType,
-      fasterCacheDir: WHISPERX_MODEL_CACHE_DIR, openAiCacheDir: path.join(OPENAI_WHISPER_MODEL_CACHE_DIR, model.id),
-      language: 'en', signal, env: runtimeEnv,
-    });
-  };
-  const runOpenAi = async () => {
-    const attempts: Array<{ device: 'cpu' | 'cuda'; computeType: string }> = hw.mode === 'gpu'
-      ? [{ device: 'cuda', computeType: 'float16' }, { device: 'cpu', computeType: 'float32' }]
-      : [{ device: 'cpu', computeType: 'float32' }];
-    for (const attempt of attempts) {
-      try { return await runEngine('openai-whisper', attempt.device, attempt.computeType); }
-      catch (error) { lastEngineError = error; if (attempt.device === 'cuda') logStep1('GPU transcription failed. Retrying on CPU.'); }
-    }
-  };
-  if (requestedEngine === 'faster-whisper') {
-    for (const attempt of chooseFasterWhisperAttempts(hw.mode === 'gpu')) {
-      try { normalized = await runEngine('faster-whisper', attempt.device, attempt.computeType); break; }
-      catch (error) { lastEngineError = error; if (attempt.device === 'cuda') logStep1('GPU transcription failed. Retrying on CPU.'); }
-    }
-    if (!normalized) normalized = await runOpenAi();
-  } else normalized = await runOpenAi();
-  if (!normalized) throw lastEngineError || new Error('No transcription engine could be initialized.');
-  if (normalized.segments.some(segment => segment.text?.trim() && !segment.words?.some(word => Number.isFinite(word.start) && Number.isFinite(word.end)))) {
-    throw new Error('The transcription engine returned speech segments without word timestamps');
-  }
-  const transcriptWords = buildTranscriptWords(normalized.segments);
-  const wordsCount = normalized.segments.reduce((total, segment) => total + segment.words.length, 0);
-  return {
-    segments: normalized.segments,
-    words: transcriptWords,
-    transcription: {
-      model: model.name, profile: model.id, language: normalized.language || 'en', engine: normalized.engine,
-      device: normalized.device, computeType: normalized.computeType, segmentsCount: normalized.segments.length,
-      wordsCount, completedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
-    },
-  };
+    const env = { ...transcriptionRuntimeEnv(), HF_HOME: WHISPERX_MODEL_CACHE_DIR, TORCH_HOME: TORCH_CACHE_DIR, MPLCONFIGDIR: MATPLOTLIB_CACHE_DIR };
+    logStep1('Transcript cache: Miss (or explicit transcription rerun).');
+    const normalized = await transcribeWithFallback(capability, settings, model.id, attempt =>
+      transcriptionEngines[engine].transcribe({
+        pythonPath: python, audioPath: job.previewPath!, outputPath: normalizedPath,
+        modelId: engine === 'openai-whisper' && model.id === 'large-v3-turbo' ? 'turbo' : model.id,
+        fasterModelRepository: FASTER_WHISPER_REPOSITORIES[model.id], engine, ...attempt,
+        beamSize: settings.beamSize, language: settings.language, signal, env,
+        fasterCacheDir: WHISPERX_MODEL_CACHE_DIR, openAiCacheDir: path.join(OPENAI_WHISPER_MODEL_CACHE_DIR, model.id),
+      }), logStep1, signal);
+    if (normalized.device === 'cuda') capability.initialization = 'verified';
+    if (normalized.segments.some(segment => segment.text?.trim() && !segment.words?.some(word => Number.isFinite(word.start) && Number.isFinite(word.end)))) throw new Error('The transcription engine returned speech segments without word timestamps');
+    const words = buildTranscriptWords(normalized.segments);
+    const transcription = {
+      model: model.name, profile: model.id, language: normalized.language || settings.language, engine: normalized.engine,
+      device: normalized.device, computeType: normalized.computeType, batchSize: normalized.batchSize, beamSize: normalized.beamSize,
+      segmentsCount: normalized.segments.length, wordsCount: words.length, requestKey,
+      completedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+    };
+    return { segments: normalized.segments, words, transcription, transcriptKey: transcriptionResultKey(requestKey, transcription) };
   } finally {
     if (fs.existsSync(normalizedPath)) fs.unlinkSync(normalizedPath);
   }
@@ -1039,6 +1055,8 @@ async function detectHardwareEnvironment(): Promise<HardwareEnvironmentInfo> {
   let gpuName: string | undefined;
   let vramGb: number | undefined;
   let cudaVersion: string | undefined;
+  let driverVersion: string | undefined;
+  let computeCapability: number | undefined;
 
   try {
     const smiOut = (await execAsync('nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits', {
@@ -1056,15 +1074,19 @@ async function detectHardwareEnvironment(): Promise<HardwareEnvironmentInfo> {
 
   if (hasNvidiaGpu) {
     try {
-      const nvccOut = (await execAsync('nvidia-smi', {
+      const { stdout } = await execFileAsync('nvidia-smi', ['-i', '0', '--query-gpu=driver_version,compute_cap', '--format=csv,noheader,nounits'], { timeout: 3000, windowsHide: true });
+      const [driver, compute] = stdout.trim().split(',').map(value => value.trim());
+      driverVersion = driver;
+      if (Number.isFinite(Number(compute))) computeCapability = Number(compute);
+    } catch { /* Older drivers may not expose compute capability. */ }
+    try {
+      const smiOutput = (await execAsync('nvidia-smi', {
         encoding: 'utf8',
         timeout: 3000, windowsHide: true,
       })).stdout;
-      const cudaMatch = nvccOut.match(/CUDA Version[:\s]+([\d.]+)/i) || nvccOut.match(/V([\d.]+)/i);
-      if (cudaMatch) {
-        cudaVersion = cudaMatch[1];
-      }
-    } catch (e) {}
+      cudaVersion = parseNvidiaCudaVersion(smiOutput);
+      if (!cudaVersion) console.warn('[Hardware] Could not read NVIDIA driver CUDA compatibility: unrecognized or unavailable CUDA version header.');
+    } catch (error: any) { console.warn('[Hardware] NVIDIA driver CUDA compatibility check failed:', error.message); }
   }
 
   const mode: 'gpu' | 'cpu' = hasNvidiaGpu ? 'gpu' : 'cpu';
@@ -1081,7 +1103,7 @@ async function detectHardwareEnvironment(): Promise<HardwareEnvironmentInfo> {
     hasNvidiaGpu,
     gpuName,
     vramGb,
-    cudaVersion,
+    cudaVersion, driverVersion, computeCapability,
     mode,
     recommendedPyTorchFlavor,
     recommendationSummary,
@@ -1115,12 +1137,20 @@ async function managedBinaryStatus(binary: string): Promise<string> {
     catch { return ''; }
   });
 }
+const backendSnapshots = new Map<TranscriptionBackend, StatusCache<BackendCapabilities>>();
+async function getBackendCapabilities(engine: TranscriptionBackend, refresh = false) {
+  if (!backendSnapshots.has(engine)) backendSnapshots.set(engine, new StatusCache<BackendCapabilities>(5 * 60_000));
+  const cache = backendSnapshots.get(engine)!;
+  const load = async () => probeBackendCapabilities(getVenvPython(), engine, (await getFullHardwareEnvironment()).hasNvidiaGpu, transcriptionRuntimeEnv());
+  return refresh ? cache.refresh(load) : cache.get(load);
+}
 function invalidateRequirements(includeHardware = false) {
+  for (const cache of backendSnapshots.values()) cache.invalidate();
   pythonSnapshot.invalidate();
   for (const cache of binarySnapshots.values()) cache.invalidate();
   if (includeHardware) hardwareSnapshot.invalidate();
 }
-async function checkActiveRequirements(): Promise<RequirementsReport> {
+async function checkActiveRequirements(includeCapabilities = false): Promise<RequirementsReport> {
   const [hw, packages] = await Promise.all([getFullHardwareEnvironment(), pythonPackages()]);
   const probe = (name: string): PythonProbe => packages[name] || {ok:false};
   const components: BaseRequirementItem[] = [];
@@ -1174,7 +1204,10 @@ async function checkActiveRequirements(): Promise<RequirementsReport> {
       : statusColor === 'yellow'
         ? 'A complete workflow is available. Faster Whisper or GPU acceleration can improve performance.'
         : 'Runtime dependencies are ready. Manage downloaded transcription models in Models.',
-    hardware: hw, components, availableUpdatesCount: 0,
+    hardware: hw, components, availableUpdatesCount: 0, pytorchBuild: pytorchBuildOptions(hw),
+    ...(includeCapabilities ? { backendCapabilities: Object.fromEntries(await Promise.all(
+      (['faster-whisper', 'openai-whisper'] as const).map(async engine => [engine, await getBackendCapabilities(engine)]),
+    )) } : {}),
   };
 }
 
@@ -1186,11 +1219,17 @@ async function checkActiveRequirements(): Promise<RequirementsReport> {
 app.get('/api/requirements/status', async (req, res) => {
   try {
     if (req.query.refresh === 'true') invalidateRequirements(true);
-    const report = await checkActiveRequirements();
+    const report = await checkActiveRequirements(true);
     res.json(report);
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to inspect requirements' });
   }
+});
+
+app.get('/api/transcription/capabilities', async (req, res) => {
+  const engine = req.query.engine;
+  if (engine !== 'faster-whisper' && engine !== 'openai-whisper') return res.status(400).json({ error: 'Unknown transcription engine' });
+  res.json(await getBackendCapabilities(engine, req.query.refresh === 'true'));
 });
 
 // 2. Get Installation / Repair Progress State
@@ -1214,10 +1253,16 @@ app.post('/api/requirements/install-repair', async (req, res) => {
   }
 
   const report = await checkActiveRequirements();
+  if (step1TaskRunning) return res.status(409).json({ error: 'Wait for transcription/processing to finish before changing its runtime.' });
+  let torchPlan: ReturnType<typeof pytorchInstallPlan>;
+  try { torchPlan = pytorchInstallPlan(report, req.body?.pytorchFlavor, req.body?.confirmPytorchReplacement === true); }
+  catch (error: any) { return res.status(400).json({ error: error.message }); }
   // Another request may have started an install while this one awaited probes.
   if (activeInstallProgress.isActive) return res.status(409).json({ error: 'An installation or repair task is already running.' });
   const selectedIds = Array.isArray(req.body?.selectedIds) ? req.body.selectedIds.filter((id: unknown) => typeof id === 'string') : [];
   const componentsToFix = selectedMissingRequirements(report.components, selectedIds).sort((a, b) => Number(b.id === 'pytorch') - Number(a.id === 'pytorch'));
+  if (torchPlan && !componentsToFix.some(item => item.id === 'pytorch')) componentsToFix.unshift(report.components.find(item => item.id === 'pytorch')!);
+  if (!torchPlan && componentsToFix.some(item => item.id === 'pytorch' && item.installedVersion)) return res.status(400).json({ error: 'Select a PyTorch build and confirm replacement before repairing the existing installation.' });
   // Core runtime must precede every Python package.
   componentsToFix.sort((a, b) => Number(b.classification === 'required') - Number(a.classification === 'required'));
 
@@ -1329,15 +1374,15 @@ app.post('/api/requirements/install-repair', async (req, res) => {
             await runSpawnCmd(PORTABLE_PYTHON_EXE, ['-m', 'venv', VENV_DIR], appendInstallDiagnostic);
           }
           // Recheck after parent installs: pip may have already supplied this dependency.
-          if ((await checkActiveRequirements()).components.find(item => item.id === comp.id)?.status !== 'ready') {
+          if ((comp.id === 'pytorch' && torchPlan) || (await checkActiveRequirements()).components.find(item => item.id === comp.id)?.status !== 'ready') {
             const packages: Record<string, string[]> = {
               faster_whisper: ['faster-whisper'], ctranslate2: ['ctranslate2'],
               openai_whisper: ['openai-whisper'],
-              pytorch: [`torch==${TORCH_VERSION}`, '--index-url', 'https://download.pytorch.org/whl/cpu', '--extra-index-url', 'https://pypi.org/simple'],
+              pytorch: [`torch==${TORCH_VERSION}${process.platform === 'darwin' ? '' : '+' + (torchPlan?.index || 'cpu')}`, '--index-url', `https://download.pytorch.org/whl/${torchPlan?.index || 'cpu'}`],
               nvidia_acceleration: ['nvidia-cublas-cu12', 'nvidia-cudnn-cu12>=9,<10'],
             };
             await runSpawnCmd(python, ['-m', 'pip', 'install', ...packages[comp.id]], appendInstallDiagnostic);
-            pythonSnapshot.invalidate();
+            invalidateRequirements();
           }
         } else if (comp.id === 'ffmpeg' || comp.id === 'ffprobe') {
           if (mediaBinariesConfigured) {
@@ -1393,7 +1438,13 @@ app.post('/api/requirements/install-repair', async (req, res) => {
       activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Running automated post-installation diagnostics...`);
       await new Promise(r => setTimeout(r, 800));
 
-      const updatedReport = await checkActiveRequirements();
+      invalidateRequirements();
+      if (torchPlan) {
+        const capability = await getBackendCapabilities('openai-whisper');
+        if (torchPlan.flavor === 'cuda' && !capability.gpuAvailable) throw new Error('CUDA PyTorch was installed but GPU initialization failed: ' + capability.reason);
+        if (torchPlan.flavor === 'cpu' && capability.cudaBuilt !== false) throw new Error('CPU PyTorch build verification failed.');
+      }
+      const updatedReport = await checkActiveRequirements(true);
       activeInstallProgress.overallProgress = 100;
       activeInstallProgress.canCancel = false;
 
@@ -2349,7 +2400,23 @@ app.post('/api/youtube/fetch-info', requireFeatures(['youtube_inspection'], 'You
 });
 
 // Download YouTube audio via yt-dlp & FFmpeg
-const youtubeImports = new Set<string>();
+const sourceImports = new Set<string>();
+mountLibriVox(app, {
+  jobs, save: () => {
+    // Import commit must report persistence failures and leave the old file intact.
+    const staging = JOBS_FILE + '.' + randomUUID() + '.tmp';
+    try { fs.writeFileSync(staging, JSON.stringify(jobs, null, 2)); fs.renameSync(staging, JOBS_FILE); }
+    finally { if (fs.existsSync(staging)) fs.unlinkSync(staging); }
+  }, root: appPath('output', 'imports', 'librivox'), probe: probeAudioFile,
+  locks: sourceImports, busy: () => step1TaskRunning || activeInstallProgress.isActive,
+  requireImport: requireFeatures(['file_import'], 'LibriVox import', req => req.params.jobId),
+});
+// Source replacement commits as one transaction. Do not mutate or remove the
+// same project while either remote importer is working.
+app.use('/api/jobs/:id', (req, res, next) => {
+  if (req.method !== 'GET' && sourceImports.has(req.params.id)) return res.status(409).json({ error: 'Wait for the source import to finish, or cancel it first.' });
+  next();
+});
 app.post('/api/youtube/download', (req, res, next) => requireFeatures(
   [req.body?.format && req.body.format !== 'best' ? 'youtube_conversion' : 'youtube_import'],
   'YouTube import', request => request.body?.jobId,
@@ -2370,7 +2437,7 @@ app.post('/api/youtube/download', (req, res, next) => requireFeatures(
   if (!['best','mp3','m4a','flac','opus','wav'].includes(format)) return res.status(400).json({error: 'Unsupported audio format.'});
   const targetJob = jobId ? jobs.find(j => j.id === jobId) : undefined;
   if (jobId && !targetJob) return res.status(404).json({error: 'Job not found'});
-  if (youtubeImports.has(jobId || '') || step1TaskRunning || targetJob?.exports?.some(e => ['queued','running'].includes(e.status))) return res.status(409).json({error: 'Wait for the active import, processing or export to complete.'});
+  if (sourceImports.has(jobId || '') || step1TaskRunning || targetJob?.exports?.some(e => ['queued','running'].includes(e.status))) return res.status(409).json({error: 'Wait for the active import, processing or export to complete.'});
   const status = await getYtDlpStatus();
   if (status.status !== 'installed') {
     return res.status(400).json({
@@ -2388,7 +2455,9 @@ app.post('/api/youtube/download', (req, res, next) => requireFeatures(
 
   if (!status.ffprobeAvailable) return res.status(400).json({error: 'FFprobe is required to verify downloaded audio. Install / Repair FFmpeg first.'});
   const importDir = appPath('output', 'imports', 'youtube', randomUUID());
-  youtubeImports.add(jobId || '');
+  // Dependency inspection above is asynchronous; recheck before taking the lock.
+  if (sourceImports.has(jobId || '') || step1TaskRunning || targetJob?.exports?.some(e => ['queued','running'].includes(e.status))) return res.status(409).json({ error: 'Wait for the active import, processing or export to complete.' });
+  sourceImports.add(jobId || '');
   try {
     const latestFile = await downloadYoutubeAudio(status.executablePath, RUNTIME_BIN_DIR, importDir, cleanUrl, format);
     const probe = probeAudioFile(latestFile.fullPath);
@@ -2482,7 +2551,7 @@ app.post('/api/youtube/download', (req, res, next) => requireFeatures(
       error: 'Download Failed',
       message: err.message || 'Failed to download audio with yt-dlp. Please check the URL and your local network.',
     });
-  } finally { youtubeImports.delete(jobId || ''); }
+  } finally { sourceImports.delete(jobId || ''); }
 });
 
 // Get configuration
@@ -2496,6 +2565,37 @@ app.post('/api/config', (req, res) => {
   currentConfig = { ...currentConfig, ...updates };
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(currentConfig, null, 2), 'utf8');
   res.json({ status: 'ok', config: currentConfig });
+});
+
+// Custom theme stylesheets are parsed as an allowlist of existing design
+// tokens. The source CSS is never served or injected into the application.
+app.get('/api/themes', (req, res) => {
+  const discovery = scanCustomThemes();
+  res.json({ ...discovery, directory: CUSTOM_THEMES_DIR });
+});
+
+app.post('/api/themes/open-folder', (req, res) => {
+  fs.mkdirSync(CUSTOM_THEMES_DIR, { recursive: true });
+  const command = isWin ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+  execFile(command, [CUSTOM_THEMES_DIR], { windowsHide: false }, (error) => {
+    if (error) console.warn(`[Themes] Could not open themes folder: ${error.message}`);
+  });
+  res.json({ status: 'ok', directory: CUSTOM_THEMES_DIR });
+});
+
+app.get('/api/themes/assets/:themeId/:assetName', (req, res) => {
+  const { themeId, assetName } = req.params;
+  if (!/^[a-z][a-z0-9-]{1,63}$/.test(themeId) || !isSafeThemeAssetName(assetName)) {
+    return res.status(400).json({ error: 'Invalid theme asset path.' });
+  }
+  const discovery = discoverCustomThemes(CUSTOM_THEMES_DIR);
+  if (!discovery.themes.some(theme => theme.id === themeId)) return res.status(404).json({ error: 'Theme not found.' });
+  const assetPath = path.join(CUSTOM_THEMES_DIR, themeId, 'assets', assetName);
+  if (!fs.existsSync(assetPath) || !fs.statSync(assetPath).isFile()) return res.status(404).json({ error: 'Theme asset not found.' });
+  const assetRelative = path.relative(fs.realpathSync(path.join(CUSTOM_THEMES_DIR, themeId)), fs.realpathSync(assetPath));
+  if (assetRelative.startsWith('..') || path.isAbsolute(assetRelative)) return res.status(404).json({ error: 'Theme asset is outside its theme folder.' });
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.sendFile(assetPath);
 });
 
 // List jobs
@@ -2580,6 +2680,127 @@ app.get('/api/jobs/:id', (req, res) => {
   res.json(job);
 });
 
+function resolvedOutputRoot(job?: AudiobookJob): string {
+  const configured = job?.outputFolderPath?.trim() || currentOutputFolder;
+  return path.isAbsolute(configured) ? path.resolve(configured) : path.resolve(APP_ROOT, configured);
+}
+
+function projectIntermediatesDir(job: AudiobookJob): string {
+  return path.join(resolvedOutputRoot(job), 'intermediates', job.id);
+}
+
+function knownIntermediatesRoots(): string[] {
+  return [...new Set([
+    path.join(path.resolve(currentOutputFolder), 'intermediates'),
+    ...jobs.map(job => path.join(resolvedOutputRoot(job), 'intermediates')),
+  ])];
+}
+
+function isManagedChild(root: string, target: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(target));
+  return relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+function removeManagedChild(root: string, target: string): boolean {
+  if (!isManagedChild(root, target)) throw new Error(`Refusing to remove a path outside the managed cleanup area: ${target}`);
+  if (!fs.existsSync(target)) return false;
+  fs.rmSync(target, { recursive: true, force: true });
+  return true;
+}
+
+function clearManagedDirectory(root: string): number {
+  if (!fs.existsSync(root)) {
+    fs.mkdirSync(root, { recursive: true });
+    return 0;
+  }
+  let removed = 0;
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (removeManagedChild(root, path.join(root, entry.name))) removed += 1;
+  }
+  return removed;
+}
+
+function cleanupInProgress(): boolean {
+  return step1TaskRunning || sourceImports.size > 0 || activeInstallProgress.isActive ||
+    activeModelDownloads.size > 0 || activeFasterWhisperInstalls.size > 0 ||
+    jobs.some(job => job.exports?.some(item => item.status === 'queued' || item.status === 'running'));
+}
+
+function cleanupBusyResponse(res: express.Response): express.Response | null {
+  if (!cleanupInProgress()) return null;
+  return res.status(409).json({ error: 'Wait for active importing, processing, exporting, installation, or downloads to finish before cleaning up files.' });
+}
+
+function resetGeneratedJobState(job: AudiobookJob): void {
+  job.mergedMp3 = null;
+  job.previewPath = undefined;
+  job.sourceKey = undefined;
+  job.preparedAudioKey = undefined;
+  job.transcriptKey = undefined;
+  job.transcription = null;
+  job.transcriptWords = undefined;
+  job.transcriptSegments = undefined;
+  job.candidates = [];
+  job.chapterDetectionKey = undefined;
+  job.pipelineSteps = undefined;
+  job.status = job.outputM4b ? 'built' : 'draft';
+}
+
+function resetImportedJobState(job: AudiobookJob): void {
+  resetGeneratedJobState(job);
+  job.parts = [];
+  job.totalDurationSeconds = 0;
+  job.totalSizeBytes = 0;
+  job.sourceFolderPath = undefined;
+  job.discoveredFiles = undefined;
+  job.unsupportedFiles = undefined;
+  job.detectedFormats = undefined;
+  job.isStreamCopyCompatible = undefined;
+  job.streamCopyIncompatibilityReason = undefined;
+  job.downloadedAudioFile = undefined;
+  job.sourceSummary = undefined;
+}
+
+function removeProjectManagedFiles(job: AudiobookJob, includeImportedSource: boolean): number {
+  let removed = 0;
+  const intermediatesRoot = path.join(resolvedOutputRoot(job), 'intermediates');
+  if (removeManagedChild(intermediatesRoot, path.join(intermediatesRoot, job.id))) removed += 1;
+  if (includeImportedSource) {
+    for (const root of [uploadDir, appPath('audiobooks')]) {
+      if (removeManagedChild(root, path.join(root, job.id))) removed += 1;
+    }
+  }
+  return removed;
+}
+
+function removeOrphanedProjectFolders(): number {
+  const activeJobIds = new Set(jobs.map(job => job.id));
+  let removed = 0;
+  for (const root of [uploadDir, appPath('audiobooks'), ...knownIntermediatesRoots()]) {
+    if (!fs.existsSync(root)) continue;
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (entry.isDirectory() && activeJobIds.has(entry.name)) continue;
+      if (removeManagedChild(root, path.join(root, entry.name))) removed += 1;
+    }
+  }
+  return removed;
+}
+
+function removeProjectTemporaryFiles(job: AudiobookJob): number {
+  const root = projectIntermediatesDir(job);
+  if (!fs.existsSync(root)) return 0;
+  let removed = 0;
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const disposableFile = entry.isFile() && (
+      /^part-\d+\.wav$/i.test(entry.name) || entry.name === 'concat.txt' ||
+      /\.(downloading|part|tmp)$/i.test(entry.name)
+    );
+    const disposableDirectory = entry.isDirectory() && /^analysis\.wav\.analysis-/i.test(entry.name);
+    if ((disposableFile || disposableDirectory) && removeManagedChild(root, path.join(root, entry.name))) removed += 1;
+  }
+  return removed;
+}
+
 // Delete job
 app.delete('/api/jobs/:id', (req, res) => {
   const index = jobs.findIndex(j => j.id === req.params.id);
@@ -2588,25 +2809,11 @@ app.delete('/api/jobs/:id', (req, res) => {
   }
 
   const job = jobs[index];
-  
-  // Cleanup files in inputs/[jobId]
-  const jobUploadDir = path.join(uploadDir, job.id);
-  if (fs.existsSync(jobUploadDir)) {
-    try {
-      fs.rmSync(jobUploadDir, { recursive: true, force: true });
-    } catch (e) {
-      console.error(`Failed to cleanup upload dir for ${job.id}:`, e);
-    }
-  }
-
-  // Also cleanup audiobooks/[jobId] if it exists
-  const jobProcessDir = appPath('audiobooks', job.id);
-  if (fs.existsSync(jobProcessDir)) {
-    try {
-      fs.rmSync(jobProcessDir, { recursive: true, force: true });
-    } catch (e) {
-      console.error(`Failed to cleanup process dir for ${job.id}:`, e);
-    }
+  if (cleanupBusyResponse(res)) return;
+  try {
+    removeProjectManagedFiles(job, true);
+  } catch (error: any) {
+    return res.status(500).json({ error: `The project could not be deleted because its working files could not be removed: ${error.message}` });
   }
 
   jobs.splice(index, 1);
@@ -2630,6 +2837,10 @@ app.post('/api/jobs/:id/step1-settings', (req, res) => {
     parts,
   } = req.body;
 
+  if (req.body.transcriptionSettings !== undefined) {
+    try { job.transcriptionSettings = validatedTranscriptionSettingsMap(req.body.transcriptionSettings); }
+    catch (error: any) { return res.status(400).json({ error: error.message }); }
+  }
   if (sourceFolderPath !== undefined) job.sourceFolderPath = sourceFolderPath;
   if (outputFolderPath !== undefined) job.outputFolderPath = outputFolderPath;
   if (chapterSource !== undefined) job.chapterSource = chapterSource;
@@ -2659,18 +2870,21 @@ const logStep1 = (msg: string) => {
     const timestamp = new Date().toLocaleTimeString();
     const formatted = `[${timestamp}] ${msg}`;
     activeStep1ProgressState.logs.push(formatted);
-    console.log(`[Step1: ${jobIdForStep1 || 'Global'}] ${formatted}`);
+    const terminalMessage = `[Step1: ${jobIdForStep1 || 'Global'}] ${formatted}`;
+    if (msg.startsWith('ERROR:')) console.error(terminalMessage);
+    else console.log(terminalMessage);
 };
 
 // Step 1: Process Step 1 (Supports both 'whisperx' and 'existing_files' workflows)
 const handleStep1Process = async (req: any, res: any) => {
+  if (activeInstallProgress.isActive) return res.status(409).json({ error: 'Wait for runtime installation to finish.' });
   if (step1TaskRunning) return res.status(409).json({ error: 'Another source is being processed or finishing cancellation.' });
   jobIdForStep1 = req.params.id;
   const job = jobs.find(j => j.id === req.params.id);
   if (!job) {
     return res.status(404).json({ error: 'Job not found' });
   }
-  if (youtubeImports.has(job.id) || job.exports?.some(e => ['running','queued'].includes(e.status))) return res.status(409).json({error: 'Wait for import or export to finish.'});
+  if (sourceImports.has(job.id) || job.exports?.some(e => ['running','queued'].includes(e.status))) return res.status(409).json({error: 'Wait for import or export to finish.'});
 
   const now = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
 
@@ -2684,6 +2898,12 @@ const handleStep1Process = async (req: any, res: any) => {
     parts = null,
   } = req.body || {};
 
+  if (req.body?.transcriptionSettings !== undefined) {
+    try { job.transcriptionSettings = validatedTranscriptionSettingsMap(req.body.transcriptionSettings); }
+    catch (error: any) { return res.status(400).json({ error: error.message }); }
+  }
+  const previousChapterSource = job.chapterSource;
+  const selectedTranscriptionSettings = job.transcriptionSettings;
   const previousMergeMethod = job.mergeMethod;
   const previousPreparedDurations = job.parts.map(part => part.durationSeconds);
 
@@ -2769,19 +2989,20 @@ const handleStep1Process = async (req: any, res: any) => {
         bitrate: media[i].bitrate, durationSeconds: media[i].durationSeconds, sizeBytes: fs.statSync(sourcePaths[i]).size,
         isProbed: true, streamSignature: media[i].streamSignature,
       }));
-      const settings = { model: selectedModelId, language: 'en', alignment: true, engine: requestedEngine, mergeMethod, chapterSource, profile: currentConfig.whisper_profile, profiles: currentConfig.profiles };
-      const key = await fingerprint(sourcePaths, settings);
+      const { sourceKey, preparedAudioKey } = await sourceProcessingKeys(sourcePaths, mergeMethod);
       signal.throwIfAborted();
-      if (job.transcriptKey === key && job.transcription && job.previewPath && fs.existsSync(job.previewPath) && job.mergedMp3?.fullPath && fs.existsSync(job.mergedMp3.fullPath)) {
-        logStep1('Reusing completed aligned transcript and reviewed chapters.');
+      const plan = chapterSource === 'existing_files' ? undefined : await transcriptionPlan({ ...job, selectedModelId, transcriptionSettings: selectedTranscriptionSettings }, preparedAudioKey, requestedEngine);
+      const cachedTranscript = plan && reusableTranscription(job, plan.requestKey);
+      const detectionKey = processingKey('chapter-detection', plan?.requestKey || '', { leadIn: currentConfig.lead_in_seconds });
+      if (cachedTranscript && previousChapterSource === chapterSource && job.chapterDetectionKey === detectionKey && !job.staleSteps?.includes('chapter_detection') && job.previewPath && fs.existsSync(job.previewPath) && job.mergedMp3?.fullPath && fs.existsSync(job.mergedMp3.fullPath)) {
+        logStep1(`Transcript cache: Hit; ${job.transcription!.engine}, ${job.transcription!.profile}, ${job.transcription!.device}, ${job.transcription!.computeType}, batch ${job.transcription!.batchSize ?? 'Off'}, beam ${job.transcription!.beamSize ?? 'native'}. Reusing reviewed chapters.`);
+        saveJobs();
         activeStep1ProgressState.isActive = false;
+        activeStep1ProgressState.canCancel = false;
         activeStep1ProgressState.stage = 'completed';
         activeStep1ProgressState.percentage = 100;
         return;
       }
-      const sourceKey = await fingerprint(sourcePaths, {});
-      const preparedAudioKey = await fingerprint(sourcePaths, { mergeMethod });
-      signal.throwIfAborted();
       const sameSource = job.sourceKey === sourceKey;
       const existingMaster = job.mergedMp3?.fullPath;
       const reusePreparedAudio = sameSource && Boolean(existingMaster && fs.existsSync(existingMaster)) && (
@@ -2794,7 +3015,7 @@ const handleStep1Process = async (req: any, res: any) => {
         job.preparedAudioKey = undefined;
       }
       job.chapters = []; job.candidates = [];
-      job.transcriptWords = []; job.transcription = null; job.transcriptKey = undefined;
+      if (!sameSource) { job.transcriptWords = []; job.transcriptSegments = []; job.transcription = null; job.transcriptKey = undefined; }
       if (!sameSource) { job.existingChapters = []; job.sourceTags = {}; job.importedMetadata = undefined; }
       const intermediatesDir = path.join(job.outputFolderPath || currentOutputFolder, 'intermediates', job.id);
       if (sourcePaths.some(p => { const relative = path.relative(intermediatesDir,p); return !relative.startsWith('..') && !path.isAbsolute(relative); })) throw new Error('Move source files outside this project’s intermediate directory before processing.');
@@ -2824,7 +3045,7 @@ const handleStep1Process = async (req: any, res: any) => {
       job.sourceKey = sourceKey;
       job.preparedAudioKey = preparedAudioKey;
       saveJobs();
-      if (!sameSource && sourcePaths.length === 1) {
+      if (!sameSource && sourcePaths.length === 1 && job.inputMethod !== 'librivox') {
         job.existingChapters = media[0].chapters;
         const tags = Object.fromEntries(Object.entries(media[0].tags).map(([k,v])=>[k.toLowerCase(),String(v)]));
         job.sourceTags = media[0].tags;
@@ -2880,6 +3101,7 @@ const handleStep1Process = async (req: any, res: any) => {
       notes: group.indices.map(i => relativeNames[i]).join(' → '),
     }));
     job.chapters = directChapters;
+    job.chapterDetectionKey = undefined;
     job.candidates = []; // No AI candidates needed
     job.pipelineSteps = completeStepRerun(job.pipelineSteps, 'extracting_chapters', now());
     job.status = 'transcribed';
@@ -2920,124 +3142,26 @@ const handleStep1Process = async (req: any, res: any) => {
   // ----------------------------------------------------
   // WORKFLOW B: Generate chapters with WhisperX
   // ----------------------------------------------------
-  const model = speechModels.find(m => m.id === selectedModelId) || speechModels[1];
-  const hw = await getHardwareInfo();
-
-  const mergedFilePath = job.previewPath;
-  setStep1Stage('transcribing_whisper', requestedEngine === 'faster-whisper'
-    ? `Using Faster Whisper with ${hw.mode === 'gpu' ? 'automatic GPU acceleration' : 'optimized CPU transcription'}...`
-    : 'Using OpenAI Whisper compatibility mode...', `Speech recognition with ${model.name} (${model.id})`);
-
-  // Do not create estimated transcript statistics. A prior demo implementation
-  // filled these values before WhisperX had actually succeeded, which made a
-  // failed run look partially complete. They are set from real JSON below.
-  delete job.transcription;
-
-  job.logs.push({
-    timestamp: now(),
-    level: 'INFO',
-    message: `${requestedEngine === 'faster-whisper' ? 'Faster Whisper' : 'OpenAI Whisper compatibility mode'} started with '${model.name}' (${hw.mode === 'gpu' ? 'GPU preferred' : 'CPU'}).`,
-  });
-
+  const model = plan!.model;
+  setStep1Stage('transcribing_whisper', `Using ${plan!.engine} with ${model.name}...`, 'Speech recognition');
   let generatedCandidates: ChapterCandidate[] = [];
-
   try {
-    if (!fs.existsSync(mergedFilePath)) {
-        const errorMsg = new Error('The review preview was not created, so speech recognition cannot begin.');
-        failStep1Stage(errorMsg);
-        return;
-    }
-    
-    const venvPython = getVenvPython();
-    if (!fs.existsSync(venvPython)) {
-        throw new Error("The private transcription runtime is not ready. Open System Requirements and choose Install Missing Requirements.");
-    }
-
-    fs.mkdirSync(TORCH_CACHE_DIR, { recursive: true });
-    fs.mkdirSync(MATPLOTLIB_CACHE_DIR, { recursive: true });
-    fs.mkdirSync(OPENAI_WHISPER_MODEL_CACHE_DIR, { recursive: true });
-    const normalizedPath = path.join(intermediatesDir, `${path.parse(mergedFilePath).name}.transcript.json`);
-    const runtimeEnv = {
-      ...transcriptionRuntimeEnv(),
-      HF_HOME: WHISPERX_MODEL_CACHE_DIR,
-      TORCH_HOME: TORCH_CACHE_DIR,
-      MPLCONFIGDIR: MATPLOTLIB_CACHE_DIR,
-    };
-    let normalized: NormalizedTranscription | undefined;
-    let lastEngineError: unknown;
-    const runEngine = async (engine: TranscriptionEngineId, device: 'cpu' | 'cuda', computeType: string) => {
-      logStep1(`Running ${engine === 'faster-whisper' ? 'Faster Whisper' : 'OpenAI Whisper'} on ${device.toUpperCase()} (${computeType}).`);
-      return transcriptionEngines[engine].transcribe({
-        pythonPath: venvPython, audioPath: mergedFilePath, outputPath: normalizedPath,
-        modelId: engine === 'openai-whisper' && model.id === 'large-v3-turbo' ? 'turbo' : model.id,
-        fasterModelRepository: FASTER_WHISPER_REPOSITORIES[model.id], engine,
-        device, computeType, fasterCacheDir: WHISPERX_MODEL_CACHE_DIR,
-        openAiCacheDir: path.join(OPENAI_WHISPER_MODEL_CACHE_DIR, model.id), language: 'en', signal, env: runtimeEnv,
-      });
-    };
-    const runOpenAiCompatibility = async () => {
-      const attempts: Array<{ device: 'cpu' | 'cuda'; computeType: string }> = hw.mode === 'gpu'
-        ? [{ device: 'cuda', computeType: 'float16' }, { device: 'cpu', computeType: 'float32' }]
-        : [{ device: 'cpu', computeType: 'float32' }];
-      for (const attempt of attempts) {
-        try { return await runEngine('openai-whisper', attempt.device, attempt.computeType); }
-        catch (error) {
-          lastEngineError = error;
-          console.error(`[Transcription] OpenAI Whisper ${attempt.device} initialization/run failed:`, error);
-          if (attempt.device === 'cuda') logStep1('OpenAI Whisper GPU acceleration was unavailable. Trying compatibility mode on CPU.');
-        }
-      }
-      return undefined;
-    };
-
-    if (requestedEngine === 'faster-whisper') {
-      for (const attempt of chooseFasterWhisperAttempts(hw.mode === 'gpu')) {
-        try {
-          normalized = await runEngine('faster-whisper', attempt.device, attempt.computeType);
-          break;
-        } catch (error: any) {
-          lastEngineError = error;
-          console.error(`[Transcription] Faster Whisper ${attempt.device} initialization/run failed:`, error);
-          if (attempt.device === 'cuda') {
-            logStep1('GPU acceleration was unavailable. Using optimized CPU transcription instead.');
-            activeStep1ProgressState.liveStatusMessage = 'GPU acceleration was unavailable. Using CPU transcription instead.';
-          }
-        }
-      }
-      if (!normalized) {
-        logStep1('Faster Whisper was unavailable. Trying OpenAI Whisper compatibility mode.');
-        normalized = await runOpenAiCompatibility();
-      }
-    } else {
-      normalized = await runOpenAiCompatibility();
-    }
-    if (!normalized) throw lastEngineError || new Error('No transcription engine could be initialized.');
-
-      const transcriptSegments = normalized.segments;
-      const transcriptWords = buildTranscriptWords(transcriptSegments);
-      if (transcriptSegments.some((segment: any) => segment.text?.trim() && !segment.words?.some((word: any) => Number.isFinite(word.start) && Number.isFinite(word.end)))) throw new Error('The transcription engine returned speech segments without word timestamps');
-      job.transcriptWords = transcriptWords;
-      job.transcriptSegments = transcriptSegments;
-      job.transcriptKey = key;
-      const transcriptWordCount = transcriptSegments.reduce((total: number, segment: any) => {
-        if (Array.isArray(segment.words)) return total + segment.words.length;
-        return total + (typeof segment.text === 'string' ? segment.text.trim().split(/\s+/).filter(Boolean).length : 0);
-      }, 0);
-      job.transcription = {
-        model: model.name,
-        profile: model.id,
-        language: normalized.language || 'en',
-        engine: normalized.engine,
-        device: normalized.device,
-        computeType: normalized.computeType,
-        segmentsCount: transcriptSegments.length,
-        wordsCount: transcriptWordCount,
-        completedAt: now(),
-      };
+      if (!cachedTranscript) {
+        const replacement = await transcribeExistingPreview(job, signal, plan);
+        signal.throwIfAborted();
+        job.transcriptWords = replacement.words;
+        job.transcriptSegments = replacement.segments;
+        job.transcription = replacement.transcription;
+        job.transcriptKey = replacement.transcriptKey;
+      } else logStep1('Transcript cache: Hit; reusing aligned words for chapter detection.');
+      const transcriptSegments = job.transcriptSegments!;
+      const transcriptWords = job.transcriptWords!;
+      const transcriptWordCount = job.transcription!.wordsCount;
       job.pipelineSteps = completeStepRerun(job.pipelineSteps, 'transcribing_whisper', now());
       logStep1(`Speech recognition completed: ${transcriptSegments.length} segments and ${transcriptWordCount} words aligned.`);
       setStep1Stage('detecting_chapters', 'Finding chapter headings and refining their timestamps.', 'Detect chapter candidates');
-      generatedCandidates = buildChapterCandidates(transcriptSegments, transcriptWords, normalized.engine);
+      generatedCandidates = buildChapterCandidates(transcriptSegments, transcriptWords, job.transcription!.engine!);
+      job.chapterDetectionKey = detectionKey;
       logStep1(`Chapter candidate detection completed: ${generatedCandidates.length} candidate markers found.`);
       job.pipelineSteps = completeStepRerun(job.pipelineSteps, 'detecting_chapters', now());
   } catch (err: any) {
@@ -3136,6 +3260,7 @@ app.post('/api/jobs/:id/rerun/:step', async (req, res) => {
   const step = req.params.step as RerunnablePipelineStep;
   if (!job) return res.status(404).json({ error: 'Job not found' });
   if (!rerunnableSteps.has(step)) return res.status(400).json({ error: 'This processing step cannot be rerun independently.' });
+  if (activeInstallProgress.isActive) return res.status(409).json({ error: 'Wait for runtime installation to finish.' });
   if (step1TaskRunning) return res.status(409).json({ error: 'Another processing step is already running.' });
   if (!canRerunStep(job, step)) return res.status(400).json({ error: 'Required input for this step is unavailable.' });
   if ((step === 'detecting_chapters' || step === 'extracting_chapters') && hasManualChapterWork(job) && req.body?.confirmReplaceManualChapters !== true) {
@@ -3184,7 +3309,7 @@ app.post('/api/jobs/:id/rerun/:step', async (req, res) => {
         job.transcriptSegments = replacement.segments;
         job.transcriptWords = replacement.words;
         job.transcription = replacement.transcription;
-        job.transcriptKey = undefined;
+        job.transcriptKey = replacement.transcriptKey;
       } else if (step === 'detecting_chapters') {
         const words = job.transcriptWords?.length ? job.transcriptWords : buildTranscriptWords(job.transcriptSegments!);
         const candidates = buildChapterCandidates(job.transcriptSegments!, words, job.transcription?.engine || 'openai-whisper');
@@ -3197,6 +3322,7 @@ app.post('/api/jobs/:id/rerun/:step', async (req, res) => {
         const replacementChapters = applyDefaultChapterEnds(chapters, job.totalDurationSeconds);
         const replacementMetadata = generateFFMetaContent(replacementChapters, job.totalDurationSeconds, job.metadata);
         controller.signal.throwIfAborted();
+        job.chapterDetectionKey = processingKey('chapter-detection', job.transcription?.requestKey || '', { leadIn: currentConfig.lead_in_seconds });
         job.candidates = candidates;
         job.chapters = replacementChapters;
         job.ffmetaContent = replacementMetadata;
@@ -3214,6 +3340,7 @@ app.post('/api/jobs/:id/rerun/:step', async (req, res) => {
         const replacementMetadata = generateFFMetaContent(replacementChapters, job.totalDurationSeconds, job.metadata);
         controller.signal.throwIfAborted();
         job.chapterStructure = structure.mode;
+        job.chapterDetectionKey = undefined;
         job.candidates = [];
         job.chapters = replacementChapters;
         job.ffmetaContent = replacementMetadata;
@@ -3500,6 +3627,7 @@ app.post('/api/jobs/:id/build-m4b', requireFeatures(['audio_export'], 'Audio exp
   job.outputM4b = null; job.validation = null;
   job.exports = formats.map(format => ({ format, status: 'queued', progress: 0 }));
   const snapshot = JSON.parse(JSON.stringify(job));
+  const exportPlan = planChapterExport(snapshot.chapters, job.totalDurationSeconds);
 
   const safeName = (job.name || 'audiobook').replace(/[<>:"/\\|?*]/g, '_');
   const runId = Date.now();
@@ -3510,7 +3638,7 @@ app.post('/api/jobs/:id/build-m4b', requireFeatures(['audio_export'], 'Audio exp
       const lossy = !['flac','wav'].includes(item.format);
       const selectedRate = req.body.bitrates?.[item.format] ?? defaultBitrate(snapshot.sourceBitrate);
       if (lossy && !bitrateOptions.includes(Number(selectedRate) as any)) throw new Error('Unsupported bitrate selection');
-      const encodingBitrate = req.body.bitrate || ((req.body.convert === true || !canCopy(snapshot.sourceCodec,item.format)) && lossy ? selectedRate + 'k' : undefined);
+      const encodingBitrate = req.body.bitrate || ((exportPlan.trimmed || req.body.convert === true || !canCopy(snapshot.sourceCodec,item.format)) && lossy ? selectedRate + 'k' : undefined);
       let cover: string | null | undefined;
       if (JSON.stringify(snapshot.metadata?.cover) !== JSON.stringify(snapshot.importedMetadata?.cover)) {
         cover = null;
@@ -3570,7 +3698,10 @@ app.post('/api/jobs/:id/validate', requireFeatures(['output_validation'], 'Outpu
   const chaptersCount = inspected.chapters.length;
   const duration = inspected.durationSeconds;
   const origDuration = job.mergedMp3 ? job.mergedMp3.duration : job.totalDurationSeconds;
-  const diff = Math.abs(duration - origDuration);
+  let expectedTimeline: ReturnType<typeof planChapterExport>;
+  try { expectedTimeline = planChapterExport(job.chapters, origDuration); }
+  catch (error: any) { return res.status(400).json({ error: error.message }); }
+  const diff = Math.abs(duration - expectedTimeline.durationSeconds);
 
   let status: 'PASS' | 'WARNING' | 'FAIL' = 'PASS';
   let reason: string | undefined = 'File metadata read back. Player navigation has not been tested.';
@@ -3579,7 +3710,7 @@ app.post('/api/jobs/:id/validate', requireFeatures(['output_validation'], 'Outpu
     status = 'FAIL';
     reason = 'No embedded chapters detected in container.';
   } else if (chaptersCount !== job.chapters.length || inspected.chapters.some((c: any, i: number) => {
-    const reviewed = job.chapters[i];
+    const reviewed = expectedTimeline.chapters[i];
     const checkEnd = ['m4b', 'm4a', 'mp3'].includes(job.outputM4b?.format || 'm4b');
     return c.title !== reviewed.title
       || Math.abs(parseTimestampToMs(c.start) - parseTimestampToMs(reviewed.start)) > 25
@@ -3589,7 +3720,7 @@ app.post('/api/jobs/:id/validate', requireFeatures(['output_validation'], 'Outpu
     reason = 'Exported chapters do not match the currently reviewed list.';
   } else if (diff > 0.15) {
     status = 'WARNING';
-    reason = `Duration mismatch vs source: diff ${diff.toFixed(2)}s`;
+    reason = `Duration mismatch vs reviewed chapter ranges: diff ${diff.toFixed(2)}s`;
   }
 
   job.validation = {
@@ -3613,65 +3744,118 @@ app.post('/api/jobs/:id/validate', requireFeatures(['output_validation'], 'Outpu
   res.json({ status: 'ok', validation: job.validation });
 });
 
-// Purge Temporary / Intermediate Files (replicates app/purge.py)
+// Global storage cleanup. These actions only touch SwissMouse-managed folders.
+app.post('/api/cleanup', (req, res) => {
+  if (cleanupBusyResponse(res)) return;
+  const { cleanupType, confirmation } = req.body || {};
+
+  try {
+    if (cleanupType === 'cache') {
+      const removed = clearManagedDirectory(appPath('.cache'));
+      fs.mkdirSync(appPath('.cache', 'work'), { recursive: true });
+      return res.json({ status: 'ok', message: `Cache cleared${removed ? ` (${removed} item${removed === 1 ? '' : 's'} removed)` : ''}.`, jobs });
+    }
+
+    if (cleanupType === 'logs') {
+      const removed = clearManagedDirectory(appPath('logs'));
+      return res.json({ status: 'ok', message: `Saved technical logs cleared${removed ? ` (${removed} item${removed === 1 ? '' : 's'} removed)` : ''}.`, jobs });
+    }
+
+    if (cleanupType === 'orphans') {
+      const removed = removeOrphanedProjectFolders();
+      return res.json({
+        status: 'ok',
+        message: removed ? `Removed ${removed} orphaned working folder${removed === 1 ? '' : 's'}.` : 'No orphaned project files were found.',
+        jobs,
+      });
+    }
+
+    if (cleanupType === 'all-working') {
+      if (confirmation !== 'CLEAR ALL WORKING FILES') {
+        return res.status(400).json({ error: "Confirmation mismatch. Type 'CLEAR ALL WORKING FILES' exactly to continue." });
+      }
+      let removed = clearManagedDirectory(uploadDir) + clearManagedDirectory(appPath('audiobooks'));
+      for (const root of knownIntermediatesRoots()) removed += clearManagedDirectory(root);
+      removed += clearManagedDirectory(appPath('.cache'));
+      fs.mkdirSync(appPath('.cache', 'work'), { recursive: true });
+      for (const job of jobs) {
+        resetImportedJobState(job);
+        job.logs.push({
+          timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+          level: 'WARNING',
+          message: 'All managed source copies and generated working files were removed with Free up space. Book details, chapter edits, and finished exports were kept.',
+        });
+      }
+      saveJobs();
+      return res.json({ status: 'ok', message: `All working files and cache were cleared${removed ? ` (${removed} item${removed === 1 ? '' : 's'} removed)` : ''}.`, jobs });
+    }
+
+    return res.status(400).json({ error: 'Unknown cleanup option.' });
+  } catch (error: any) {
+    return res.status(500).json({ error: `Cleanup could not be completed: ${error.message}` });
+  }
+});
+
+// Cleanup files for one saved book.
 app.post('/api/jobs/:id/purge', (req, res) => {
   const job = jobs.find(j => j.id === req.params.id);
   if (!job) {
     return res.status(404).json({ error: 'Job not found' });
   }
 
+  if (cleanupBusyResponse(res)) return;
+
   const { purgeType, confirmation } = req.body;
   const now = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
 
-  if (purgeType === 'job') {
+  try {
+  if (purgeType === 'source') {
     const requiredPhrase = `PURGE ${job.name}`;
     if (confirmation !== requiredPhrase) {
       return res.status(400).json({
-        error: `Confirmation mismatch. Must type '${requiredPhrase}' exactly to purge job source data.`,
+        error: `Confirmation mismatch. Type '${requiredPhrase}' exactly to remove this book's source copies.`,
       });
     }
 
-    job.mergedMp3 = null;
-    job.previewPath = undefined;
-    job.sourceKey = undefined;
-    job.preparedAudioKey = undefined;
-    job.transcription = null;
-    job.parts = [];
-    job.status = job.outputM4b ? 'built' : 'draft';
-    saveJobs();
+    const removed = removeProjectManagedFiles(job, true);
+    resetImportedJobState(job);
     job.logs.push({
       timestamp: now(),
       level: 'WARNING',
-      message: `Full job purge executed (Input parts & intermediates wiped; Output M4B and CSV retained).`,
+      message: 'Managed source copies and generated working files were removed. Original source files, book details, chapter edits, and finished exports were kept.',
     });
+    saveJobs();
 
-    return res.json({ status: 'ok', message: `Job ${job.name} source data successfully purged.` });
+    return res.json({ status: 'ok', message: `Working files for ${job.name} were removed${removed ? ` (${removed} folder${removed === 1 ? '' : 's'})` : ''}.`, jobs });
   }
 
   if (purgeType === 'intermediate') {
-    job.mergedMp3 = null;
-    job.previewPath = undefined;
-    job.sourceKey = undefined;
-    job.preparedAudioKey = undefined;
-    job.transcription = null;
-    job.status = job.outputM4b ? 'built' : 'draft';
-    saveJobs();
+    const removed = removeProjectManagedFiles(job, false);
+    resetGeneratedJobState(job);
     job.logs.push({
       timestamp: now(),
       level: 'INFO',
-      message: `Intermediate files purged (Merged MP3 & Whisper transcript removed).`,
+      message: 'Generated audio and transcript files were removed. Imported source copies were kept.',
     });
-    return res.json({ status: 'ok', message: 'Intermediates successfully purged.' });
+    saveJobs();
+    return res.json({ status: 'ok', message: removed ? 'Generated files for this book were removed.' : 'No generated files were found for this book.', jobs });
   }
 
-  // purgeType === 'temp' (PCM work)
-  job.logs.push({
-    timestamp: now(),
-    level: 'INFO',
-    message: `Temporary PCM work files purged.`,
-  });
+  if (purgeType === 'temp') {
+    const removed = removeProjectTemporaryFiles(job);
+    job.logs.push({
+      timestamp: now(),
+      level: 'INFO',
+      message: removed ? `Removed ${removed} temporary processing item${removed === 1 ? '' : 's'}.` : 'Temporary file cleanup completed; no disposable files were found.',
+    });
+    saveJobs();
+    return res.json({ status: 'ok', message: removed ? `Removed ${removed} temporary item${removed === 1 ? '' : 's'} for this book.` : 'No temporary files were found for this book.', jobs });
+  }
 
-  res.json({ status: 'ok', message: 'Temporary PCM files purged.' });
+  return res.status(400).json({ error: 'Unknown book cleanup option.' });
+  } catch (error: any) {
+    return res.status(500).json({ error: `Cleanup could not be completed: ${error.message}` });
+  }
 });
 
 // Export CSV / FFMETA endpoints
@@ -3794,6 +3978,8 @@ app.post('/api/jobs/:id/import/chapters-csv', (req, res) => {
 // Vite Middleware / Static Server
 // ----------------------------------------------------
 async function startServer() {
+  const initialThemes = scanCustomThemes();
+  console.log(`[Themes] Loaded ${initialThemes.themes.length} custom theme(s) from ${CUSTOM_THEMES_DIR}.`);
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({

@@ -1,0 +1,12 @@
+/* This example overrides only a few tokens; all others inherit from Light. */
+:root {
+  --sm-app-bg: #f0edf5;
+  --sm-app-bg-top: #f8f6fa;
+  --sm-accent: #74558f;
+  --sm-accent-hover: #5d4374;
+  --sm-accent-soft: #e9def1;
+  --sm-accent-text: #563b6c;
+  --sm-ring: rgba(116, 85, 143, 0.38);
+  --sm-transcript-highlight: #e9def1;
+  --sm-transcript-highlight-text: #422e53;
+}

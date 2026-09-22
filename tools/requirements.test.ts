@@ -1,11 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateRequirementReadiness, selectedMissingRequirements, expandRequirementSelection } from './requirements';
+import { evaluateRequirementReadiness, selectedMissingRequirements, expandRequirementSelection, parseNvidiaCudaVersion, pytorchBuildOptions } from './requirements';
 import type { BaseRequirementItem } from '../src/types';
 const component = (id: string, ready = false, required = false): BaseRequirementItem => ({ id, name: id, purpose: id, classification: required ? 'required' : 'optional', status: ready ? 'ready' : 'missing', isAppManaged: true });
 const options = { hasNvidiaGpu: false, accelerationPackagesReady: false };
 const core = [component('python', true, true), component('ffmpeg', true, true), component('ffprobe', true, true)];
 const faster = [component('faster_whisper', true), component('ctranslate2', true)];
+
+test('driver compatibility parser accepts old CUDA and new CUDA UMD headers', () => {
+ assert.equal(parseNvidiaCudaVersion('| NVIDIA-SMI 580.65.06 Driver Version: 580.65.06 CUDA Version: 13.0 |'), '13.0');
+ const current = '| NVIDIA-SMI 616.56 KMD Version: 616.56 CUDA UMD Version: 13.4 |';
+ assert.equal(parseNvidiaCudaVersion(current), '13.4');
+ assert.equal(parseNvidiaCudaVersion('CUDA   UMD Version :  13.4'), '13.4');
+ const build = pytorchBuildOptions({ hasNvidiaGpu: true, platform: 'win32', arch: 'x64', computeCapability: 8.6, cudaVersion: parseNvidiaCudaVersion(current) });
+ assert.equal(build.cudaAvailable, true);
+ assert.equal(build.cudaIndex, 'cu126');
+});
+
+test('missing CUDA information never borrows another driver or tool version', () => {
+ for (const output of ['', 'NVIDIA-SMI 616.56 KMD Version: 616.56', 'CUDA UMD Version: N/A', 'CUDA Version: N/A V13.4', 'CUDA Version: unknown']) {
+  assert.equal(parseNvidiaCudaVersion(output), undefined);
+  assert.equal(pytorchBuildOptions({ hasNvidiaGpu: true, platform: 'win32', arch: 'x64', computeCapability: 8.6, cudaVersion: parseNvidiaCudaVersion(output) }).cudaAvailable, false);
+ }
+});
 test('complete CPU path is green despite missing optional compatibility engine', () => {
  assert.equal(evaluateRequirementReadiness([...core, ...faster, component('openai_whisper')], options).statusColor, 'green');
 });

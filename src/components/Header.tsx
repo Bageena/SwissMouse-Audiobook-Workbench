@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AudiobookJob } from '../types';
-import { Plus, Settings, Trash2, BookOpen, Terminal, Wrench, AlertCircle } from 'lucide-react';
+import { Plus, Settings, Trash2, BookOpen, Terminal, Wrench, MoreHorizontal, ChevronDown } from 'lucide-react';
 import swissMouseLogo from '../assets/swissmouse-logo-concept.png';
 
 interface HeaderProps {
@@ -53,139 +53,96 @@ export const Header: React.FC<HeaderProps> = ({
     };
   }, []);
   return (
-    <header className="bg-stone-900 text-stone-100 border-b border-stone-800 sticky top-0 z-30 shadow-md">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-        {/* Logo & Title */}
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-lg overflow-hidden shadow-inner ring-1 ring-amber-400/50 bg-stone-950">
+    <header className="app-header sticky top-0 z-30 border-b border-stone-200/80 bg-white/95 text-stone-900 shadow-sm backdrop-blur-xl">
+      <div className="mx-auto flex min-h-16 max-w-[1480px] items-center gap-3 px-3 py-2 sm:px-5 lg:px-7">
+        <button type="button" onClick={onCloseProject} className="flex min-w-0 items-center gap-2.5 rounded-xl p-1 text-left transition hover:bg-stone-100" title="Go to your books">
+          <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-stone-950 shadow-sm ring-1 ring-stone-200">
             <img
               src={swissMouseLogo}
               alt="SwissMouse logo"
               className="w-full h-full object-cover"
             />
           </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <span className="font-bold text-lg tracking-tight text-stone-50">
-                SwissMouse
-              </span>
-              <span className="text-xs px-2 py-0.5 rounded bg-stone-800 text-stone-300 font-mono">
-                v0.1.0-alpha.3
-              </span>
-            </div>
-            <p className="text-xs text-stone-400 hidden sm:block">
-              The open source audiobook workbench.
-            </p>
+          <div className="hidden min-w-0 sm:block">
+            <span className="block text-base font-bold tracking-tight text-stone-950">SwissMouse</span>
+            <span className="block text-[11px] font-medium text-stone-500">The Open Source Audiobook Workbench</span>
           </div>
-        </div>
+        </button>
 
-        {/* Center: Active Job Display / Navigation */}
-        <div className="flex items-center space-x-2">
+        <div className="min-w-0 flex-1 sm:ml-2">
           {currentJob ? (
-            <div className="flex items-center bg-stone-800/80 rounded-lg border border-stone-700/60 px-3 py-1.5 space-x-3">
-              <div className="flex items-center space-x-2">
-                <BookOpen className="w-4 h-4 text-amber-500" />
-                <span className="text-sm font-bold text-stone-50 truncate max-w-[200px]">
-                  {currentJob.name}
-                </span>
+            <div className="flex min-w-0 items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 sm:max-w-md">
+              <BookOpen className="h-4 w-4 shrink-0 text-amber-700" />
+              <div className="min-w-0">
+                <span className="block truncate text-sm font-semibold text-stone-900">{currentJob.name}</span>
+                <button onClick={onCloseProject} className="block text-[11px] font-medium text-stone-500 hover:text-amber-800">Switch book</button>
               </div>
-              <div className="h-4 w-px bg-stone-700"></div>
-              <button 
-                onClick={onCloseProject}
-                className="text-[10px] uppercase tracking-wider font-bold text-stone-400 hover:text-white transition-colors cursor-pointer"
-              >
-                Switch Book
-              </button>
             </div>
           ) : (
-            <div className="flex items-center bg-stone-800/80 rounded-lg border border-stone-700/60 px-3 py-1.5">
-              <span className="text-xs font-bold text-stone-500 uppercase tracking-widest">
-                No Active Project
-              </span>
-            </div>
-          )}
-
-          {!currentJob && (
-            <button
-              id="btn-new-job"
-              onClick={onOpenNewJob}
-              className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-600 hover:bg-amber-500 text-white transition-colors cursor-pointer"
-              title="Create a new audiobook project"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Add Book</span>
-            </button>
+            <div className="text-sm font-medium text-stone-500">Your audiobook library</div>
           )}
         </div>
 
-        {/* Right actions: Requirements, Purge, Settings, Logs toggle */}
-        <div className="flex items-center space-x-2 ml-4 sm:ml-6">
+        <button
+          id="btn-new-job"
+          onClick={onOpenNewJob}
+          className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl bg-amber-700 px-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-800 active:translate-y-px"
+          title="Create a new audiobook project"
+        >
+          <Plus className="h-4 w-4" />
+          <span className="hidden sm:inline">Add book</span>
+        </button>
+
+        <details className="tools-menu relative shrink-0">
+          <summary className="inline-flex min-h-10 cursor-pointer list-none items-center gap-1.5 rounded-xl border border-stone-200 bg-white px-3 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+            <MoreHorizontal className="h-4 w-4" />
+            <span className="hidden md:inline">More</span>
+            <ChevronDown className="hidden h-3.5 w-3.5 md:block" />
+          </summary>
+          <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-64 overflow-hidden rounded-2xl border border-stone-200 bg-white p-2 shadow-xl">
+            <p className="px-2 pb-1.5 pt-1 text-[10px] font-bold uppercase tracking-[0.14em] text-stone-400">Tools & settings</p>
           <button
             id="btn-open-requirements"
             onClick={onOpenRequirements}
-            className={`flex items-center space-x-1.5 px-2.5 py-1.5 text-xs rounded-lg border transition-colors cursor-pointer relative ${
-              statusColor === 'red'
-                ? 'border-red-500 bg-red-950/40 text-red-300 hover:bg-red-900/50'
-                : statusColor === 'yellow'
-                ? 'border-amber-500 bg-amber-950/40 text-amber-300 hover:bg-amber-900/50'
-                : 'border-stone-700 text-stone-300 hover:bg-stone-800 hover:text-stone-100'
-            }`}
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-stone-700 transition hover:bg-stone-100"
             title="Check or repair the local tools needed to process audio"
           >
-            <Wrench className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Requirements</span>
-            {statusColor === 'red' ? (
-              <span className="flex h-2 w-2 relative -mr-0.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-              </span>
-            ) : statusColor === 'yellow' ? (
-              <span className="flex h-2 w-2 relative -mr-0.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-              </span>
-            ) : (
-              <span className="flex h-2 w-2 relative -mr-0.5">
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-            )}
+            <Wrench className="h-4 w-4 text-stone-500" />
+            <span className="flex-1"><span className="block font-semibold">System check</span><span className="block text-[11px] text-stone-500">Audio tools and models</span></span>
+            <span className={`h-2.5 w-2.5 rounded-full ${statusColor === 'red' ? 'bg-red-500' : statusColor === 'yellow' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
           </button>
 
           <button
             id="btn-open-purge"
             onClick={onOpenPurge}
-            disabled={!currentJob}
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 text-xs rounded-lg border border-stone-700 text-stone-300 hover:bg-stone-800 hover:text-red-400 transition-colors disabled:opacity-40 cursor-pointer"
-            title="Free disk space by removing generated working files"
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-stone-700 transition hover:bg-red-50 hover:text-red-700"
+            title="Clear cache and remove SwissMouse working files"
           >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Purge</span>
+            <Trash2 className="h-4 w-4" />
+            <span><span className="block font-semibold">Free up space</span><span className="block text-[11px] text-stone-500">Cache and file cleanup</span></span>
           </button>
 
           <button
             id="btn-open-settings"
             onClick={onOpenSettings}
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 text-xs rounded-lg border border-stone-700 text-stone-300 hover:bg-stone-800 hover:text-stone-100 transition-colors cursor-pointer"
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-stone-700 transition hover:bg-stone-100"
             title="Change advanced default settings"
           >
-            <Settings className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Config</span>
+            <Settings className="h-4 w-4" />
+            <span><span className="block font-semibold">Settings</span><span className="block text-[11px] text-stone-500">Processing defaults</span></span>
           </button>
 
           <button
             id="btn-toggle-terminal"
             onClick={onToggleLogs}
-            className={`flex items-center space-x-1 px-2.5 py-1.5 text-xs rounded-lg border transition-colors cursor-pointer ${
-              showLogs
-                ? 'bg-stone-800 border-amber-500 text-amber-400'
-                : 'border-stone-700 text-stone-400 hover:bg-stone-800 hover:text-stone-200'
-            }`}
+            className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${showLogs ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}
             title="Show or hide technical activity logs"
           >
-            <Terminal className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Logs</span>
+            <Terminal className="h-4 w-4" />
+            <span><span className="block font-semibold">Technical logs</span><span className={`block text-[11px] ${showLogs ? 'text-stone-300' : 'text-stone-500'}`}>{showLogs ? 'Currently visible' : 'Troubleshooting details'}</span></span>
           </button>
-        </div>
+          </div>
+        </details>
       </div>
     </header>
   );

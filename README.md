@@ -83,9 +83,24 @@ See [verified format support and chapter repair](FORMAT-SUPPORT.md) for the inpu
 - Download the best available YouTube audio stream without re-encoding by default and process it through the same workflow
 - Preserve original audio files; the app is designed not to overwrite, alter, or automatically delete them
 - Run locally as a Node.js web application
+- Choose from six built-in appearance themes or create a safe token-based custom theme
 - Open-source code available for inspection, learning, testing, and improvement
 
+## Themes and customization
+
+Open **Settings > Appearance / Theme** to choose Light, Parchment, Blue, Slate, Forest, Dark, or any valid local custom theme. SwissMouse remembers the selection between launches.
+
+To create a theme, use **Open Themes Folder**, copy the included `_template` folder, and edit its manifest and approved design tokens. Return to Settings and choose **Reload Themes** to apply additions or edits without restarting. Custom themes inherit missing values from a built-in theme and cannot change application layout, processing, or behavior.
+
+See the [Custom Themes guide](CUSTOM-THEMES.md) for the complete setup process, manifest format, supported variables, optional assets, validation rules, troubleshooting, and sharing instructions.
+
 ## Player waveform
+
+Chapter numbering defaults to **Numeric**. **Chapter numbers** switches automatic titles between Numeric (`Chapter 1`), Roman (`Chapter I`), and Written (`Chapter One`) immediately, without changing timestamps or manually edited names. The choice is retained per project for the current browser session. Save the chapter list to persist the resulting titles.
+
+Waveform seeks, chapter start/end edits, and transcript selections update both transcript views without moving keyboard focus into the main Transcript. During playback, the Interactive Transcription Window follows the current word and loads a bounded neighborhood of words. Automatic scrolling is confined to each transcript pane.
+
+Exports now use the saved chapter start/end ranges. A gap between one chapter's end and the next start is omitted; a shortened final chapter also removes the trailing audio. Output chapter positions and companion CUE positions are rebased onto the shortened recording. Overlapping ranges are rejected rather than duplicated. Default ends sit 1 ms before the next start for chapter metadata; that conventional separator is not treated as an audio cut. Precise cuts require re-encoding, even with **Keep original audio when possible** selected. Unedited, continuous ranges retain the existing stream-copy path. Source files and editor timestamps are unchanged.
 
 Chapter Review includes a Canvas waveform with a five-minute default view, zooms from 30 seconds to Full Book, chapter flags, and click or keyboard seeking. Scroll over the waveform or use its pan slider to inspect another position; **Return to playhead** resumes automatic following. Chapter flags use the existing chapter navigation, and seeking uses the existing transcript word lookup without editing chapter timestamps. A local replacement audio file plays normally but has no generated waveform.
 
@@ -111,6 +126,18 @@ If you choose to test the application, use copies of your files and verify the f
 
 ## How It Works
 
+### LibriVox imports
+
+Import Options now offers **Audio Folder**, **From YouTube**, and **LibriVox**. Search the official LibriVox catalog by title, author last name, or genre, review a book's readers and sections, and import it into the normal chapter workflow. Existing metadata is preserved unless you explicitly choose replacement. See the [LibriVox import guide](LIBRIVOX.md) for pagination, API limits, cancellation, metadata mapping, public-domain considerations, and troubleshooting.
+
+### Local processing
+
+### LibriVox imports
+
+Import Options now offers **Audio Folder**, **From YouTube**, and **LibriVox**. Search the official LibriVox catalog by title, author last name, or genre, review a book's readers and sections, and import it into the normal chapter workflow. Existing metadata is preserved unless you explicitly choose replacement. See the [LibriVox import guide](LIBRIVOX.md) for pagination, API limits, cancellation, metadata mapping, public-domain considerations, and troubleshooting.
+
+### Local processing
+
 SwissMouse is intended to run locally rather than as a public cloud service.
 
 You start the application on your computer and access its interface through a web browser. The browser provides the GUI, while file processing takes place on your local system.
@@ -119,7 +146,9 @@ The application is primarily intended for Windows because its launcher and origi
 
 ## Local transcription architecture
 
-Faster Whisper is the default and recommended engine. It runs the selected Whisper model through CTranslate2, uses CPU INT8 on CPU-only systems, and first attempts FP16 acceleration when a compatible NVIDIA GPU is detected. GPU initialization is verified when transcription starts; if it fails, the same job automatically retries on CPU without changing the original audio timeline.
+Faster Whisper is the default and recommended engine. SwissMouse queries CTranslate2's CUDA devices and supported compute types independently of PyTorch. It normally uses supported CUDA FP16 or CPU INT8. GPU model initialization is verified when transcription starts; memory failures reduce experimental batches, then try supported GPU quantization before CPU fallback. Unrelated errors are reported rather than silently switching engines.
+
+Under **Transcription & model settings → Advanced transcription**, batching defaults to **Off** and Faster Whisper beam size defaults to **5** (integer range 1–5). Regular Whisper retains its native decoding defaults. Requirements offers CPU or compatible CUDA PyTorch builds, with confirmation before replacing an installed build. See the [Transcription performance guide](TRANSCRIPTION.md) for capability checks, experimental batching, fallback, caching, and benchmarking.
 
 OpenAI Whisper remains available as a compatibility engine. Its PyTorch dependency and `.pt` model files are installed and tracked separately from Faster Whisper's CTranslate2 model snapshots. The Faster Whisper toggle switches execution, the model catalog, downloads, and installed-model status together. Saved choices are respected; new configurations default to Faster Whisper. Hardware is detected from the actual machine.
 
@@ -169,6 +198,6 @@ If you find a bug, have an idea for a feature, discover a compatibility issue, o
 
 Requirements reports runtime dependencies only: green for core tools plus Faster Whisper/CTranslate2, yellow for the compatibility engine or an optional GPU improvement, and red for missing core tools or no installed engine. Manage model weights in Step 1 using the shared Install/Uninstall controls. The Faster Transcription toggle selects the backend-specific catalog and installation state. Optional packages never become mandatory merely because a backend is selected.
 
-System checks are asynchronous and cached on demand (hardware: 10 minutes; package/binary versions: 5 minutes). Opening Requirements reuses those snapshots; **Check again** refreshes them. Installation invalidates affected dependency snapshots, with native import checks performed only during deliberate installation verification or transcription. Ordinary status reads never import Whisper, PyTorch, or CTranslate2. CUDA package detection is not a compatibility guarantee; transcription still tests acceleration and falls back to CPU.
+System checks are asynchronous and cached on demand (hardware: 10 minutes; package/binary versions and backend capabilities: 5 minutes). Package discovery remains metadata-only. Requirements and Settings lazily import the backend runtimes for capability checks, sharing in-flight work and cached results; warm status reads do not repeatedly initialize them. **Check again** and installation invalidate snapshots. Transcription refreshes its selected backend before execution. CTranslate2 device queries are not a model-allocation guarantee; actual GPU model initialization is verified during transcription.
 
 Model discovery uses asynchronous filesystem access when opening or refreshing the model area. Background download polling reads in-memory progress without scanning model folders. Other model reads share a one-minute snapshot; model operations update or invalidate the affected backend's state.

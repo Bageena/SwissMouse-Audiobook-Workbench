@@ -1,0 +1,9 @@
+{
+  "name": "My Custom Theme",
+  "id": "my-custom-theme",
+  "version": "1.0",
+  "author": "Your Name",
+  "description": "A personal SwissMouse color theme.",
+  "extends": "light",
+  "css": "theme.css"
+}

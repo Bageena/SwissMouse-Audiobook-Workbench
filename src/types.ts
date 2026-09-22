@@ -1,3 +1,4 @@
+import type { BackendCapabilities, TranscriptionBackend, TranscriptionSettings } from './transcription';
 export interface WorkbenchConfig {
   faster_transcription: boolean;
   selected_model: string;
@@ -148,7 +149,7 @@ export interface JobLog {
 
 export type ChapterSourceType = 'whisperx' | 'existing_files';
 export type AudioMergeMethodType = 'standard' | 'quick';
-export type Step1InputMethod = 'folder' | 'youtube';
+export type Step1InputMethod = 'folder' | 'youtube' | 'librivox';
 export type OutputAudioFormat = 'm4b' | 'm4a' | 'mp3' | 'flac' | 'ogg' | 'opus' | 'wav';
 export type YouTubeAudioFormat = 'best' | 'm4a' | 'mp3' | 'flac' | 'opus' | 'wav';
 
@@ -296,11 +297,14 @@ export interface AudiobookJob {
   
   // Step 1 Local Processing Options & Input Methods
   inputMethod?: Step1InputMethod;
+  librivox?: import('./librivox').LibriVoxBook;
   sourceFolderPath?: string;
   outputFolderPath?: string;
   chapterSource?: ChapterSourceType;
   mergeMethod?: AudioMergeMethodType;
   selectedModelId?: string;
+  transcriptionSettings?: Partial<Record<TranscriptionBackend, TranscriptionSettings>>;
+  chapterDetectionKey?: string;
   hasNestedChapterFolders?: boolean;
   discoveredFiles?: DiscoveredAudioFile[];
   unsupportedFiles?: UnsupportedFileItem[];
@@ -334,6 +338,9 @@ export interface AudiobookJob {
     engine?: 'faster-whisper' | 'openai-whisper';
     device?: 'cpu' | 'cuda';
     computeType?: string;
+    batchSize?: number | null;
+    beamSize?: number;
+    requestKey?: string;
     segmentsCount: number;
     wordsCount: number;
     completedAt: string;
@@ -422,6 +429,8 @@ export interface HardwareEnvironmentInfo {
   gpuName?: string;
   vramGb?: number;
   cudaVersion?: string;
+  driverVersion?: string;
+  computeCapability?: number;
   mode: 'gpu' | 'cpu';
   recommendedPyTorchFlavor: 'cuda' | 'cpu';
   recommendationSummary: string;
@@ -436,6 +445,8 @@ export interface RequirementsReport {
   hardware: HardwareEnvironmentInfo;
   components: BaseRequirementItem[];
   availableUpdatesCount: number;
+  backendCapabilities?: Partial<Record<TranscriptionBackend, BackendCapabilities>>;
+  pytorchBuild?: { cudaAvailable: boolean; cudaIndex?: string; reason: string };
 }
 
 export interface InstallRepairProgress {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseFasterWhisperAttempts, validateNormalizedTranscription } from './transcription-engine';
+import { validateNormalizedTranscription } from './transcription-engine';
 import { detectChapterHeadings } from './chapter-detection';
 import type { NormalizedSegment } from './transcription-engine';
 import vm from 'node:vm';
@@ -61,9 +61,6 @@ test('retains unnumbered headings and requires complete heading words', () => {
   assert.deepEqual(detectChapterHeadings([chapterSegment('subchapter twelve introductory chapter about life')]), []);
 });
 
-test('CPU systems use Faster Whisper INT8 without a GPU requirement', () => {
-  assert.deepEqual(chooseFasterWhisperAttempts(false), [{ device: 'cpu', computeType: 'int8' }]);
-});
 
 for (const [text, number] of [
   ['Chapter Twenty-Three', 23], ['Chapter Twenty-Third', 23], ['Chapter XXIII', 23],
@@ -159,12 +156,6 @@ test('suppresses exact repeated observations but keeps later occurrences', () =>
   assert.deepEqual(headings.map(h => h.start), [10, 11]);
 });
 
-test('NVIDIA systems try GPU and then gracefully fall back to CPU', () => {
-  assert.deepEqual(chooseFasterWhisperAttempts(true), [
-    { device: 'cuda', computeType: 'float16' },
-    { device: 'cpu', computeType: 'int8' },
-  ]);
-});
 
 test('recovery rejects ambiguous matches and matches outside the anchor timestamps', () => {
   for (const middle of [

@@ -1,0 +1,62 @@
+/*
+ SwissMouse Custom Theme Template
+
+ Copy this entire folder, rename the copy to match the "id" in theme.json,
+ then edit only the variables you want to customize below.
+
+ Leave a variable blank (or delete its line) to inherit it from the built-in
+ theme selected by "extends" in theme.json. Add a value only when overriding it.
+
+ This template is for visual theming only. Selectors, layout rules, scripts,
+ remote URLs, and variables outside SwissMouse's approved theme tokens are
+ not loaded.
+*/
+
+:root {
+  /* Application and surfaces */
+  --sm-app-bg: ;
+  --sm-app-bg-top: ;
+  --sm-app-background-image: ;
+  --sm-surface: ;
+  --sm-surface-elevated: ;
+  --sm-surface-subtle: ;
+  --sm-input: ;
+  --sm-hover: ;
+
+  /* Text and borders */
+  --sm-ink: ;
+  --sm-text-secondary: ;
+  --sm-muted: ;
+  --sm-border: ;
+  --sm-border-soft: ;
+
+  /* Accent and focus */
+  --sm-accent: ;
+  --sm-on-accent: ;
+  --sm-accent-hover: ;
+  --sm-accent-soft: ;
+  --sm-accent-text: ;
+  --sm-ring: ;
+
+  /* Status */
+  --sm-success: ;
+  --sm-warning: ;
+  --sm-error: ;
+  --sm-info: ;
+
+  /* Technical log */
+  --sm-terminal-bg: ;
+  --sm-terminal-header: ;
+  --sm-terminal-text: ;
+  --sm-terminal-muted: ;
+  --sm-terminal-border: ;
+
+  /* Waveform, transcript, and chapter markers */
+  --sm-waveform-baseline: ;
+  --sm-waveform: ;
+  --sm-waveform-playhead: ;
+  --sm-chapter-marker: ;
+  --sm-chapter-marker-selected: ;
+  --sm-transcript-highlight: ;
+  --sm-transcript-highlight-text: ;
+}

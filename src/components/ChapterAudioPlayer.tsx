@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { AlignedWord } from '../types';
 import { AudioWaveform, WaveformMarker } from './AudioWaveform';
+import { playbackTranscriptWindow, revealTranscriptWord } from '../utils/wordAlignment';
 import {
   Play,
   Pause,
@@ -25,6 +26,7 @@ export interface ActiveAudioTrack {
   title: string;
   start: string; // HH:MM:SS.mmm
   seconds: number;
+  seekRevision?: number;
   snippetText?: string;
   contextBefore?: string;
   matchedText?: string;
@@ -34,6 +36,7 @@ export interface ActiveAudioTrack {
 }
 
 interface ChapterAudioPlayerProps {
+  transcriptWords: AlignedWord[];
   activeTrack: ActiveAudioTrack | null;
   isPlaying: boolean;
   onPlay: (track: ActiveAudioTrack) => void;
@@ -46,9 +49,11 @@ interface ChapterAudioPlayerProps {
   chapterMarkers?: WaveformMarker[];
   onChapterMarker?: (id: string) => void;
   onSeek?: (seconds: number) => void;
+  onPlaybackTime?: (seconds: number) => void;
 }
 
 export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
+  transcriptWords,
   activeTrack,
   isPlaying,
   onPlay,
@@ -61,6 +66,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   chapterMarkers = [],
   onChapterMarker = () => {},
   onSeek,
+  onPlaybackTime,
 }) => {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(audioSrc);
@@ -73,6 +79,8 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastTrack = useRef<string>('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const wordPane = useRef<HTMLDivElement>(null);
+  const highlightedWord = useRef<HTMLButtonElement>(null);
 
   // Helper: Format seconds to HH:MM:SS
   const formatSec = (s: number): string => {
@@ -104,24 +112,34 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
 
       osc.start();
       osc.stop(ctx.currentTime + 0.2);
+      osc.onended = () => { void ctx.close(); };
     } catch {
       // AudioContext policy
     }
   };
 
-  // Build aligned clickable words for the active track
-  const alignedWordsData = useMemo(() => {
-    if (!activeTrack) return null;
-    if (activeTrack.words && activeTrack.words.length > 0) {
-      return {
-        words: activeTrack.words,
-        matchedStartIndex: 0,
-        matchedEndIndex: activeTrack.words.length - 1,
-      };
-    }
+  // Derive words from the live playhead, including waveform seeks and end edits.
+  const words = transcriptWords.length ? transcriptWords : activeTrack?.words || [];
+  const windowPosition = playbackTranscriptWindow(words, currentTime);
+  const visibleWords = useMemo(() => words.slice(windowPosition.offset, windowPosition.offset + 70), [words, windowPosition.offset]);
+  useEffect(() => {
+    if (wordPane.current && highlightedWord.current) revealTranscriptWord(wordPane.current, highlightedWord.current);
+  }, [windowPosition.active, windowPosition.offset]);
 
-    return null;
-  }, [activeTrack]);
+  // Native timeupdate remains a fallback; sample playback at 12.5 Hz for words.
+  useEffect(() => {
+    if (!isPlaying) return;
+    let frame = 0, last = 0;
+    const update = (now: number) => {
+      if (now - last >= 80 && audioRef.current) {
+        setCurrentTime(audioRef.current.currentTime);
+        last = now;
+      }
+      frame = requestAnimationFrame(update);
+    };
+    frame = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(frame);
+  }, [isPlaying]);
 
   useEffect(() => {
     setAudioUrl(audioSrc);
@@ -165,7 +183,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
       const audio = audioRef.current;
       audio.volume = isMuted ? 0 : volume;
 
-      const trackKey = `${activeTrack.id}:${activeTrack.seconds}`;
+      const trackKey = `${activeTrack.id}:${activeTrack.seconds}:${activeTrack.seekRevision ?? 0}`;
       if (lastTrack.current !== trackKey) {
         audio.currentTime = activeTrack.seconds;
         setCurrentTime(activeTrack.seconds);
@@ -181,7 +199,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
       return;
     }
 
-  }, [activeTrack?.id, activeTrack?.start, activeTrack?.seconds, isPlaying, audioUrl]);
+  }, [activeTrack?.id, activeTrack?.start, activeTrack?.seconds, activeTrack?.seekRevision, isPlaying, audioUrl]);
 
   useEffect(() => { if(audioRef.current) audioRef.current.volume = isMuted ? 0 : volume; }, [volume,isMuted]);
 
@@ -189,6 +207,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   const handleTimeUpdate = () => {
     if (audioRef.current) {
       setCurrentTime(audioRef.current.currentTime);
+      onPlaybackTime?.(audioRef.current.currentTime);
     }
   };
 
@@ -216,7 +235,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   // Word Click Handler: snaps chapter timestamp to this clicked word!
   const handleWordClicked = (wordItem: AlignedWord) => {
     playWordChime(880);
-    setCurrentTime(wordItem.startSeconds);
+    seekTo(wordItem.startSeconds);
     setLastClickedWord({
       word: wordItem.word,
       timestamp: wordItem.start,
@@ -225,7 +244,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
     if (audioRef.current && audioUrl) {
       audioRef.current.currentTime = wordItem.startSeconds;
       if (!isPlaying) {
-        audioRef.current.play().catch(() => {});
+        if (activeTrack) onPlay(activeTrack);
       }
     }
 
@@ -368,23 +387,21 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
         </div>
 
         {/* Word Chips Flow */}
-        <div className="flex flex-wrap gap-1 leading-relaxed max-h-40 overflow-y-auto pr-1 py-1">
-          {alignedWordsData && alignedWordsData.words.length > 0 ? (
-            alignedWordsData.words.map((w, idx) => {
-              const isMatchedWord =
-                idx >= alignedWordsData.matchedStartIndex && idx <= alignedWordsData.matchedEndIndex;
-              const isSelectedWord = lastClickedWord?.timestamp === w.start;
+        <div ref={wordPane} className="flex flex-wrap gap-1 leading-relaxed max-h-40 overflow-y-auto pr-1 py-1">
+          {visibleWords.length > 0 ? (
+            visibleWords.map((w, idx) => {
+              const isSelectedWord = windowPosition.active === windowPosition.offset + idx;
 
               return (
                 <button
-                  key={`${w.start}-${idx}`}
+                  key={`${w.start}-${windowPosition.offset + idx}`}
+                  ref={isSelectedWord ? highlightedWord : undefined}
+                  aria-current={isSelectedWord ? 'true' : undefined}
                   type="button"
                   onClick={() => handleWordClicked(w)}
                   className={`group relative inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-sans transition-all cursor-pointer ${
                     isSelectedWord
-                      ? 'bg-amber-500 text-stone-950 font-bold ring-2 ring-amber-300 scale-105 shadow-xs'
-                      : isMatchedWord
-                      ? 'bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 font-medium'
+                      ? 'transcript-word-active font-bold ring-2 scale-105 shadow-xs'
                       : 'bg-white text-stone-700 hover:bg-stone-200 hover:text-stone-900 border border-stone-200'
                   }`}
                   title={`Click to set timestamp to ${w.start}`}

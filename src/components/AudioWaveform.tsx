@@ -18,12 +18,18 @@ export function AudioWaveform({ url, duration, currentTime, playing, audioRef, m
   const [data, setData] = useState<Peaks | null>(null);
   const [status, setStatus] = useState('Loading waveform…');
   const [retry, setRetry] = useState(0);
+  const [themeRevision, setThemeRevision] = useState(0);
   const canvas = useRef<HTMLCanvasElement>(null);
   const playhead = useRef<HTMLDivElement>(null);
   const position = useRef(currentTime); position.current = currentTime;
   const span = Math.min(waveformZooms[zoom], duration || 1);
   const viewStart = clampViewport(start, span, duration);
   useEffect(() => { setStart(0); setFollow(true); setZoom(3); }, [url]);
+  useEffect(() => {
+    const redraw = () => setThemeRevision(value => value + 1);
+    window.addEventListener('swissmouse-theme-changed', redraw);
+    return () => window.removeEventListener('swissmouse-theme-changed', redraw);
+  }, []);
   useEffect(() => { setFollow(true); setStart(clampViewport(position.current - span / 2, span, duration)); }, [selectedId]);
   useEffect(() => { if (follow) setStart(s => followViewport(currentTime, s, span, duration)); }, [currentTime, follow, span, duration]);
   useEffect(() => {
@@ -64,7 +70,9 @@ export function AudioWaveform({ url, duration, currentTime, playing, audioRef, m
     const ratio = window.devicePixelRatio || 1;
     node.width = width * ratio; node.height = 112 * ratio;
     ctx.scale(ratio, ratio); ctx.clearRect(0, 0, width, 112);
-    ctx.strokeStyle = '#d6d3d1'; ctx.beginPath(); ctx.moveTo(0, 64); ctx.lineTo(width, 64); ctx.stroke();
+    const styles = getComputedStyle(document.documentElement);
+    const themeColor = (token: string, fallback: string) => styles.getPropertyValue(token).trim() || fallback;
+    ctx.strokeStyle = themeColor('--sm-waveform-baseline', '#d6d3d1'); ctx.beginPath(); ctx.moveTo(0, 64); ctx.lineTo(width, 64); ctx.stroke();
     if (data) {
       // Aggregate into pixel columns even for very high resolution displays.
       const columns = new Float32Array(width);
@@ -73,19 +81,19 @@ export function AudioWaveform({ url, duration, currentTime, playing, audioRef, m
         const right = Math.min(width, Math.ceil((data.start + (i + 1) * data.step - viewStart) / span * width));
         for (let x = left; x < right; x++) columns[x] = Math.max(columns[x], peak);
       });
-      ctx.strokeStyle = '#a8a29e'; ctx.beginPath();
+      ctx.strokeStyle = themeColor('--sm-waveform', '#a8a29e'); ctx.beginPath();
       columns.forEach((peak, x) => { const height = Math.max(0.5, peak * 44); ctx.moveTo(x + 0.5, 64 - height); ctx.lineTo(x + 0.5, 64 + height); }); ctx.stroke();
     }
     for (const marker of markers) {
       const x = (marker.seconds - viewStart) / span * width;
       if (x < 0 || x > width) continue;
-      ctx.strokeStyle = marker.id === selectedId ? '#d97706' : '#78716c';
+      ctx.strokeStyle = marker.id === selectedId ? themeColor('--sm-chapter-marker-selected', '#d97706') : themeColor('--sm-chapter-marker', '#78716c');
       ctx.fillStyle = ctx.strokeStyle; ctx.lineWidth = marker.id === selectedId ? 2 : 1;
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 112); ctx.stroke();
       ctx.fillRect(x - 4, 0, 8, 12);
       if (marker.id === selectedId) { ctx.font = '11px sans-serif'; ctx.fillText(marker.title, Math.min(x + 7, Math.max(0, width - 140)), 16, 135); }
     }
-  }, [data, width, viewStart, span, markers, selectedId]);
+  }, [data, width, viewStart, span, markers, selectedId, themeRevision]);
   useEffect(() => {
     let frame = 0;
     const draw = () => {
@@ -113,7 +121,7 @@ export function AudioWaveform({ url, duration, currentTime, playing, audioRef, m
       <canvas ref={canvas} className="w-full h-28 cursor-crosshair" role="slider" tabIndex={url ? 0 : -1} aria-label="Waveform seek; arrow keys seek five seconds" aria-valuemin={0} aria-valuemax={duration} aria-valuenow={currentTime} aria-valuetext={timeLabel(currentTime)} aria-disabled={!url}
         onKeyDown={e => { if (!url) return; const next = e.key === 'ArrowRight' ? currentTime + 5 : e.key === 'ArrowLeft' ? currentTime - 5 : e.key === 'Home' ? 0 : e.key === 'End' ? duration : null; if (next !== null) { e.preventDefault(); onSeek(Math.max(0, Math.min(duration, next))); } }}
         onClick={e => { if (!url) return; const rect = e.currentTarget.getBoundingClientRect(), x = e.clientX - rect.left; const hit = markers.find(m => m.seconds >= viewStart && m.seconds <= viewStart + span && Math.abs((m.seconds - viewStart) / span * rect.width - x) <= 6); if (hit && e.clientY - rect.top < 24) onMarker(hit.id); else onSeek(waveformTime(x, rect.width, viewStart, span)); }} />
-      <div ref={playhead} aria-hidden="true" className="absolute top-0 left-0 h-28 w-0.5 bg-amber-600 pointer-events-none" />
+      <div ref={playhead} aria-hidden="true" className="waveform-playhead absolute top-0 left-0 h-28 w-0.5 pointer-events-none" />
       {status && <div role="status" className="absolute inset-x-0 bottom-2 text-center text-stone-500 pointer-events-none">{status}</div>}
     </div>
     <div className="flex gap-2 items-center">

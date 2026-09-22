@@ -58,6 +58,35 @@ export function formatChapterTitle(value: number, format: ChapterNumberFormat): 
   return `Chapter ${format === 'roman' ? roman(value) : format === 'written' ? written(value) : value}`;
 }
 
+// Normalize detector punctuation/spacing without treating prose as a numbered title.
+const numberTitleKey = (title: string) => title.trim().toLowerCase()
+  .replace(/[-\u2011\u2013\u2014]/g, ' ').replace(/^chapter\s*:?\s*(?=\S)/, 'chapter ')
+  .replace(/\s+and\s+/g, ' ').replace(/\s+/g, ' ');
+// Only generated number names participate; prose titles and explicit edits are safe.
+const automaticTitles = new Map<string, number>();
+for (let number = 1; number <= 3999; number++) {
+  for (const format of ['numerical', 'roman', 'written'] as const) {
+    automaticTitles.set(numberTitleKey(formatChapterTitle(number, format)), number);
+  }
+}
+
+export function applyChapterNumberFormat(chapters: ChapterEntry[], format: ChapterNumberFormat): ChapterEntry[] {
+  return chapters.map(chapter => {
+    if (chapter.titleManuallyEdited) return chapter;
+    const number = automaticTitles.get(numberTitleKey(chapter.title));
+    if (!number) return chapter;
+    return { ...chapter, chapterNumber: number, title: formatChapterTitle(number, format) };
+  });
+}
+
+export function getSessionChapterNumberFormat(projectId: string): ChapterNumberFormat {
+  try {
+    const value = sessionStorage.getItem(`swissmouse_chapter_numbers_${projectId}`);
+    if (value === 'roman' || value === 'written') return value;
+  } catch { /* Browser storage may be unavailable. */ }
+  return 'numerical';
+}
+
 export function inferChapterNumberFormat(chapters: ChapterEntry[]): ChapterNumberFormat {
   for (const chapter of chapters) {
     const suffix = /^chapter\s+(.+)$/i.exec(chapter.title.trim())?.[1];

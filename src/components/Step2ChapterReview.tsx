@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlignedWord, AudiobookJob, ChapterCandidate, ChapterEntry } from '../types';
 import { ChapterAudioPlayer, ActiveAudioTrack } from './ChapterAudioPlayer';
-import { buildAlignedWords, findClosestTranscriptWordIndex, getTranscriptWordsNear, parseTimestampToMs, transcriptPageOffset } from '../utils/wordAlignment';
-import { applyDefaultChapterEnds, formatChapterTitle, inferChapterNumberFormat, isIncompleteChapter, parseCsvRow, prepareChapters, validateChapterEntries, type ChapterNumberFormat } from '../utils/chapters';
+import { buildAlignedWords, findClosestTranscriptWordIndex, findTranscriptWordIndex, getTranscriptWordsNear, parseTimestampToMs, revealTranscriptWord, transcriptPageOffset } from '../utils/wordAlignment';
+import { applyChapterNumberFormat, applyDefaultChapterEnds, formatChapterTitle, getSessionChapterNumberFormat, isIncompleteChapter, parseCsvRow, prepareChapters, validateChapterEntries, type ChapterNumberFormat } from '../utils/chapters';
 import {
   Check,
   Plus,
@@ -53,9 +53,9 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
   const sourceChapters = job.chapters.length > 0
     ? [...job.chapters]
     : [{ id: 'c1', start: '00:00:00.000', title: 'Chapter 1', headingType: 'numbered_chapter' as const, chapterNumber: 1 }];
-  const [chapterNumberFormat, setChapterNumberFormat] = useState<ChapterNumberFormat>(() => inferChapterNumberFormat(sourceChapters));
-  const [chapters, setChapters] = useState<ChapterEntry[]>(
-    prepareChapters(sourceChapters, job.totalDurationSeconds).map(chapter => ({
+  const [chapterNumberFormat, setChapterNumberFormat] = useState<ChapterNumberFormat>(() => getSessionChapterNumberFormat(job.id));
+  const [chapters, setChapters] = useState<ChapterEntry[]>(() =>
+    applyChapterNumberFormat(prepareChapters(sourceChapters, job.totalDurationSeconds, chapterNumberFormat), chapterNumberFormat).map(chapter => ({
       ...chapter,
       transcriptWordIndex: chapter.transcriptWordIndex ?? findClosestTranscriptWordIndex(
         transcriptWords,
@@ -87,6 +87,8 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
   const [transcriptSelection, setTranscriptSelection] = useState<{ wordIndex: number; requestId: number } | null>(null);
   const selectedTranscriptWordIndex = transcriptSelection?.wordIndex ?? null;
   const transcriptWordRefs = useRef(new Map<number, HTMLButtonElement>());
+  const transcriptPane = useRef<HTMLDivElement>(null);
+  const seekRevision = useRef(0);
   const transcriptPageSize = 1200;
   const matchingTranscriptWords = useMemo(() => {
     const query = transcriptSearch.trim().toLowerCase();
@@ -94,6 +96,15 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     return query ? indexed.filter(item => item.word.word.toLowerCase().includes(query)) : indexed;
   }, [transcriptWords, transcriptSearch]);
   const visibleTranscriptWords = matchingTranscriptWords.slice(transcriptOffset, transcriptOffset + transcriptPageSize);
+  const headingWordIndexes = useMemo(() => {
+    const indexes = new Set<number>();
+    for (const candidate of candidates) {
+      const start = findTranscriptWordIndex(transcriptWords, parseTimestampToMs(candidate.candidate_start) / 1000);
+      const end = findTranscriptWordIndex(transcriptWords, parseTimestampToMs(candidate.candidate_end) / 1000 + 0.000001);
+      for (let i = start; i < end; i++) indexes.add(i);
+    }
+    return indexes;
+  }, [transcriptWords, candidates]);
 
   useEffect(() => {
     setTranscriptOffset(0);
@@ -103,7 +114,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
   useEffect(() => {
     if (selectedTranscriptWordIndex === null) return;
     const element = transcriptWordRefs.current.get(selectedTranscriptWordIndex);
-    element?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (element && transcriptPane.current) revealTranscriptWord(transcriptPane.current, element);
   }, [transcriptSelection, transcriptOffset, transcriptSearch]);
 
   // Helper: Format seconds to HH:MM:SS.mmm
@@ -135,7 +146,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     // may exclude the target, so clear it before rendering the destination page.
     setTranscriptSearch('');
     setTranscriptOffset(transcriptPageOffset(transcriptWordIndex, transcriptPageSize));
-    setTranscriptSelection(previous => ({
+    setTranscriptSelection(previous => previous?.wordIndex === transcriptWordIndex ? previous : ({
       wordIndex: transcriptWordIndex,
       requestId: (previous?.requestId ?? 0) + 1,
     }));
@@ -146,8 +157,8 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     return findClosestTranscriptWordIndex(transcriptWords, seconds);
   };
 
-  const syncPlayerToChapter = (chapter: ChapterEntry, index: number) => {
-    const ms = parseMs(chapter.start);
+  const syncPlayerToChapter = (chapter: ChapterEntry, index: number, timestamp = chapter.start) => {
+    const ms = parseMs(timestamp);
     if (ms === -1) return;
     const seconds = ms / 1000;
     const matched = candidates.find(
@@ -156,16 +167,17 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     const exactCandidate = candidates.find(candidate => candidate.candidate_start === chapter.start);
     const transcriptWordIndex = resolveTranscriptWordIndex(
       seconds,
-      chapter.transcriptWordIndex ?? exactCandidate?.transcriptWordIndex,
+      timestamp === chapter.start ? chapter.transcriptWordIndex ?? exactCandidate?.transcriptWordIndex : undefined,
     );
     navigateToTranscriptWord(transcriptWordIndex);
     const nearbyWords = getTranscriptWordsNear(transcriptWords, seconds);
 
     setActiveTrack({
       id: chapter.id || `chap-${index}`,
+      seekRevision: ++seekRevision.current,
       chapterIndex: index,
       title: chapter.title || `Chapter ${index + 1}`,
-      start: chapter.start,
+      start: timestamp,
       seconds,
       snippetText: matched
         ? `${matched.context_before ? matched.context_before + ' ' : ''}${matched.matched_text}${matched.context_after ? ' ' + matched.context_after : ''}`
@@ -195,6 +207,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     const recalculated = field === 'start' && timestampMs >= 0 ? applyDefaultChapterEnds(updated, job.totalDurationSeconds) : updated;
     setChapters(recalculated);
     if (field === 'start' && timestampMs >= 0) syncPlayerToChapter(recalculated[index], index);
+    else if (field === 'end' && parseMs(val) >= 0) syncPlayerToChapter(recalculated[index], index, val);
     else if (field === 'title' && activeTrack?.chapterIndex === index) {
       setActiveTrack(prev => prev ? { ...prev, title: val } : null);
     }
@@ -213,7 +226,8 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     const newChapter = {
       id: `c-${Date.now()}`,
       start: nextStart,
-      title: `Chapter ${chapters.length + 1}`,
+      title: formatChapterTitle(chapters.length + 1, chapterNumberFormat),
+      chapterNumber: chapters.length + 1,
       manuallyInserted: true,
       transcriptWordIndex: resolveTranscriptWordIndex(parseMs(nextStart) / 1000),
     };
@@ -293,7 +307,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
       job.totalDurationSeconds,
       chapterNumberFormat,
     );
-    setChapters(combined);
+    setChapters(applyChapterNumberFormat(combined, chapterNumberFormat));
     
     // Mark candidate as approved
     setCandidates(prev =>
@@ -328,6 +342,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
       navigateToTranscriptWord(transcriptWordIndex);
       setActiveTrack({
         id: trackId,
+        seekRevision: ++seekRevision.current,
         title: candidate.proposed_title,
         start: candidate.candidate_start,
         seconds,
@@ -454,7 +469,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
         imported[0].start = '00:00:00.000';
       }
 
-      const prepared = prepareChapters(imported, job.totalDurationSeconds, chapterNumberFormat);
+      const prepared = applyChapterNumberFormat(prepareChapters(imported, job.totalDurationSeconds, chapterNumberFormat), chapterNumberFormat);
       setChapters(prepared);
       setShowImportModal(false);
       setImportCsvText('');
@@ -473,10 +488,10 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
         <summary>View chapters already in the source file ({job.existingChapters.length})</summary>
         <p className="text-sm">Only the chapter list you review and save below will be exported.</p>
         {job.existingChapters.map(c => <p className="text-sm" key={c.id}>{c.start} — {c.title}</p>)}
-        <button className="underline text-sm" title="Replace the current review list with chapters read from the source file" onClick={() => setChapters(prepareChapters(job.existingChapters!.map(c => ({
+        <button className="underline text-sm" title="Replace the current review list with chapters read from the source file" onClick={() => setChapters(applyChapterNumberFormat(prepareChapters(job.existingChapters!.map(c => ({
           ...c,
           transcriptWordIndex: resolveTranscriptWordIndex(Math.max(0, parseMs(c.start)) / 1000, c.transcriptWordIndex),
-        })), job.totalDurationSeconds, chapterNumberFormat))}>Use these chapters as my starting point</button>
+        })), job.totalDurationSeconds, chapterNumberFormat), chapterNumberFormat))}>Use these chapters as my starting point</button>
       </details>}
       {/* Step Header Banner */}
       <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs">
@@ -491,7 +506,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
               </h2>
             </div>
             <p className="text-sm text-stone-600 mt-1 max-w-3xl">
-              Check each chapter start and title before exporting. Click a word in the transcript to set a precise start time, or edit the list directly. Chapters organize the recording; they never cut out audio.
+              Check chapter starts, ends, and names before exporting. Click a transcript word to set a precise start time. Gaps between chapter ranges are removed from exported audio; your source stays unchanged.
             </p>
           </div>
 
@@ -567,6 +582,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
       {/* Interactive Chapter Audio Audition Player */}
       <ChapterAudioPlayer
         activeTrack={activeTrack}
+        transcriptWords={transcriptWords}
         isPlaying={isPlaying}
         onPlay={(track) => {
           setActiveTrack(track);
@@ -587,6 +603,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
           if (index >= 0) handleToggleChapterPlay(chapters[index], index);
         }}
         onSeek={seconds => navigateToTranscriptWord(resolveTranscriptWordIndex(seconds))}
+        onPlaybackTime={seconds => { if (!transcriptSearch) navigateToTranscriptWord(resolveTranscriptWordIndex(seconds)); }}
       />
 
       {/* Main Split Workbench: Left transcript, Right Chapters Editor */}
@@ -618,9 +635,9 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
               />
             </div>
 
-            <div className="flex flex-wrap content-start gap-1 overflow-y-auto flex-1 p-3 text-xs leading-relaxed">
+            <div ref={transcriptPane} className="flex flex-wrap content-start gap-1 overflow-y-auto flex-1 p-3 text-xs leading-relaxed">
               {visibleTranscriptWords.map(({ word, transcriptWordIndex }) => {
-                const isHeading = candidates.some(candidate => word.startSeconds >= parseMs(candidate.candidate_start) / 1000 && word.startSeconds <= parseMs(candidate.candidate_end) / 1000);
+                const isHeading = headingWordIndexes.has(transcriptWordIndex);
                 const isActive = selectedTranscriptWordIndex === transcriptWordIndex;
                 return (
                   <button
@@ -634,7 +651,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                     onClick={() => handleTranscriptWordSelect(word, transcriptWordIndex)}
                     title={`Listen from ${word.start}; use it to place a chapter start`}
                     aria-current={isActive ? 'true' : undefined}
-                    className={`px-1 py-0.5 rounded cursor-pointer transition-colors ${isActive ? 'bg-amber-500 text-stone-950 font-bold' : isHeading ? 'bg-amber-100 text-amber-950 font-semibold ring-1 ring-amber-300' : 'text-stone-700 hover:bg-stone-200'}`}
+                    className={`px-1 py-0.5 rounded cursor-pointer transition-colors ${isActive ? 'transcript-word-active font-bold' : isHeading ? 'transcript-word-heading font-semibold ring-1' : 'text-stone-700 hover:bg-stone-200'}`}
                   >
                     {word.word}
                   </button>
@@ -835,13 +852,20 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                     onChange={(event) => {
                       const format = event.target.value as ChapterNumberFormat;
                       setChapterNumberFormat(format);
-                      setChapters(current => current.map(chapter => chapter.isMissing && chapter.chapterNumber
-                        ? { ...chapter, title: formatChapterTitle(chapter.chapterNumber, format) }
-                        : chapter));
+                      try { sessionStorage.setItem(`swissmouse_chapter_numbers_${job.id}`, format); } catch { /* Keep in-memory choice. */ }
+                      setChapters(current => applyChapterNumberFormat(current, format));
+                      setActiveTrack(current => {
+                        if (!current || current.chapterIndex === undefined) return current;
+                        const source = chapters.find(chapter => chapter.id === current.id) || chapters[current.chapterIndex];
+                        if (!source) return current;
+                        const chapter = applyChapterNumberFormat([source], format)[0];
+                        return { ...current, title: chapter.title };
+                      });
+                      setSaveSuccess(false);
                     }}
                     className="rounded border border-stone-300 bg-white px-2 py-1"
                   >
-                    <option value="numerical">Numerical</option>
+                    <option value="numerical">Numeric</option>
                     <option value="roman">Roman</option>
                     <option value="written">Written</option>
                   </select>
@@ -977,6 +1001,8 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                             <input
                               type="text"
                               value={chap.start}
+                              aria-label={`Start of ${chap.title || `chapter ${idx + 1}`}`}
+                              onFocus={() => syncPlayerToChapter(chap, idx)}
                               onChange={(e) => handleUpdateChapter(idx, 'start', e.target.value)}
                               className={`w-full px-2 py-1 font-mono rounded text-xs border ${
                                 isNonNegative
@@ -994,6 +1020,8 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                           <input
                             type="text"
                             value={chap.end || ''}
+                            aria-label={`End of ${chap.title || `chapter ${idx + 1}`}`}
+                            onFocus={() => { if (chap.end) syncPlayerToChapter(chap, idx, chap.end); }}
                             onChange={(e) => handleUpdateChapter(idx, 'end', e.target.value)}
                             className={`w-full px-2 py-1 font-mono rounded text-xs border ${
                               isValidEnd
@@ -1084,7 +1112,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                 </span>
               </div>
               <div className="flex items-center space-x-2 text-[11px] text-stone-400 font-mono">
-                <span>Full audio preserved: 00:00:00 to {formatTs(job.totalDurationSeconds)}</span>
+                <span>Source timeline: 00:00:00 to {formatTs(job.totalDurationSeconds)}. Only included chapter ranges are exported.</span>
                 <span>{chapters.length} {chapters.length === 1 ? 'chapter' : 'chapters'}</span>
               </div>
             </div>

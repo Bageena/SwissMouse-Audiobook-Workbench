@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, BookOpen, Music, Trash2 } from 'lucide-react';
+import { Plus, BookOpen, Music, Trash2, ChevronDown } from 'lucide-react';
 
 interface NewJobModalProps {
   onClose: () => void;
@@ -61,11 +61,11 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({ onClose, onCreateJob }
 
   return (
     <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl border border-stone-200 space-y-4">
+      <div className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-stone-200 bg-white p-5 shadow-xl sm:p-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 text-stone-900 font-bold text-base">
             <BookOpen className="w-5 h-5 text-amber-600" />
-            <span>Create a new audiobook project</span>
+            <span>Add a book</span>
           </div>
           <button
             onClick={onClose}
@@ -113,13 +113,13 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({ onClose, onCreateJob }
             </div>
           </div>
 
-          <p className="text-[11px] text-stone-500 -mt-2">This creates an empty project. You will choose its audio folder on the next screen.</p>
+          <p className="-mt-2 text-[11px] text-stone-500">You’ll choose the book’s audio on the next screen.</p>
           {/* Parts list */}
-          <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 space-y-2">
+          <details className="advanced-disclosure rounded-xl border border-stone-200 bg-stone-50">
+            <summary className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2.5 font-semibold text-stone-700"><span>Advanced: placeholder file list</span><ChevronDown className="disclosure-chevron h-4 w-4 text-stone-400" /></summary>
+            <div className="space-y-2 border-t border-stone-200 p-3">
             <div className="flex items-center justify-between">
-              <span className="font-semibold text-stone-800">
-                Example source files ({parts.length})
-              </span>
+              <span className="text-[11px] text-stone-500">Used only until you choose the real audio folder.</span>
               <button
                 type="button"
                 onClick={handleAddPart}
@@ -158,7 +158,8 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({ onClose, onCreateJob }
                 </div>
               ))}
             </div>
-          </div>
+            </div>
+          </details>
 
           <div className="flex justify-end space-x-2 pt-2">
             <button
@@ -173,7 +174,7 @@ export const NewJobModal: React.FC<NewJobModalProps> = ({ onClose, onCreateJob }
               disabled={isSubmitting || !name.trim()}
               className="px-4 py-1.5 rounded text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white cursor-pointer"
             >
-              {isSubmitting ? 'Creating...' : 'Create project'}
+              {isSubmitting ? 'Adding...' : 'Add book'}
             </button>
           </div>
         </form>

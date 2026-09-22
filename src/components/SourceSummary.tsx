@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Folder,
+  BookOpen,
   Video,
   Clock,
   HardDrive,
@@ -23,6 +24,7 @@ export const SourceSummary: React.FC<SourceSummaryProps> = ({
   onResetSource,
 }) => {
   const isYouTube = summary.inputMethod === 'youtube';
+  const isLibriVox = summary.inputMethod === 'librivox';
 
   const formatTime = (seconds: number): string => {
     const hrs = Math.floor(seconds / 3600);
@@ -42,7 +44,7 @@ export const SourceSummary: React.FC<SourceSummaryProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-100 pb-3.5 mb-4">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
-            {isYouTube ? <Video className="w-4 h-4" /> : <Folder className="w-4 h-4" />}
+            {isYouTube ? <Video className="w-4 h-4" /> : isLibriVox ? <BookOpen className="w-4 h-4" /> : <Folder className="w-4 h-4" />}
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -51,7 +53,7 @@ export const SourceSummary: React.FC<SourceSummaryProps> = ({
               </span>
               <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-medium">
                 <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                {isYouTube ? 'YouTube Import' : 'Local Folder'}
+                {isYouTube ? 'YouTube Import' : isLibriVox ? 'LibriVox Import' : 'Local Folder'}
               </span>
             </div>
             <p className="text-xs text-stone-600 font-mono truncate max-w-md sm:max-w-lg mt-0.5" title={summary.sourcePath}>

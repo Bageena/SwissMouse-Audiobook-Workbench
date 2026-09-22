@@ -12,7 +12,7 @@ export const LogsDrawer: React.FC<LogsDrawerProps> = ({ logs, isOpen, onClose })
   if (!isOpen) return null;
 
   return (
-    <aside aria-label="Workbench Execution Logs" className="fixed bottom-0 left-0 right-0 h-64 bg-stone-950 text-stone-300 border-t border-stone-800 z-40 flex flex-col shadow-2xl">
+    <aside aria-label="Workbench Execution Logs" className="terminal-surface fixed bottom-0 left-0 right-0 h-64 bg-stone-950 text-stone-300 border-t border-stone-800 z-40 flex flex-col shadow-2xl">
       <div className="h-9 bg-stone-900 border-b border-stone-800 px-4 flex items-center justify-between text-xs">
         <div className="flex items-center space-x-2 text-stone-200 font-mono">
           <Terminal className="w-3.5 h-3.5 text-amber-500" />

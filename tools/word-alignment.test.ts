@@ -6,6 +6,7 @@ import type { NormalizedSegment } from './transcription-engine';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { transformSync } from 'esbuild';
+import { playbackTranscriptWindow, revealTranscriptWord } from '../src/utils/wordAlignment';
 
 test('transcript context follows a changed chapter timestamp', () => {
   const words = [
@@ -116,10 +117,47 @@ test('the existing player word-click handler seeks and selects the saved timesta
   let currentTime: number, selection: any[];
   vm.runInNewContext(transformSync(source.slice(start, end) + '\nhandleWordClicked(word);', { loader: 'ts' }).code, {
     word, audioRef, audioUrl: '/preview', isPlaying: true, playWordChime() {}, setLastClickedWord() {},
-    setCurrentTime(seconds: number) { currentTime = seconds; },
+    seekTo(seconds: number) { currentTime = seconds; audioRef.current.currentTime = seconds; },
     onWordClick(...args: any[]) { selection = args; },
   });
   assert.equal(audioRef.current.currentTime, 15.375);
   assert.equal(currentTime!, word.startSeconds);
   assert.deepEqual(selection!, [word.start, word.word, word.startSeconds]);
+});
+
+test('playback window tracks seeks, live words, pauses between words, and distant pages', () => {
+  const words = Array.from({ length: 4000 }, (_, i) => ({ word: String(i), start: formatTimestamp(i), startSeconds: i, endSeconds: i + 0.8 }));
+  assert.equal(playbackTranscriptWindow(words, 2.7).active, 2);
+  assert.equal(playbackTranscriptWindow(words, 2.9).active, -1);
+  assert.equal(playbackTranscriptWindow(words, 2400.5).active, 2400);
+  assert.equal(playbackTranscriptWindow(words, 2400.5).offset, 2385);
+  assert.equal(playbackTranscriptWindow([], 10).active, -1);
+});
+
+test('explicit timestamp selection seeks again even when the requested timestamp is unchanged', () => {
+  const source = fs.readFileSync('src/components/ChapterAudioPlayer.tsx', 'utf8');
+  const start = source.indexOf('  // Synchronize playback when');
+  const end = source.indexOf('\n  useEffect(() => { if(audioRef.current)', start);
+  const audio = { currentTime: 0, volume: 1, pause() {}, play: async () => {} };
+  const context: any = {
+    useEffect: (effect: () => void) => effect(), activeTrack: { id: 'chapter', start: '00:00:10.000', seconds: 10, seekRevision: 1 },
+    audioRef: { current: audio }, audioUrl: '/preview', lastTrack: { current: '' }, isPlaying: false, isMuted: false, volume: 1,
+    setCurrentTime() {}, onStop() {},
+  };
+  const exercise = transformSync(source.slice(start, end), { loader: 'ts' }).code;
+  vm.runInNewContext(exercise, context);
+  assert.equal(audio.currentTime, 10);
+  audio.currentTime = 25;
+  vm.runInNewContext(exercise, context);
+  assert.equal(audio.currentTime, 25, 'ordinary pause/resume must not rewind');
+  context.activeTrack.seekRevision++;
+  vm.runInNewContext(exercise, context);
+  assert.equal(audio.currentTime, 10, 'explicit re-selection seeks to the same timestamp again');
+});
+
+test('transcript reveal scrolls only its pane without moving focus or ancestors', () => {
+  const pane = { scrollTop: 50, clientHeight: 200, getBoundingClientRect: () => ({ top: 100, bottom: 300 }) };
+  const word = { getBoundingClientRect: () => ({ top: 400, bottom: 420, height: 20 }), focus() { throw new Error('Focus stolen'); }, scrollIntoView() { throw new Error('Ancestor scrolled'); } };
+  revealTranscriptWord(pane as any, word as any);
+  assert.equal(pane.scrollTop, 260);
 });

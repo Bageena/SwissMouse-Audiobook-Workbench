@@ -25,6 +25,26 @@ const cover = path.join(root, 'cover.png');
 run(['-f', 'lavfi', '-i', 'color=c=blue:s=32x32', '-frames:v', '1', cover]);
 const packets = (file: string) => JSON.parse(execFileSync(fp, ['-v', 'error', '-select_streams', 'a:0', '-show_packets', '-show_data_hash', 'sha256', '-show_entries', 'packet=data_hash', '-of', 'json', file], {encoding: 'utf8', maxBuffer: 20e6})).packets.map((p: any) => p.data_hash);
 const fixtures: Record<string, string[]> = {mp3: ['-c:a','libmp3lame'], m4b: ['-c:a','aac','-f','mp4'], m4a: ['-c:a','aac'], aac: ['-c:a','aac'], ogg: ['-c:a','libvorbis'], oga: ['-c:a','libvorbis','-f','ogg'], opus: ['-c:a','libopus'], flac: ['-c:a','flac'], wav: ['-c:a','pcm_s16le'], aiff: ['-c:a','pcm_s16be'], aif: ['-c:a','pcm_s16be','-f','aiff'], wma: ['-c:a','wmav2'], alac: ['-c:a','alac','-f','mp4']};
+test('gap export removes the exact PCM samples and rebases chapters in every format', async () => {
+  const ranges = [
+    { start: '00:00:00.000', end: '00:00:02.000', title: 'Chapter 1' },
+    { start: '00:00:03.000', end: '00:00:04.000', title: 'Chapter 2' },
+    { start: '00:00:05.000', end: '00:00:08.000', title: 'Chapter 3' },
+  ];
+  const pcm = (file: string) => execFileSync(ff, ['-v', 'error', '-i', file, '-map', '0:a:0', '-f', 's16le', '-c:a', 'pcm_s16le', 'pipe:1']);
+  const original = pcm(master);
+  const expected = Buffer.concat([[0, 2], [3, 4], [5, 8]].map(([start, end]) => original.subarray(start * 48000 * 2, end * 48000 * 2)));
+  for (const format of outputFormats) {
+    const output = path.join(root, `gap-output.${format}`);
+    const result = await exportAudio({ ffmpeg: ff, ffprobe: fp, source: master, output, format, chapters: ranges });
+    assert.equal(result.mode, 'convert');
+    assert.ok(Math.abs(result.duration - 6) < 0.15, format);
+    assert.deepEqual(inspect(fp, output).chapters.map((c: any) => c.start), ['00:00:00.000', '00:00:02.000', '00:00:03.000'], format);
+    assert.match(fs.readFileSync(output + '.cue', 'utf8'), /INDEX 01 00:03:00/);
+    if (format === 'wav' || format === 'flac') assert.deepEqual(pcm(output), expected, format);
+  }
+  await assert.rejects(exportAudio({ ffmpeg: ff, ffprobe: fp, source: master, output: path.join(root, 'overlap.wav'), format: 'wav', chapters: [{ ...ranges[0], end: '00:00:03.500' }, ...ranges.slice(1)] }), /end timestamp/i);
+});
 test('all advertised inputs probe, decode, preserve opening/trailing audio, and seek on the preview timeline', async () => {
   for (const [ext, encoding] of Object.entries(fixtures)) {
     const file = path.join(root, 'input.' + ext);
@@ -110,6 +130,20 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     assert.equal(editedFile.tags.title,'Edited book');assert.equal(editedFile.tags.composer,'Edited narrator');assert.equal(editedFile.tags.series,'Edited series');assert.equal(editedFile.artwork,undefined);
     const partial=await request('/api/jobs/'+job.id+'/build-m4b',{outputFormats:['mp3','wav'],bitrate:'invalid'});
     assert.deepEqual(partial.exports.map((e:any)=>e.status),['failed','success']);
+
+    // Final validation must compare the compact exported timeline, not source duration.
+    await request('/api/jobs/'+job.id+'/chapters',{chapters:[
+      {id:'cut-1',title:'Chapter 1',start:'00:00:00.000',end:'00:00:02.000',endManuallyEdited:true},
+      {id:'cut-2',title:'Chapter 2',start:'00:00:03.000',end:'00:00:04.000',endManuallyEdited:true},
+      {id:'cut-3',title:'Chapter 3',start:'00:00:05.000',end:'00:00:08.000',endManuallyEdited:true},
+    ]});
+    const compact = await request('/api/jobs/'+job.id+'/build-m4b',{outputFormats:['m4b']});
+    assert.equal(compact.exports[0].status,'success',JSON.stringify(compact));
+    const compactInfo = inspect(fp,compact.exports[0].fullPath);
+    assert.ok(Math.abs(compactInfo.durationSeconds - 6) < 0.15);
+    assert.deepEqual(compactInfo.chapters.map(chapter=>chapter.start),['00:00:00.000','00:00:02.000','00:00:03.000']);
+    assert.equal((await request('/api/jobs/'+job.id+'/validate',{})).validation.status,'PASS');
+    assert.equal(await fingerprint([source],{}),original);
 
     const loose=path.join(root,'loose');fs.mkdirSync(loose);
     for(const [name,freq] of [['10',900],['2',600],['1',300]] as const) run(['-f','lavfi','-i',`sine=frequency=${freq}:sample_rate=44100:duration=3`,'-c:a','libmp3lame','-b:a','128k',path.join(loose,name+'.mp3')]);

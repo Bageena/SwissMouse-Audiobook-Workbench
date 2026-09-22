@@ -1,3 +1,4 @@
+import { capabilityLabel } from '../transcription';
 import { expandRequirementSelection, requirementDependencies } from '../../tools/requirements';
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -35,6 +36,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
   const [showFullLogs, setShowFullLogs] = useState<boolean>(false);
 
   const [selectedIds, setSelectedIds] = useState<string[]>(['faster_whisper']);
+  const [pytorchFlavor, setPytorchFlavor] = useState<'keep' | 'cpu' | 'cuda'>('keep');
   const selected = new Set(expandRequirementSelection(selectedIds));
   const lastPhase = useRef('');
 
@@ -92,8 +94,10 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
   const handleInstallRepair = async () => {
     setErrorMsg(null);
     setSuccessMsg(null);
+    const replacingTorch = pytorchFlavor !== 'keep' && !!report?.components.find(item => item.id === 'pytorch')?.installedVersion;
+    if (replacingTorch && !window.confirm('Replace the installed PyTorch build with the selected ' + pytorchFlavor.toUpperCase() + ' build? This affects regular Whisper. Existing speech models and projects will be kept.')) return;
     try {
-      const res = await fetch('/api/requirements/install-repair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedIds }) });
+      const res = await fetch('/api/requirements/install-repair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedIds, ...(pytorchFlavor === 'keep' ? {} : { pytorchFlavor, confirmPytorchReplacement: replacingTorch }) }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to start installation/repair.');
       
@@ -102,6 +106,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
         return;
       }
       
+      setPytorchFlavor('keep');
       // Fetch progress immediately
       const progRes = await fetch('/api/requirements/install-progress');
       if (progRes.ok) {
@@ -227,27 +232,27 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
 
           {/* Hardware Detection Card */}
           {report && (
-            <div className="bg-stone-900 text-stone-100 rounded-lg p-3.5 space-y-2.5">
+            <div className="hardware-card rounded-lg border border-stone-200 bg-white p-3.5 text-stone-800 space-y-2.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
-                  <Cpu className="w-4 h-4 text-amber-400" />
-                  <span className="font-semibold text-xs text-white">Your computer</span>
+                  <Cpu className="w-4 h-4 text-amber-700" />
+                  <span className="font-semibold text-xs text-stone-900">Your computer</span>
                 </div>
                 <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider ${
-                  report.hardware.hasNvidiaGpu ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-stone-800 text-stone-300 border border-stone-700'
+                  report.hardware.hasNvidiaGpu ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-stone-100 text-stone-700 border border-stone-200'
                 }`}>
                   {report.hardware.hasNvidiaGpu ? 'NVIDIA GPU Detected' : 'CPU Ready'}
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] text-stone-300 bg-stone-950/60 p-2.5 rounded border border-stone-800">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] text-stone-600 bg-stone-50 p-2.5 rounded border border-stone-200">
                 <div>
-                  <span className="text-stone-400">Processor:</span>{' '}
-                  <span className="font-medium text-stone-200">{report.hardware.cpuModel}</span>
+                  <span className="text-stone-500">Processor:</span>{' '}
+                  <span className="font-medium text-stone-800">{report.hardware.cpuModel}</span>
                 </div>
                 <div>
-                  <span className="text-stone-400">Platform:</span>{' '}
-                  <span className="font-medium text-stone-200">{report.hardware.os} ({report.hardware.arch})</span>
+                  <span className="text-stone-500">Platform:</span>{' '}
+                  <span className="font-medium text-stone-800">{report.hardware.os} ({report.hardware.arch})</span>
                 </div>
                 {report.hardware.hasNvidiaGpu ? (
                   <>
@@ -261,13 +266,13 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
                     </div>
                   </>
                 ) : (
-                  <div className="md:col-span-2 text-stone-400 italic">
+                  <div className="md:col-span-2 text-stone-500 italic">
                     No compatible NVIDIA GPU was found. Speech recognition will still work on the CPU, though it may take longer.
                   </div>
                 )}
               </div>
 
-              <div className="flex items-center space-x-2 text-[11px] text-amber-300/90 pt-0.5">
+              <div className="flex items-center space-x-2 text-[11px] text-amber-800 pt-0.5">
                 <Zap className="w-3.5 h-3.5 shrink-0" />
                 <span>{report.hardware.recommendationSummary}</span>
               </div>
@@ -354,6 +359,29 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
             </div>
           )}
 
+          {report && <div className="rounded-lg border border-stone-200 bg-stone-50 p-4 space-y-3">
+            <h3 className="font-bold">Transcription runtime capabilities</h3>
+            {Object.values(report.backendCapabilities || {}).map(capability => capability && <div key={capability.engine} className="space-y-1">
+              <p className="font-semibold">{capability.engine === 'faster-whisper' ? 'Faster Whisper / CTranslate2' : 'Regular Whisper / PyTorch'}: {capabilityLabel(capability)}</p>
+              <p>Runtime version: {capability.runtimeVersion || 'Unavailable'} · GPU initialization: {capability.initialization}</p>
+              {capability.engine === 'openai-whisper' && <p>CUDA support: {capability.cudaBuilt === undefined ? 'Unknown' : capability.cudaBuilt ? 'Yes' : 'No'} · CUDA runtime: {capability.cudaVersion || 'None'} · GPU available to PyTorch: {capability.gpuAvailable ? 'Yes' : 'No'}</p>}
+              {capability.reason && <p>{capability.reason}</p>}
+            </div>)}
+            <p>Faster Whisper uses CTranslate2. Its GPU acceleration does not require CUDA-enabled PyTorch. Runtime queries do not load a speech model; Faster Whisper GPU model initialization is verified during transcription.</p>
+            <label className="block space-y-1">
+              <span className="font-semibold">PyTorch installation (regular Whisper only)</span>
+              <select aria-label="PyTorch installation" value={pytorchFlavor} disabled={progressState?.isActive}
+                onChange={event => setPytorchFlavor(event.target.value as 'keep' | 'cpu' | 'cuda')}
+                className="block w-full rounded border border-stone-300 bg-white p-2">
+                <option value="keep">Keep existing build (CPU default for a missing dependency)</option>
+                <option value="cpu">Install CPU PyTorch</option>
+                <option value="cuda" disabled={!report.pytorchBuild?.cudaAvailable}>Install GPU/CUDA PyTorch{report.pytorchBuild?.cudaAvailable ? '' : ' — unavailable'}</option>
+              </select>
+            </label>
+            <p>Faster Whisper uses the same downloaded model on CPU and GPU; this PyTorch setting does not enable or disable its GPU acceleration.</p>
+            <p>NVIDIA driver: {report.hardware.driverVersion || 'Unknown'} · Driver CUDA compatibility: {report.hardware.cudaVersion || 'Unknown'} · GPU compute capability: {report.hardware.computeCapability ?? 'Unknown'}</p>
+            <p>{report.pytorchBuild?.reason} Existing builds are replaced only after confirmation.</p>
+          </div>}
           {/* Requirements Component List */}
           <div className="space-y-2">
             <div className="flex items-center justify-between pb-1 border-b border-stone-200">
@@ -463,7 +491,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
               </div>
 
               {showFullLogs && (
-                <div className="bg-stone-900 text-stone-200 p-3 rounded-lg font-mono text-[11px] max-h-40 overflow-y-auto space-y-1 border border-stone-800">
+                <div className="terminal-surface bg-stone-900 text-stone-200 p-3 rounded-lg font-mono text-[11px] max-h-40 overflow-y-auto space-y-1 border border-stone-800">
                   {progressState.logs.map((line, idx) => (
                     <div key={idx} className="leading-tight">
                       {line}
@@ -510,7 +538,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
               className="flex items-center space-x-1.5 px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
             >
               <Wrench className="w-3.5 h-3.5" />
-              <span>Install Selected Missing Requirements</span>
+              <span>{pytorchFlavor === 'keep' ? 'Install Selected Missing Requirements' : 'Install selected build and missing requirements'}</span>
             </button>
           </div>
         </div>
