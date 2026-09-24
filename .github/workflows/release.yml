@@ -35,7 +35,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes ffmpeg
           mkdir -p .cache audio-test-reference
-          curl --fail --location https://raw.githubusercontent.com/advplyr/audiobookshelf/master/server/utils/prober.js --output audio-test-reference/prober.cjs
+          curl --fail --location https://raw.githubusercontent.com/advplyr/audiobookshelf/64e9ac9d8f27353f9f588cb4c70cb5b0b6b2989c/server/utils/prober.js --output audio-test-reference/prober.cjs
           echo "91ce699b6d7927491e508c6d0dd30f25f7179506ef58503a1d25c653fde1a3fa  audio-test-reference/prober.cjs" | sha256sum --check -
 
       - name: Install dependencies
