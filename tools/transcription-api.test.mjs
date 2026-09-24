@@ -12,7 +12,7 @@ test('HTTP transcription rerun retains cache; beam invalidates; lead-in and mode
   fs.mkdirSync(bin, { recursive: true });
   for (const name of ['ffmpeg', 'ffprobe']) {
     const suffix = process.platform === 'win32' ? '.exe' : '';
-    const source = path.resolve('runtime/bin', name + suffix);
+    const source = process.env[name === 'ffmpeg' ? 'TEST_FFMPEG' : 'TEST_FFPROBE'] || path.resolve('runtime/bin', name + suffix);
     fs.copyFileSync(source, path.join(bin, name + suffix));
   }
   const audio = path.join(root, 'source.wav');

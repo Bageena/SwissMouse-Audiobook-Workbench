@@ -10,6 +10,15 @@ import { PcmAnalysis } from './audio-analysis';
 import { planChapterExport } from '../src/utils/chapterExport';
 import { sampleRateFloor, encoderSampleRates, opusInputSampleRate, verifyOutputSampleRate } from './audio-sample-rate';
 const run = promisify(execFile);
+const filterFileOptions = new Map<string, string>();
+function filterComplexFileOption(ffmpeg: string): string {
+  const cached = filterFileOptions.get(ffmpeg);
+  if (cached) return cached;
+  const help = execFileSync(ffmpeg, ['-hide_banner', '-h', 'full'], { encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+  const option = /(?:^|\n)\s*-filter_complex_script\s/m.test(help) ? '-filter_complex_script' : '-/filter_complex';
+  filterFileOptions.set(ffmpeg, option);
+  return option;
+}
 function readWavCues(file: string, rate: number) {
   const fd=fs.openSync(file,'r'); const points=new Map<number,number>();const labels=new Map<number,string>();
   try {
@@ -182,8 +191,8 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
       ...plan.ranges.map((range, i) => `${inputs[i]}atrim=start=${range.start / 1000}:end=${range.end / 1000},asetpts=PTS-STARTPTS[part${i}]`),
       `${plan.ranges.map((_, i) => `[part${i}]`).join('')}concat=n=${plan.ranges.length}:v=0:a=1[edited]`];
     fs.writeFileSync(filterPath, graph.join(';\n'));
-    // FFmpeg's file-valued option syntax avoids Windows command-line limits.
-    args.push('-/filter_complex', filterPath);
+    // FFmpeg 6 uses the legacy script option; newer builds use file-valued option syntax.
+    args.push(filterComplexFileOption(o.ffmpeg), filterPath);
   }
   args.push('-map', plan.trimmed ? '[edited]' : '0:a:0', '-map_metadata', '1', '-map_metadata:s:a', '-1', '-map_chapters', tagged || o.format === 'wav' ? '-1' : '1');
   if (['m4b','m4a'].includes(o.format) && tags.language) args.push('-metadata:s:a:0', 'language=' + tags.language);
