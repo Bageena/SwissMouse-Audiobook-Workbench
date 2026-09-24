@@ -13,9 +13,14 @@ If a paid Patreon tier isn't within your budget, **free Patreon members are just
 **Nothing related to this project is locked behind a Patreon paywall.** Posts and project updates are available to free members, and the software itself remains free and open source.
 
 If you can support financially, thank you. If you can't, you're still every bit as welcome here.
-<img width="2815" height="1831" alt="Chapter" src="https://github.com/user-attachments/assets/4ef27bce-a542-431c-9bd9-8d221791a5eb" />
-<img width="3046" height="1711" alt="Requirements" src="https://github.com/user-attachments/assets/564e5017-8b6d-4884-9063-e1f51da9a949" />
-<img width="3049" height="1782" alt="Stage1" src="https://github.com/user-attachments/assets/022ff4e1-6917-4d7e-8610-72d246b3afc1" />
+<img width="1096" height="905" alt="Home" src="https://github.com/user-attachments/assets/e5bc1b5e-f60b-48a5-88a9-973110bc9e40" />
+<img width="1092" height="905" alt="Settings" src="https://github.com/user-attachments/assets/fb217396-21bb-42d2-9453-6424f76960a8" />
+<img width="1094" height="902" alt="Chapter Editor" src="https://github.com/user-attachments/assets/d6340080-59eb-440b-9e12-1f83ace3c784" />
+<img width="1096" height="905" alt="Cover Gen" src="https://github.com/user-attachments/assets/442ea70a-bdf0-4133-8051-c378c1b501c6" />
+
+
+
+
 
 # SwissMouse
 
