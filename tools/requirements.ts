@@ -24,6 +24,7 @@ export function pytorchInstallPlan(report: RequirementsReport, flavor: unknown, 
   const build = pytorchBuildOptions(report.hardware);
   if (flavor === 'cuda' && !build.cudaAvailable) throw new Error(build.reason);
   const installed = report.components.find(component => component.id === 'pytorch');
+  if (installed?.source === 'system') throw new Error('System PyTorch is managed outside SwissMouse. Change it with its original package manager, then check again.');
   if (installed?.installedVersion && !confirmed) throw new Error('Confirm replacement of the installed PyTorch build before continuing');
   return { flavor, index: flavor === 'cpu' ? 'cpu' : build.cudaIndex!, replace: !!installed?.installedVersion };
 }

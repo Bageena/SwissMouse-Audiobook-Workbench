@@ -39,7 +39,7 @@ test('backend APIs isolate model files, cancellation, removal, defaults and requ
     };
   `);
   const port = 19000 + Math.floor(Math.random() * 10000);
-  const server = spawn(process.execPath, ['--require', tracer, entry], { env: { ...process.env, PORT: String(port), APP_ROOT: root, NODE_ENV: 'production' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const server = spawn(process.execPath, ['--require', tracer, entry], { env: { ...process.env, SWISSMOUSE_RUNTIME_MODE: 'managed', PORT: String(port), APP_ROOT: root, NODE_ENV: 'production' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   server.stdout.on('data', data => output += data);
   server.stderr.on('data', data => output += data);
@@ -116,7 +116,7 @@ test('backend APIs isolate model files, cancellation, removal, defaults and requ
     assert.equal(refreshedRequirements.components.find(component => component.id === 'python').status, 'missing');
     const blocked = await fetch(base + '/api/models/tiny/prepare?engine=faster-whisper&force=true', {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     assert.equal(blocked.status, 424);
-    assert.deepEqual((await blocked.json()).missingRequirements, ['Application Runtime']);
+    assert.deepEqual((await blocked.json()).missingRequirements, ['Python Runtime']);
   } finally {
     server.kill();
     await new Promise(resolve => server.once('exit', resolve));

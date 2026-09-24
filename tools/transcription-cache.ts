@@ -11,7 +11,7 @@ export function processingKey(stage: string, sourceKey: string, settings: unknow
   return createHash('sha256').update(JSON.stringify(stable({ version: 2, stage, sourceKey, settings }))).digest('hex');
 }
 export function preparationKey(sourceKey: string, mergeMethod: string): string {
-  return processingKey('audio-preparation', sourceKey, { mergeMethod });
+  return processingKey('audio-preparation', sourceKey, { mergeMethod, ...(mergeMethod === 'standard' ? {sampleRatePolicy:'lowest-source-v1'} : {}) });
 }
 export async function sourceProcessingKeys(files: string[], mergeMethod: string, hash = fingerprint) {
   // Keep the existing source hash format so export integrity checks remain valid.

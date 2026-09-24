@@ -2,6 +2,8 @@
 
 ## Safe defaults
 
+SwissMouse now prefers complete compatible system Python environments discovered in PATH at startup, with a private venv fallback per engine. Requirements shows the selected interpreter and protects external packages from installation/removal. See [system-first requirements and safe removal](REQUIREMENTS.md). Ordinary status polling remains cached; startup and explicit rescans perform import checks without loading models.
+
 Faster Whisper keeps the non-batched path, word timestamps, VAD disabled, and beam size 5. Experimental GPU Batching is Off. Regular OpenAI Whisper retains its original temperature-based decoding defaults; incompatible beam and batching controls are disabled.
 
 Open **Transcription & model settings → Advanced transcription** to choose Auto/CPU processing, batching, and Faster Whisper beam size (integer 1–5). Lower beams generally reduce search work; higher beams do not guarantee better recognition. Choices are saved per project and per backend. Language defaults to English; the project settings API also accepts a backend-supported language code.

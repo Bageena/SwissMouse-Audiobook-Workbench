@@ -66,6 +66,8 @@ for (const [text, number] of [
   ['Chapter Twenty-Three', 23], ['Chapter Twenty-Third', 23], ['Chapter XXIII', 23],
   ['Chapter First', 1], ['Chapter Twelfth', 12], ['Chapter Fortieth', 40],
   ['“CHAPTER:  twenty\u2011third”', 23],
+  ['Chapter 1st', 1], ['Chapter 12th', 12], ['Chapter 23rd', 23], ['Chapter 111th', 111],
+  ['Chapter the First', 1], ['Chapter the Twenty-Second', 22], ['Chapter One Hundredth', 100],
 ] as const) {
   test(`parses chapter number: ${text}`, () => {
     const [heading] = detectChapterHeadings([chapterSegment(text)]);
@@ -146,9 +148,92 @@ test('gaps never reject valid chapters or invent missing chapters', () => {
 test('ordinary prose and invalid Roman numerals do not become headings', () => {
   for (const text of ['There were twenty three people and twelve books.', 'Read chapter twelve next.',
     'I made notes in the book.', 'Notes were scattered across the desk.', 'Conclusion is a difficult word.',
-    'An introduction to the subject.', 'This is part two of our discussion.', 'Chapter IIX', 'Chapter CIVIL']) {
+    'An introduction to the subject.', 'This is part two of our discussion.', 'Chapter IIX', 'Chapter CIVIL',
+    'Chapter Twelve was the hardest to write.', 'Chapter 12 of this book contains more details.', 'Chapter 12st']) {
     assert.deepEqual(detectChapterHeadings([chapterSegment(text)]), [], text);
   }
+});
+
+test('number parsing stops at sentence punctuation and does not swallow opening narration', () => {
+  for (const text of ['Chapter Twenty. Three years passed.', 'Chapter Twenty: Three years passed.',
+    'Chapter Twenty, three years later.', 'Chapter Twenty; three years passed.']) {
+    assert.deepEqual(detectChapterHeadings([chapterSegment(text)]).map(heading => [heading.text, heading.chapterNumber]),
+      [['Chapter Twenty', 20]], text);
+  }
+  assert.equal(detectChapterHeadings([
+    chapterSegment('Chapter Twenty.', 10), chapterSegment('Three years passed.', 14),
+  ])[0]?.chapterNumber, 20);
+});
+
+test('split markers cannot acquire numbers from distant narration', () => {
+  assert.deepEqual(detectChapterHeadings([
+    chapterSegment('Chapter', 10), chapterSegment('Twelve people arrived.', 90),
+  ]), []);
+  assert.deepEqual(detectChapterHeadings([
+    chapterSegment('Chapter', 10), chapterSegment('the Twelve', 90),
+  ]), []);
+  assert.deepEqual(detectChapterHeadings([
+    chapterSegment('Chapter Twenty', 10), chapterSegment('Three years passed.', 90),
+  ]).map(heading => [heading.text, heading.chapterNumber]), [['Chapter Twenty', 20]]);
+});
+
+test('ASR segment boundaries do not turn narrative references into headings', () => {
+  for (const texts of [['Read', 'Chapter Twelve next.'], ['We discussed', 'Chapter Twelve yesterday.'],
+    ['Chapter Twelve', 'was the hardest to write.'], ['Notes', 'were scattered across the desk.'],
+    ['This is the', 'Introduction.']]) {
+    assert.deepEqual(detectChapterHeadings(texts.map((text, index) => chapterSegment(text, 10 + index * 4))), [], texts.join(' / '));
+  }
+});
+
+test('word-timed pauses find unpunctuated headings without shifting their word anchors', () => {
+  const words = [
+    { word: 'the', start: 10, end: 10.3 }, { word: 'end', start: 10.4, end: 11 },
+    { word: 'Chapter', start: 13.125, end: 13.6 }, { word: 'Twelve', start: 13.7, end: 14.2 },
+    { word: 'she', start: 16, end: 16.3 }, { word: 'waited', start: 16.4, end: 17 },
+    { word: 'Epilogue', start: 20.375, end: 21 }, { word: 'she', start: 23, end: 23.3 },
+    { word: 'returned', start: 23.4, end: 24 },
+  ];
+  const headings = detectChapterHeadings([{ ...chapterSegment(words.map(word => word.word).join(' ')), end: 24, words }]);
+  assert.deepEqual(headings.map(heading => [heading.text, heading.start, heading.transcriptWordIndex]),
+    [['Chapter Twelve', 13.125, 2], ['Epilogue', 20.375, 6]]);
+  assert.deepEqual(detectChapterHeadings([{ ...chapterSegment('Read Chapter Twelve'), words: [
+    { word: 'Read', start: 10, end: 10.4 }, { word: 'Chapter', start: 10.5, end: 11 },
+    { word: 'Twelve', start: 11.1, end: 11.5 },
+  ] }]), []);
+});
+
+test('a real pause permits a heading after a reference-like final word or before prose-like narration', () => {
+  const words = [
+    { word: 'remember', start: 10, end: 11 }, { word: 'Chapter', start: 15.375, end: 16 },
+    { word: 'Twelve', start: 16.1, end: 16.5 }, { word: 'Was', start: 20, end: 20.5 },
+    { word: 'she', start: 20.6, end: 21 }, { word: 'alone', start: 21.1, end: 21.5 },
+  ];
+  const [heading] = detectChapterHeadings([{ ...chapterSegment(words.map(word => word.word).join(' ')), end: 22, words }]);
+  assert.equal(heading?.start, 15.375);
+  assert.equal(heading?.chapterNumber, 12);
+});
+
+test('recovery handles a fully observed sequence but never fills absent or reversed headings', () => {
+  const headings = detectChapterHeadings([
+    chapterSegment('Chapter 14', 10), chapterSegment('Chaptor Fifteen', 20),
+    chapterSegment('Chap ter Sixteen', 30), chapterSegment('Chapter 17', 40),
+  ]);
+  assert.deepEqual(headings.map(heading => [heading.chapterNumber, !!heading.recovered]),
+    [[14, false], [15, true], [16, true], [17, false]]);
+  for (const middle of [
+    [chapterSegment('Chaptor Fifteen', 20)],
+    [chapterSegment('Chaptor Sixteen', 20), chapterSegment('Chaptor Fifteen', 30)],
+  ]) {
+    assert.deepEqual(detectChapterHeadings([chapterSegment('Chapter 14', 10), ...middle, chapterSegment('Chapter 17', 40)])
+      .map(heading => heading.chapterNumber), [14, 17]);
+  }
+});
+
+test('an inline reference does not obscure the single legitimate recovery candidate', () => {
+  assert.deepEqual(detectChapterHeadings([
+    chapterSegment('Chapter 14', 10), chapterSegment('See chaptor fifteen for details.', 20),
+    chapterSegment('Chaptor Fifteen', 30), chapterSegment('Chapter 16', 40),
+  ]).map(heading => [heading.chapterNumber, heading.start]), [[14, 10], [15, 30], [16, 40]]);
 });
 
 test('suppresses exact repeated observations but keeps later occurrences', () => {

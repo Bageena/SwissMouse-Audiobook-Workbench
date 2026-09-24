@@ -18,6 +18,8 @@ const releaseFiles = [
   'CUSTOM-THEMES.md',
   'FORMAT-SUPPORT.md',
   'TRANSCRIPTION.md',
+  'CHAPTER-DETECTION.md',
+  'REQUIREMENTS.md',
   'LIBRIVOX.md',
   'metadata.json',
   'package-lock.json',

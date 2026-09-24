@@ -8,6 +8,7 @@ import { preserveMp4Metadata } from './mp4-metadata';
 import { writeWavMetadata } from './wav-metadata';
 import { PcmAnalysis } from './audio-analysis';
 import { planChapterExport } from '../src/utils/chapterExport';
+import { sampleRateFloor, encoderSampleRates, opusInputSampleRate, verifyOutputSampleRate } from './audio-sample-rate';
 const run = promisify(execFile);
 function readWavCues(file: string, rate: number) {
   const fd=fs.openSync(file,'r'); const points=new Map<number,number>();const labels=new Map<number,string>();
@@ -74,15 +75,16 @@ export async function fingerprint(files: string[], settings: unknown) {
 const escape = (s: unknown) => String(s).replace(/([\\=;#\n\r])/g, '\\$1');
 export function validateChapters(chapters: {start: string; end?: string; title: string; isMissing?: boolean}[], duration: number) {
   let previous = -1;
+  const durationMs = Math.round(duration * 1000);
   if (!chapters.length) throw new Error('Review at least one chapter before exporting');
   if (seconds(chapters[0].start) !== 0) throw new Error('Add an Opening chapter at 00:00:00.000. MP4 chapter tracks require a chapter at time zero.');
   for (let index = 0; index < chapters.length; index++) {
     const chapter = chapters[index];
-    const start = seconds(chapter.start);
-    const end = chapter.end ? seconds(chapter.end) : (chapters[index + 1] ? seconds(chapters[index + 1].start) - 0.001 : duration);
-    const nextStart = chapters[index + 1] ? seconds(chapters[index + 1].start) : undefined;
-    if (chapter.isMissing || !chapter.title.trim() || start <= previous || start >= duration) throw new Error('Chapter titles must be nonempty and starts must increase within the recording');
-    if (end <= start || end > duration || (nextStart !== undefined && end >= nextStart)) throw new Error(`Invalid end timestamp for ${chapter.title}`);
+    const start = Math.round(seconds(chapter.start) * 1000);
+    const end = chapter.end ? Math.round(seconds(chapter.end) * 1000) : (chapters[index + 1] ? Math.round(seconds(chapters[index + 1].start) * 1000) - 1 : durationMs);
+    const nextStart = chapters[index + 1] ? Math.round(seconds(chapters[index + 1].start) * 1000) : undefined;
+    if (chapter.isMissing || !chapter.title.trim() || start <= previous || start >= durationMs) throw new Error('Chapter titles must be nonempty and starts must increase within the recording');
+    if (end <= start || end > durationMs || (nextStart !== undefined && end >= nextStart)) throw new Error(`Invalid end timestamp for ${chapter.title}`);
     previous = start;
   }
 }
@@ -134,7 +136,7 @@ function wavCues(file: string, chapters: {start: string; title: string}[], rate:
     else { const n = Buffer.alloc(4); n.writeUInt32LE(size - 8); fs.writeSync(fd, n, 0, 4, 4); }
   } finally { fs.closeSync(fd); }
 }
-export async function exportAudio(options: {ffmpeg: string; ffprobe: string; source: string; output: string; format: ExportFormat; chapters: {start: string; end?: string; title: string; isMissing?: boolean}[]; tags?: Record<string, string>; cover?: string | null; convert?: boolean; bitrate?: string; cue?: boolean; onProgress?: (n: number) => void}) {
+export async function exportAudio(options: {ffmpeg: string; ffprobe: string; source: string; output: string; format: ExportFormat; chapters: {start: string; end?: string; title: string; isMissing?: boolean}[]; tags?: Record<string, string>; cover?: string | null; convert?: boolean; bitrate?: string; cue?: boolean; sampleRateCeiling?: number; onLog?: (message: string) => void; onProgress?: (n: number) => void}) {
   const o = options;
   if (!outputFormats.includes(o.format)) throw new Error('Unsupported output format');
   if (path.resolve(o.source).toLowerCase() === path.resolve(o.output).toLowerCase() || fs.existsSync(o.output)) throw new Error('Output already exists; choose a new output name');
@@ -142,7 +144,27 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   validateChapters(o.chapters, source.durationSeconds);
   const plan = planChapterExport(o.chapters, source.durationSeconds);
   const chapters = plan.chapters;
-  const copy = !plan.trimmed && !o.convert && !o.bitrate && canCopy(source.codec, o.format);
+  const ceiling = Math.min(sampleRateFloor(source.sampleRate), sampleRateFloor(o.sampleRateCeiling ?? source.sampleRate));
+  const copy = source.sampleRate <= ceiling && !plan.trimmed && !o.convert && !o.bitrate && canCopy(source.codec, o.format);
+  const encoder = {m4b: 'aac', m4a: 'aac', mp3: 'libmp3lame', flac: 'flac', ogg: 'libvorbis', opus: 'libopus', wav: 'pcm_s16le'}[o.format];
+  const targetRate = copy ? source.sampleRate : sampleRateFloor(ceiling, await encoderSampleRates(o.ffmpeg, encoder));
+  const log = (message: string) => { console.log(`[Export ${o.format}] ${message}`); o.onLog?.(message); };
+  const rateMessage = `Sample rate: source/master ${source.sampleRate} Hz; input ceiling ${ceiling} Hz; ${copy ? 'stream copy' : 'encoder input'} ${targetRate} Hz (never rounded up).`;
+  log(rateMessage);
+  const encodingWarnings: string[] = [];
+  let vorbisQualityFallback = false;
+  if (!copy && o.format === 'ogg') {
+    const testArgs = ['-v','error','-f','lavfi','-i',`anullsrc=r=${targetRate}:cl=${source.channels}c`,'-t','0.05','-c:a',encoder,'-ar',String(targetRate)];
+    try { await run(o.ffmpeg,[...testArgs,'-b:a',o.bitrate || '96k','-f','null','-'],{windowsHide:true,timeout:10000}); }
+    catch (error: any) {
+      log(`Vorbis bitrate preflight failed: ${String(error.stderr || error.message).trim()}`);
+      // Keep the rate; don't silently upsample to satisfy an unsuitable bitrate.
+      await run(o.ffmpeg,[...testArgs,'-q:a','4','-f','null','-'],{windowsHide:true,timeout:10000});
+      vorbisQualityFallback = true;
+      const warning = `Vorbis rejected ${o.bitrate || '96k'} at ${targetRate} Hz / ${source.channels} channel(s). Used quality-based VBR (q=4); bitrate may differ. Sample rate was retained.`;
+      encodingWarnings.push(warning); log(warning);
+    }
+  }
   const tags = Object.fromEntries(Object.entries(source.tags).map(([k,v])=>[k.toLowerCase(),String(v)]));
   for(const [key,value] of Object.entries(o.tags || {})) tags[key.toLowerCase()] = value;
   for (const key of Object.keys(tags)) if (/^chapter\d+/i.test(key) || ['major_brand', 'minor_version', 'compatible_brands', 'encoder'].includes(key)) delete tags[key];
@@ -167,9 +189,10 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   if (['m4b','m4a'].includes(o.format) && tags.language) args.push('-metadata:s:a:0', 'language=' + tags.language);
   const coverSupported = ['m4b', 'm4a', 'mp3', 'flac'].includes(o.format);
   if (coverSupported && (o.cover || (o.cover === undefined && source.artwork))) args.push('-map', o.cover ? '2:v:0' : `0:${source.artwork.index}`, '-c:v', 'copy', '-disposition:v:0', 'attached_pic');
-  const encoder = {m4b: 'aac', m4a: 'aac', mp3: 'libmp3lame', flac: 'flac', ogg: 'libvorbis', opus: 'libopus', wav: 'pcm_s16le'}[o.format];
   args.push('-c:a', copy ? 'copy' : encoder);
-  if (!copy && !['flac', 'wav'].includes(o.format)) args.push('-b:a', o.bitrate || (o.format === 'mp3' ? '192k' : '96k'));
+  if (!copy) args.push('-ar', String(targetRate));
+  if (vorbisQualityFallback) args.push('-q:a','4');
+  else if (!copy && !['flac', 'wav'].includes(o.format)) args.push('-b:a', o.bitrate || (o.format === 'mp3' ? '192k' : '96k'));
   if (['m4b', 'm4a'].includes(o.format)) args.push('-f', 'mp4');
   if (o.format === 'wav') args.push('-rf64', 'auto');
   args.push('-progress','pipe:1',o.output);
@@ -185,6 +208,11 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   if (o.format === 'wav') writeWavMetadata(o.output,tags);
   o.onProgress?.(90);
   const result = inspect(o.ffprobe, o.output);
+  verifyOutputSampleRate(result.sampleRate, targetRate, !copy && o.format === 'opus' ? opusInputSampleRate(o.output) : undefined);
+  const sampleRateSummary = !copy && o.format === 'opus'
+    ? `Sample rate: ${targetRate} Hz encoder input; ${result.sampleRate} Hz Opus playback clock (verified).`
+    : `Sample rate: ${result.sampleRate} Hz${targetRate < ceiling ? ` (closest supported rate below ${ceiling} Hz)` : ''} — verified${copy ? ', original audio copied' : ''}.`;
+  log(sampleRateSummary);
   if (Math.abs(result.durationSeconds - plan.durationSeconds) > 0.15) throw new Error('Output duration does not match the reviewed chapter ranges');
   if (result.chapters.length !== chapters.length || result.chapters.some((c: any, i: number) => {
     const expected = chapters[i];
@@ -201,6 +229,7 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   }
   o.onProgress?.(100);
   const warnings: string[] = !coverSupported && (source.artwork || o.cover) ? ['Artwork cannot be embedded by this exporter; original artwork remains in the project.'] : [];
+  warnings.push(...encodingWarnings);
   if (plan.trimmed) warnings.push(`Removed ${plan.removedSeconds.toFixed(3)} seconds outside chapter ranges. Audio was re-encoded for precise cuts; source timestamps remain unchanged in the editor.`);
   const readTags=Object.fromEntries(Object.entries(result.tags).map(([k,v])=>[k.toLowerCase(),v]));
   const represented = (key: string, value: string) => {
@@ -211,5 +240,5 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   };
   const missing=Object.entries(tags).filter(([k,v])=>v && !/^chapter\d+/i.test(k) && !['handler_name','vendor_id','language'].includes(k) && !represented(k.toLowerCase(),v)).map(([k])=>k);
   if(missing.length) warnings.push('Metadata not represented exactly in this container: '+missing.join(', '));
-  return { filename: path.basename(o.output), fullPath: o.output, format: o.format, duration: result.durationSeconds, sizeBytes: fs.statSync(o.output).size, codec: result.codec, bitrate: copy ? 'Original' : o.bitrate || 'Default', chaptersCount: result.chapters.length, mode: copy ? 'copy' : 'convert', warnings, verifiedTags: result.tags };
+  return { filename: path.basename(o.output), fullPath: o.output, format: o.format, duration: result.durationSeconds, sizeBytes: fs.statSync(o.output).size, codec: result.codec, bitrate: copy ? 'Original' : vorbisQualityFallback ? 'VBR quality 4' : o.bitrate || 'Default', sourceSampleRate: source.sampleRate, sampleRateCeiling: ceiling, encodingSampleRate: copy ? undefined : targetRate, sampleRate: result.sampleRate, sampleRateSummary, chaptersCount: result.chapters.length, mode: copy ? 'copy' : 'convert', warnings, verifiedTags: result.tags };
 }

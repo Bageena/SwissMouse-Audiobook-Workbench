@@ -34,6 +34,8 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showFullLogs, setShowFullLogs] = useState<boolean>(false);
+  const [actionPending, setActionPending] = useState(false);
+  const busy = actionPending || isRefreshing || !!progressState?.isActive;
 
   const [selectedIds, setSelectedIds] = useState<string[]>(['faster_whisper']);
   const [pytorchFlavor, setPytorchFlavor] = useState<'keep' | 'cpu' | 'cuda'>('keep');
@@ -49,9 +51,10 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
 
     try {
       const res = await fetch(`/api/requirements/status${isRefreshAction ? '?refresh=true' : ''}`);
-      if (!res.ok) throw new Error('Failed to fetch requirements status.');
-      const data: RequirementsReport = await res.json();
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to fetch requirements status.');
       setReport(data);
+      if (data.components.some((item: BaseRequirementItem) => item.id === 'pytorch' && item.source === 'system')) setPytorchFlavor('keep');
       window.dispatchEvent(new Event('requirements-changed'));
     } catch (e: any) {
       setErrorMsg(e.message || 'Error checking requirements.');
@@ -96,6 +99,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
     setSuccessMsg(null);
     const replacingTorch = pytorchFlavor !== 'keep' && !!report?.components.find(item => item.id === 'pytorch')?.installedVersion;
     if (replacingTorch && !window.confirm('Replace the installed PyTorch build with the selected ' + pytorchFlavor.toUpperCase() + ' build? This affects regular Whisper. Existing speech models and projects will be kept.')) return;
+    setActionPending(true);
     try {
       const res = await fetch('/api/requirements/install-repair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedIds, ...(pytorchFlavor === 'keep' ? {} : { pytorchFlavor, confirmPytorchReplacement: replacingTorch }) }) });
       const data = await res.json();
@@ -114,7 +118,23 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
       }
     } catch (e: any) {
       setErrorMsg(e.message || 'Failed to trigger installation.');
-    }
+    } finally { setActionPending(false); }
+  };
+
+  const handleUninstall = async (component: BaseRequirementItem) => {
+    if (!window.confirm(`Remove the app-managed copy of ${component.name}?\n\n${component.uninstallImpact || ''}\n\nLocation: ${component.managedLocation}\n\nSystem installations, downloaded models, projects and audio will be kept.`)) return;
+    setActionPending(true); setErrorMsg(null); setSuccessMsg(null);
+    try {
+      const response = await fetch('/api/requirements/uninstall', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: component.id, confirmed: true }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not remove component.');
+      const progress = await fetch('/api/requirements/install-progress');
+      if (!progress.ok) throw new Error('Removal started, but progress could not be loaded. Reopen this screen to check.');
+      const state: InstallRepairProgress = await progress.json();
+      setProgressState(state);
+      if (!state.isActive) await fetchStatus();
+    } catch (error: any) { setErrorMsg(error.message); }
+    finally { setActionPending(false); }
   };
 
   // Trigger Cancel
@@ -172,7 +192,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
 
   return (
     <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl max-w-2xl w-full shadow-2xl border border-stone-200 flex flex-col max-h-[90vh] overflow-hidden">
+      <div role="dialog" aria-modal="true" aria-label="System setup and tools" className="bg-white rounded-xl max-w-4xl w-full shadow-2xl border border-stone-200 flex flex-col max-h-[90vh] overflow-hidden">
         {/* Header */}
         <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-stone-50">
           <div className="flex items-center space-x-2.5">
@@ -218,66 +238,13 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
             </div>
           )}
 
-          {/* Local Security & Policy Banner */}
-          <div className="p-3 bg-stone-50 border border-stone-200 rounded-lg flex items-start space-x-3">
-            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <p className="font-semibold text-stone-900 text-xs">Your files stay on this computer</p>
-              <p className="text-[11px] text-stone-600 leading-relaxed">
-                SwissMouse processes source audio, transcripts, and book details locally; it does not upload them to a cloud service.
-                <strong className="text-stone-800 ml-1">Speech models and YouTube tools are managed separately</strong> and are not changed here.
-              </p>
-            </div>
-          </div>
-
-          {/* Hardware Detection Card */}
-          {report && (
-            <div className="hardware-card rounded-lg border border-stone-200 bg-white p-3.5 text-stone-800 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <Cpu className="w-4 h-4 text-amber-700" />
-                  <span className="font-semibold text-xs text-stone-900">Your computer</span>
-                </div>
-                <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider ${
-                  report.hardware.hasNvidiaGpu ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-stone-100 text-stone-700 border border-stone-200'
-                }`}>
-                  {report.hardware.hasNvidiaGpu ? 'NVIDIA GPU Detected' : 'CPU Ready'}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] text-stone-600 bg-stone-50 p-2.5 rounded border border-stone-200">
-                <div>
-                  <span className="text-stone-500">Processor:</span>{' '}
-                  <span className="font-medium text-stone-800">{report.hardware.cpuModel}</span>
-                </div>
-                <div>
-                  <span className="text-stone-500">Platform:</span>{' '}
-                  <span className="font-medium text-stone-800">{report.hardware.os} ({report.hardware.arch})</span>
-                </div>
-                {report.hardware.hasNvidiaGpu ? (
-                  <>
-                    <div>
-                      <span className="text-stone-400">Graphics Card:</span>{' '}
-                      <span className="font-medium text-emerald-300">{report.hardware.gpuName}</span>
-                    </div>
-                    <div>
-                      <span className="text-stone-400">GPU VRAM:</span>{' '}
-                      <span className="font-medium text-emerald-300">~{report.hardware.vramGb || 'N/A'} GB {report.hardware.cudaVersion ? `(CUDA ${report.hardware.cudaVersion})` : ''}</span>
-                    </div>
-                  </>
-                ) : (
-                  <div className="md:col-span-2 text-stone-500 italic">
-                    No compatible NVIDIA GPU was found. Speech recognition will still work on the CPU, though it may take longer.
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center space-x-2 text-[11px] text-amber-800 pt-0.5">
-                <Zap className="w-3.5 h-3.5 shrink-0" />
-                <span>{report.hardware.recommendationSummary}</span>
-              </div>
-            </div>
-          )}
+          {report && <details className="rounded-lg border border-stone-200 bg-stone-50 p-3 space-y-2">
+            <summary className="font-semibold cursor-pointer">{report.runtimeMode === 'managed' ? 'App-managed mode' : 'System first · App-managed fallback'} — how it works{report.runtimeWarnings?.length ? ` (${report.runtimeWarnings.length} discovery notes)` : ''}</summary>
+            <p>{report.runtimeMode === 'managed' ? 'System discovery is disabled by SWISSMOUSE_RUNTIME_MODE=managed.' : 'At startup, SwissMouse checks PATH for compatible tools. It uses complete system Python environments when available and its private environment for missing engines. Check again rescans while no work is running.'}</p>
+            <p>Install and Remove affect only SwissMouse-owned copies. System installations stay under your control.</p>
+            <p>Audio processing stays local. Removing tools keeps your models, projects and audio; downloaded models are managed separately in Models.</p>
+            {!!report.runtimeWarnings?.length && <details><summary className="cursor-pointer font-medium">Discovery notes ({report.runtimeWarnings.length})</summary><ul className="mt-2 space-y-1 break-words">{report.runtimeWarnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></details>}
+          </details>}
 
           {/* Active Progress Banner if running */}
           {progressState && progressState.isActive && (
@@ -359,29 +326,6 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
             </div>
           )}
 
-          {report && <div className="rounded-lg border border-stone-200 bg-stone-50 p-4 space-y-3">
-            <h3 className="font-bold">Transcription runtime capabilities</h3>
-            {Object.values(report.backendCapabilities || {}).map(capability => capability && <div key={capability.engine} className="space-y-1">
-              <p className="font-semibold">{capability.engine === 'faster-whisper' ? 'Faster Whisper / CTranslate2' : 'Regular Whisper / PyTorch'}: {capabilityLabel(capability)}</p>
-              <p>Runtime version: {capability.runtimeVersion || 'Unavailable'} · GPU initialization: {capability.initialization}</p>
-              {capability.engine === 'openai-whisper' && <p>CUDA support: {capability.cudaBuilt === undefined ? 'Unknown' : capability.cudaBuilt ? 'Yes' : 'No'} · CUDA runtime: {capability.cudaVersion || 'None'} · GPU available to PyTorch: {capability.gpuAvailable ? 'Yes' : 'No'}</p>}
-              {capability.reason && <p>{capability.reason}</p>}
-            </div>)}
-            <p>Faster Whisper uses CTranslate2. Its GPU acceleration does not require CUDA-enabled PyTorch. Runtime queries do not load a speech model; Faster Whisper GPU model initialization is verified during transcription.</p>
-            <label className="block space-y-1">
-              <span className="font-semibold">PyTorch installation (regular Whisper only)</span>
-              <select aria-label="PyTorch installation" value={pytorchFlavor} disabled={progressState?.isActive}
-                onChange={event => setPytorchFlavor(event.target.value as 'keep' | 'cpu' | 'cuda')}
-                className="block w-full rounded border border-stone-300 bg-white p-2">
-                <option value="keep">Keep existing build (CPU default for a missing dependency)</option>
-                <option value="cpu">Install CPU PyTorch</option>
-                <option value="cuda" disabled={!report.pytorchBuild?.cudaAvailable}>Install GPU/CUDA PyTorch{report.pytorchBuild?.cudaAvailable ? '' : ' — unavailable'}</option>
-              </select>
-            </label>
-            <p>Faster Whisper uses the same downloaded model on CPU and GPU; this PyTorch setting does not enable or disable its GPU acceleration.</p>
-            <p>NVIDIA driver: {report.hardware.driverVersion || 'Unknown'} · Driver CUDA compatibility: {report.hardware.cudaVersion || 'Unknown'} · GPU compute capability: {report.hardware.computeCapability ?? 'Unknown'}</p>
-            <p>{report.pytorchBuild?.reason} Existing builds are replaced only after confirmation.</p>
-          </div>}
           {/* Requirements Component List */}
           <div className="space-y-2">
             <div className="flex items-center justify-between pb-1 border-b border-stone-200">
@@ -390,7 +334,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
               </span>
               <button
                 onClick={() => fetchStatus(true)}
-                disabled={isRefreshing || (progressState?.isActive ?? false)}
+                disabled={busy}
                 className="flex items-center space-x-1 text-xs text-stone-600 hover:text-stone-900 font-medium disabled:opacity-50 cursor-pointer"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-amber-600' : ''}`} />
@@ -409,7 +353,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
                   ['core', 'Core Requirements'],
                   ['active_transcription', 'Recommended Transcription Engine'],
                   ['optional_acceleration', 'Optional Acceleration'],
-                  ['compatibility', 'Compatibility Backend'],
+                  ['compatibility', 'Other Optional Tools'],
                 ] as const).map(([groupId, groupLabel]) => {
                   const group = report.components.filter(comp => (comp.group || 'core') === groupId);
                   if (!group.length) return null;
@@ -417,17 +361,17 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
                     <div className="px-3 py-2 bg-stone-50 border-b border-stone-200 font-bold text-stone-800">{groupLabel}</div>
                     <div className="divide-y divide-stone-100">{group.map((comp) => (
                   <div key={comp.id} className="p-3 hover:bg-stone-50/70 transition-colors space-y-1.5">
-                    <div className="flex items-start justify-between">
-                      <div className="space-y-0.5">
-                        <div className="flex items-center space-x-2">
+                    <div className="flex flex-wrap gap-2 items-start justify-between">
+                      <div className="space-y-0.5 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
                           <input type="checkbox" aria-label={`Include ${comp.name}`} checked={comp.classification === 'required' || selected.has(comp.id)}
-                            disabled={comp.classification === 'required' || !comp.isAppManaged || Boolean(progressState?.isActive) || Object.entries(requirementDependencies).some(([parent, children]) => selected.has(parent) && children.includes(comp.id))}
+                            disabled={comp.classification === 'required' || !comp.isAppManaged || busy || Object.entries(requirementDependencies).some(([parent, children]) => selected.has(parent) && children.includes(comp.id))}
                             onChange={event => setSelectedIds(ids => event.target.checked ? [...ids, comp.id] : ids.filter(id => id !== comp.id && !(requirementDependencies[comp.id] || []).includes(id)))} />
                           <span className="font-semibold text-stone-900 text-xs">{comp.name}{comp.classification === 'required' ? ' (Required)' : ' (Optional)'}</span>
                           <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${
                             comp.isAppManaged ? 'bg-stone-100 text-stone-600 border border-stone-200' : 'bg-stone-100 text-stone-500'
                           }`}>
-                            {comp.isAppManaged ? 'Application Managed' : 'System Dependency'}
+                            {comp.source === 'system' ? 'System · in use' : comp.status === 'ready' ? 'App-managed · in use' : 'App-managed'}
                           </span>
                         </div>
                         <p className="text-[11px] text-stone-500 leading-snug">{comp.purpose}</p>
@@ -456,10 +400,17 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
                     ) : null}
 
                     {comp.installLocation && (
-                      <p className="text-[10px] text-stone-400 font-mono truncate">
-                        Path: {comp.installLocation}
+                      <p className="text-[10px] text-stone-500 font-mono break-all">
+                        {comp.status === 'ready' ? 'Active path' : 'Runtime path'}: {comp.installLocation}
                       </p>
                     )}
+                    {comp.classification === 'optional' && <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                      <div className="text-[11px] text-stone-500 min-w-0 flex-1">
+                        {comp.source === 'system' && <p>System copy is protected. Remove or update it with its original package manager.</p>}
+                        {comp.canUninstall && <p className="break-all">{comp.source === 'system' ? 'Unused app copy' : 'Removable app copy'}: {comp.managedLocation}</p>}
+                      </div>
+                      {comp.canUninstall && <button type="button" disabled={busy || isLoading} onClick={() => handleUninstall(comp)} aria-label={`Remove app-managed ${comp.name}`} className="rounded border border-red-300 px-3 py-1 text-red-700 hover:bg-red-50 disabled:opacity-50 shrink-0">Remove app copy</button>}
+                    </div>}
                   </div>
                     ))}</div>
                   </div>;
@@ -468,6 +419,79 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
             ) : null}
           </div>
 
+          {/* Hardware Detection Card */}
+          {report && (
+            <details className="hardware-card rounded-lg border border-stone-200 bg-white p-3.5 text-stone-800 space-y-2.5">
+              <summary className="cursor-pointer font-semibold">Your computer & hardware detection</summary>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Cpu className="w-4 h-4 text-amber-700" />
+                  <span className="font-semibold text-xs text-stone-900">Your computer</span>
+                </div>
+                <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider ${
+                  report.hardware.hasNvidiaGpu ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-stone-100 text-stone-700 border border-stone-200'
+                }`}>
+                  {report.hardware.hasNvidiaGpu ? 'NVIDIA GPU Detected' : 'CPU Ready'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] text-stone-600 bg-stone-50 p-2.5 rounded border border-stone-200">
+                <div>
+                  <span className="text-stone-500">Processor:</span>{' '}
+                  <span className="font-medium text-stone-800">{report.hardware.cpuModel}</span>
+                </div>
+                <div>
+                  <span className="text-stone-500">Platform:</span>{' '}
+                  <span className="font-medium text-stone-800">{report.hardware.os} ({report.hardware.arch})</span>
+                </div>
+                {report.hardware.hasNvidiaGpu ? (
+                  <>
+                    <div>
+                      <span className="text-stone-400">Graphics Card:</span>{' '}
+                      <span className="font-medium text-emerald-300">{report.hardware.gpuName}</span>
+                    </div>
+                    <div>
+                      <span className="text-stone-400">GPU VRAM:</span>{' '}
+                      <span className="font-medium text-emerald-300">~{report.hardware.vramGb || 'N/A'} GB {report.hardware.cudaVersion ? `(CUDA ${report.hardware.cudaVersion})` : ''}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="md:col-span-2 text-stone-500 italic">
+                    No compatible NVIDIA GPU was found. Speech recognition will still work on the CPU, though it may take longer.
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center space-x-2 text-[11px] text-amber-800 pt-0.5">
+                <Zap className="w-3.5 h-3.5 shrink-0" />
+                <span>{report.hardware.recommendationSummary}</span>
+              </div>
+            </details>
+          )}
+          {report && <details className="rounded-lg border border-stone-200 bg-stone-50 p-4 space-y-3">
+            <summary className="font-bold cursor-pointer">GPU capabilities & PyTorch setup</summary>
+            {Object.values(report.backendCapabilities || {}).map(capability => capability && <div key={capability.engine} className="space-y-1">
+              <p className="font-semibold">{capability.engine === 'faster-whisper' ? 'Faster Whisper / CTranslate2' : 'Regular Whisper / PyTorch'}: {capabilityLabel(capability)}</p>
+              <p>Runtime version: {capability.runtimeVersion || 'Unavailable'} · GPU initialization: {capability.initialization}</p>
+              {capability.engine === 'openai-whisper' && <p>CUDA support: {capability.cudaBuilt === undefined ? 'Unknown' : capability.cudaBuilt ? 'Yes' : 'No'} · CUDA runtime: {capability.cudaVersion || 'None'} · GPU available to PyTorch: {capability.gpuAvailable ? 'Yes' : 'No'}</p>}
+              {capability.reason && <p>{capability.reason}</p>}
+            </div>)}
+            <p>Faster Whisper uses CTranslate2. Its GPU acceleration does not require CUDA-enabled PyTorch. Runtime queries do not load a speech model; Faster Whisper GPU model initialization is verified during transcription.</p>
+            <label className="block space-y-1">
+              <span className="font-semibold">PyTorch installation (regular Whisper only)</span>
+              <select aria-label="PyTorch installation" value={pytorchFlavor} disabled={busy || report.components.some(item => item.id === 'pytorch' && item.source === 'system')}
+                onChange={event => setPytorchFlavor(event.target.value as 'keep' | 'cpu' | 'cuda')}
+                className="block w-full rounded border border-stone-300 bg-white p-2">
+                <option value="keep">Keep existing build (CPU default for a missing dependency)</option>
+                <option value="cpu">Install CPU PyTorch</option>
+                <option value="cuda" disabled={!report.pytorchBuild?.cudaAvailable}>Install GPU/CUDA PyTorch{report.pytorchBuild?.cudaAvailable ? '' : ' — unavailable'}</option>
+              </select>
+            </label>
+            {report.components.some(item => item.id === 'pytorch' && item.source === 'system') && <p>System PyTorch is in use. Manage its CPU/CUDA build outside SwissMouse, then check again.</p>}
+            <p>Faster Whisper uses the same downloaded model on CPU and GPU; this PyTorch setting does not enable or disable its GPU acceleration.</p>
+            <p>NVIDIA driver: {report.hardware.driverVersion || 'Unknown'} · Driver CUDA compatibility: {report.hardware.cudaVersion || 'Unknown'} · GPU compute capability: {report.hardware.computeCapability ?? 'Unknown'}</p>
+            <p>{report.pytorchBuild?.reason} Existing builds are replaced only after confirmation.</p>
+          </details>}
           {/* Diagnostic Execution Logs Toggle */}
           {progressState && progressState.logs.length > 0 && (
             <div className="space-y-1.5">
@@ -504,7 +528,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
         </div>
 
         {/* Footer Actions */}
-        <div className="px-6 py-3.5 bg-stone-50 border-t border-stone-200 flex items-center justify-between">
+        <div className="px-6 py-3.5 bg-stone-50 border-t border-stone-200 flex flex-wrap gap-3 items-center justify-between">
           <div className="text-xs text-stone-500">
             {report?.statusColor === 'green' ? (
               <span className="text-emerald-700 font-medium flex items-center space-x-1">
@@ -534,11 +558,11 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
             <button
               id="btn-requirements-install-repair"
               onClick={handleInstallRepair}
-              disabled={isLoading || (progressState?.isActive ?? false)}
+              disabled={isLoading || busy}
               className="flex items-center space-x-1.5 px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
             >
               <Wrench className="w-3.5 h-3.5" />
-              <span>{pytorchFlavor === 'keep' ? 'Install Selected Missing Requirements' : 'Install selected build and missing requirements'}</span>
+              <span>{pytorchFlavor === 'keep' ? 'Install selected missing tools' : 'Install selected build & tools'}</span>
             </button>
           </div>
         </div>

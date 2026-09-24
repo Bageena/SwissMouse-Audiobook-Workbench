@@ -96,12 +96,11 @@ export class PcmAnalysis {
 export function readManifest(audio: string) {
   try {
     const m = JSON.parse(fs.readFileSync(audio + '.analysis.json', 'utf8'));
-    return m.version === 1 && m.signature === signature(audio) ? m : null;
+    return m.version === 1 && m.signature === signature(audio) && fs.existsSync(m.directory + '/features.bin') ? m : null;
   } catch { return null; }
 }
 const pending = new Map<string, Promise<any>>();
-async function analyzePcm(audio: string) {
-  const initial = signature(audio);
+export function pcmDataRange(audio: string) {
   const fd = fs.openSync(audio, 'r');
   let start = 0, length = 0, rf64Length = 0;
   try {
@@ -119,6 +118,12 @@ async function analyzePcm(audio: string) {
     }
   } finally { fs.closeSync(fd); }
   if (!length) throw new Error('Preview has no PCM samples');
+  return { start, length };
+}
+
+async function analyzePcm(audio: string) {
+  const initial = signature(audio);
+  const { start, length } = pcmDataRange(audio);
   const collector = new PcmAnalysis(audio);
   try {
     for await (const chunk of fs.createReadStream(audio, { start, end: start + length - 1 })) collector.push(chunk as Buffer);

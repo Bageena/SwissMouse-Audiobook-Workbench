@@ -1,6 +1,6 @@
 {
   "name": "audiobook-chapter-workbench",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "Web workbench to merge multi-part MP3 audiobooks, detect chapters with AI, review timestamps, and build chaptered M4B audiobooks.",
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "lint": "tsc --noEmit",
-    "test:audio": "node --import tsx --test tools/audio-engine.test.ts tools/audio-analysis.test.ts tools/transcription-engine.test.ts tools/transcription-performance.test.ts tools/transcription-api.test.mjs tools/requirements.test.ts tools/feature-dependencies.test.ts tools/backend-state.test.mjs tools/cleanup.test.mjs tools/status-cache.test.ts tools/package-status.test.ts tools/word-alignment.test.ts tools/chapters.test.ts tools/pipeline-rerun.test.ts tools/custom-themes.test.ts tools/librivox.test.ts"
+    "test:cover": "node --import tsx --test tools/cover-generator.test.ts",
+    "test:audio": "node --import tsx --test tools/audio-engine.test.ts tools/audio-sample-rate.test.ts tools/audio-analysis.test.ts tools/transcription-engine.test.ts tools/transcription-performance.test.ts tools/transcription-api.test.mjs tools/requirements.test.ts tools/runtime-selection.test.ts tools/runtime-api.test.mjs tools/feature-dependencies.test.ts tools/backend-state.test.mjs tools/cleanup.test.mjs tools/status-cache.test.ts tools/package-status.test.ts tools/word-alignment.test.ts tools/chapters.test.ts tools/chapter-titles.test.ts tools/music-transitions.test.ts tools/title-boundaries.test.ts tools/chapter-cache.test.ts tools/pipeline-rerun.test.ts tools/custom-themes.test.ts tools/librivox.test.ts"
   },
   "dependencies": {
     "adm-zip": "^0.6.1",

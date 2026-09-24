@@ -88,23 +88,46 @@ test('wordless legacy segments retain their real segment bounds', () => {
   assert.equal(heading.end, 20);
 });
 
-test('server candidates refine lead-in to player word timestamps', () => {
+test('server candidates preserve exact player word timestamps and wordless segment bounds', () => {
   const source = fs.readFileSync('server.ts', 'utf8');
   const start = source.indexOf('function buildChapterCandidates(');
   const end = source.indexOf('\nasync function transcribeExistingPreview', start);
   assert.ok(start >= 0 && end > start);
-  const transcriptSegments = [spokenHeading('Chapter Twelve', true)];
-  const transcriptWords = buildTranscriptWords(transcriptSegments);
-  const context: any = {
-    transcriptSegments, transcriptWords, generatedCandidates: [],
-    detectChapterHeadings, findTranscriptWordIndex, refineChapterStartIndex, formatTimestamp,
+  const exercise = `${source.slice(start, end)}\ngeneratedCandidates = buildChapterCandidates(transcriptSegments, transcriptWords, normalized.engine);`;
+  for (const closeNarration of [false, true]) {
+    const transcriptSegments = [spokenHeading('Chapter Twelve', true)];
+    if (closeNarration) {
+      transcriptSegments[0].words![1].start = 14.5;
+      transcriptSegments[0].words![1].end = 15;
+    }
+    const transcriptWords = buildTranscriptWords(transcriptSegments);
+    const context: any = {
+      transcriptSegments, transcriptWords, generatedCandidates: [],
+      detectChapterHeadings, findTranscriptWordIndex, formatTimestamp,
+      normalized: { engine: 'faster-whisper' }, currentConfig: { lead_in_seconds: 1.5 },
+    };
+    vm.runInNewContext(transformSync(exercise, { loader: 'ts' }).code, context);
+    assert.equal(context.generatedCandidates[0].candidate_start, '00:00:15.375');
+    assert.equal(context.generatedCandidates[0].transcriptWordIndex, 2);
+    // Old persisted timelines can omit words before the heading. Resolve by
+    // its actual timestamp instead of trusting the segment-derived index.
+    context.transcriptWords = transcriptWords.slice(1);
+    vm.runInNewContext(transformSync(exercise, { loader: 'ts' }).code, context);
+    assert.equal(context.generatedCandidates[0].candidate_start, '00:00:15.375');
+    assert.equal(context.generatedCandidates[0].transcriptWordIndex, 1);
+  }
+  const legacy: any = {
+    transcriptSegments: [
+      { id: 0, start: 10, end: 12, text: 'Chapter Twelve', words: [] },
+      { id: 1, start: 13, end: 14, text: 'Some narration.', words: [{ word: 'Some', start: 13, end: 13.4 }, { word: 'narration.', start: 13.5, end: 14 }] },
+    ],
+    detectChapterHeadings, findTranscriptWordIndex, formatTimestamp,
     normalized: { engine: 'faster-whisper' }, currentConfig: { lead_in_seconds: 1.5 },
   };
-  const exercise = `${source.slice(start, end)}\ngeneratedCandidates = buildChapterCandidates(transcriptSegments, transcriptWords, normalized.engine);`;
-  vm.runInNewContext(transformSync(exercise, { loader: 'ts' }).code, context);
-  assert.equal(context.generatedCandidates[0].candidate_start, transcriptWords[2].start);
-  assert.equal(context.generatedCandidates[0].candidate_start, '00:00:15.375');
-  assert.equal(context.generatedCandidates[0].transcriptWordIndex, 2);
+  legacy.transcriptWords = buildTranscriptWords(legacy.transcriptSegments);
+  vm.runInNewContext(transformSync(exercise, { loader: 'ts' }).code, legacy);
+  assert.equal(legacy.generatedCandidates[0].candidate_start, '00:00:10.000');
+  assert.equal(legacy.generatedCandidates[0].transcriptWordIndex, undefined);
 });
 
 test('the existing player word-click handler seeks and selects the saved timestamp unchanged', () => {

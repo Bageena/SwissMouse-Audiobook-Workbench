@@ -32,6 +32,7 @@ export const Step4BuildM4b: React.FC<{job: AudiobookJob; config: WorkbenchConfig
     <div aria-live="polite" className="space-y-2">{job.exports?.map(item => <div className="border rounded p-3 text-sm" key={item.format}>
       <strong>{item.format.toUpperCase()}</strong>: {item.status} {item.progress}% {item.mode === 'copy' ? '— audio copied' : item.mode === 'convert' ? '— audio converted' : ''}
       <p className="break-all">{item.fullPath || item.filename}</p><p className="text-red-700">{item.error}</p>{item.warnings?.map(w => <p key={w}>{w}</p>)}
+      {item.sampleRateSummary && <p>{item.sampleRateSummary}</p>}
       {item.verifiedTags && <details><summary>Metadata read from output</summary>{Object.entries(item.verifiedTags).map(([key,value])=><p className="break-all" key={key}>{key}: {value}</p>)}</details>}
     </div>)}</div>
     {job.outputM4b && <button className="underline" onClick={onNextStep} title="Check the latest exported file against your chapter list">Verify latest export</button>}

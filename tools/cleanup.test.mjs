@@ -12,7 +12,7 @@ test('storage cleanup removes only SwissMouse-managed working files', { timeout:
   buildSync({ entryPoints: ['server.ts'], bundle: true, platform: 'node', format: 'cjs', packages: 'external', outfile: entry });
   const port = 20000 + Math.floor(Math.random() * 10000);
   const server = spawn(process.execPath, [entry], {
-    env: { ...process.env, PORT: String(port), APP_ROOT: root, NODE_ENV: 'production' },
+    env: { ...process.env, SWISSMOUSE_RUNTIME_MODE: 'managed', PORT: String(port), APP_ROOT: root, NODE_ENV: 'production' },
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

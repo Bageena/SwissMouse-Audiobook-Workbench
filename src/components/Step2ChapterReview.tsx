@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlignedWord, AudiobookJob, ChapterCandidate, ChapterEntry } from '../types';
 import { ChapterAudioPlayer, ActiveAudioTrack } from './ChapterAudioPlayer';
+import { cleanChapterTitles, undoChapterTitleCleanup, type TitleCleanupUndo } from '../utils/chapterTitles';
 import { buildAlignedWords, findClosestTranscriptWordIndex, findTranscriptWordIndex, getTranscriptWordsNear, parseTimestampToMs, revealTranscriptWord, transcriptPageOffset } from '../utils/wordAlignment';
 import { applyChapterNumberFormat, applyDefaultChapterEnds, formatChapterTitle, getSessionChapterNumberFormat, isIncompleteChapter, parseCsvRow, prepareChapters, validateChapterEntries, type ChapterNumberFormat } from '../utils/chapters';
 import {
@@ -72,6 +73,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     ),
   })));
   const [isSaving, setIsSaving] = useState(false);
+  const [titleCleanupUndo, setTitleCleanupUndo] = useState<TitleCleanupUndo>([]);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -213,6 +215,19 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     }
     setSaveSuccess(false);
     setValidationError(validateChaptersList(recalculated));
+  };
+
+  const handleCleanTitles = (undo = false) => {
+    const result = undo ? { chapters: undoChapterTitleCleanup(chapters, titleCleanupUndo), undo: [] } : cleanChapterTitles(chapters);
+    if (!undo && !result.undo.length) return;
+    setChapters(result.chapters);
+    setTitleCleanupUndo(result.undo);
+    setSaveSuccess(false);
+    setActiveTrack(current => {
+      const chapter = result.chapters.find(item => item.id === current?.id);
+      return current && chapter ? { ...current, title: chapter.title } : current;
+    });
+    setValidationError(validateChaptersList(result.chapters));
   };
 
   // Add a new blank chapter
@@ -843,7 +858,12 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                 </p>
               </div>
 
-              <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button id="btn-clean-chapter-titles" onClick={() => handleCleanTitles()} disabled={isSaving || !chapters.length}
+                  className="px-2.5 py-1 text-xs rounded border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 shadow-2xs font-medium cursor-pointer disabled:opacity-50"
+                  title="Removes unnecessary whitespace and applies MLA style capitalization to chapter titles.">Clean Chapter Titles</button>
+                {titleCleanupUndo.length > 0 && <button onClick={() => handleCleanTitles(true)} disabled={isSaving}
+                  className="text-xs text-stone-600 underline cursor-pointer" title="Restore cleaned titles without undoing later chapter edits. Save the chapter list to keep your changes.">Undo title cleanup</button>}
                 <label className="flex items-center gap-1 text-xs text-stone-600">
                   Chapter numbers
                   <select
@@ -1042,6 +1062,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                             className="w-full px-2 py-1 rounded text-xs border border-stone-300 bg-white text-stone-900 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
                             placeholder="Chapter title"
                           />
+                          {chap.headingType === 'music_transition' && <span className="block text-[10px] text-amber-800 mt-0.5" title={chap.notes}>Musical transition · Review suggested start</span>}
                         </td>
 
                         <td className="py-2 px-2 text-right">

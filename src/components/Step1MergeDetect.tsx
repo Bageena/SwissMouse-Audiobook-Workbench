@@ -84,6 +84,19 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   const [fasterEnabled, setFasterEnabled] = useState(config.faster_transcription);
   useEffect(() => setFasterEnabled(config.faster_transcription), [config.faster_transcription]);
   const [isSwitchingEngine, setIsSwitchingEngine] = useState(false);
+  const [isSavingMusicSetting, setIsSavingMusicSetting] = useState(false);
+  const [musicSettingError, setMusicSettingError] = useState('');
+  const handleMusicDetectionChange = async (enabled: boolean) => {
+    setIsSavingMusicSetting(true);
+    setMusicSettingError('');
+    try {
+      const response = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ detect_musical_transitions: enabled }) });
+      if (!response.ok) throw new Error('Could not save music detection setting.');
+      const saved = await response.json();
+      onConfigChange?.(saved.config);
+    } catch (error) { setMusicSettingError(error instanceof Error ? error.message : 'Could not save setting.'); }
+    finally { setIsSavingMusicSetting(false); }
+  };
   const transcriptionEngine = fasterEnabled ? 'faster-whisper' : 'openai-whisper';
   const [transcriptionOptions, setTranscriptionOptions] = useState(job.transcriptionSettings || {});
   const [backendCapability, setBackendCapability] = useState<BackendCapabilities | null>(null);
@@ -693,7 +706,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     'audio_processing',
     ...(chapterSource === 'whisperx' ? [fasterEnabled ? 'faster_transcription' : 'openai_transcription'] as const : []),
   );
-  const canRunStep1 = processAvailability.ready && !isSwitchingEngine && hasSourceFolder && hasAudioFiles && isOutputValid && isWhisperXValid;
+  const canRunStep1 = processAvailability.ready && !isSwitchingEngine && !isSavingMusicSetting && hasSourceFolder && hasAudioFiles && isOutputValid && isWhisperXValid;
   const runButtonLabel = chapterSource === 'existing_files'
     ? 'Prepare audio and chapters'
     : job.status !== 'draft'
@@ -927,7 +940,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
           }
           await onRerunStep(step);
         }}
-        canRerunStep={(step) => canRerunStep(job, step)}
+        canRerunStep={(step) => !isSavingMusicSetting && canRerunStep(job, step)}
         onCancel={handleCancelStep1}
         onDismissSummary={() => setStep1Progress(null)}
       />
@@ -1345,7 +1358,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                 </span>
               </div>
               <p className="text-xs text-stone-600 pl-6 leading-relaxed">
-                Combines your source files, transcribes speech with your selected Whisper engine, and suggests chapter starts for you to review.
+                Combines your source files, transcribes speech, and uses spoken headings and musical transitions to suggest chapter starts for review.
               </p>
               <div className="pl-6 pt-1 text-[11px] text-amber-800 italic">
                 Best when files are long parts, chapter boundaries are unclear, or you want speech-based chapter suggestions.
@@ -1523,6 +1536,17 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
           </span>
           <input type="checkbox" checked={fasterEnabled} disabled={isSwitchingEngine || isRunning} onChange={event => handleFasterTranscriptionChange(event.target.checked)} title="Runs your selected Whisper model using the optimized CTranslate2 engine. Disable this if you experience compatibility problems." className="w-5 h-5 accent-emerald-600 shrink-0" />
         </label>
+        <label className="flex items-center justify-between gap-4 p-3 rounded-lg border border-stone-200 bg-stone-50 cursor-pointer">
+          <span>
+            <span className="block text-sm font-bold text-stone-900">Detect Musical Chapter Transitions <span className="text-xs font-medium text-amber-800">Experimental</span></span>
+            <span className="block text-xs text-stone-600 mt-0.5">On by default. Looks for recurring cues and isolated spoken titles supported by music, including books without chapter numbers. Review the suggestions. Rerun chapter detection to apply changes to an existing transcript.</span>
+          </span>
+          <input type="checkbox" checked={config.detect_musical_transitions === true} disabled={isRunning || isSavingMusicSetting || chapterSource === 'existing_files'}
+            onChange={event => void handleMusicDetectionChange(event.target.checked)}
+            title="Looks for short or recurring musical cues between spoken sections that may indicate chapter boundaries."
+            className="w-5 h-5 accent-emerald-600 shrink-0" />
+        </label>
+        {musicSettingError && <p role="alert" className="text-xs text-red-700">{musicSettingError}</p>}
         <TranscriptionOptions engine={transcriptionEngine} model={selectedModelId}
           value={transcriptionOptions[transcriptionEngine]} capability={backendCapability} disabled={isRunning || isSwitchingEngine}
           onChange={value => {

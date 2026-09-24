@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AudiobookJob, AudiobookMetadata, CoverArtInfo } from '../types';
+import { CoverGenerator } from './CoverGenerator';
 import {
   Image,
   Upload,
@@ -118,6 +119,30 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
   const [authorInput, setAuthorInput] = useState<string>('');
   const [narratorInput, setNarratorInput] = useState<string>('');
   const lastSavedDraft = useRef(JSON.stringify(formData));
+  const [showCoverGenerator, setShowCoverGenerator] = useState(false);
+  const draftTimer = useRef<number>();
+  const draftWrite = useRef<Promise<void>>(Promise.resolve());
+
+  const persistDraft = (metadata: AudiobookMetadata) => {
+    const write = draftWrite.current.catch(() => {}).then(async () => {
+      const response = await fetch(`/api/jobs/${job.id}/metadata-draft`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ metadata }),
+      });
+      if (!response.ok) throw new Error('Could not save the cover draft. Please try again.');
+      lastSavedDraft.current = JSON.stringify(metadata);
+    });
+    draftWrite.current = write;
+    return write;
+  };
+
+  const handleGeneratedCover = async (cover: CoverArtInfo) => {
+    window.clearTimeout(draftTimer.current);
+    const metadata = { ...formData, cover };
+    await persistDraft(metadata);
+    setFormData(metadata);
+    setShowCoverGenerator(false);
+    setScanMessage({ type: 'success', text: 'Generated cover saved to your draft. Save book details to include it in your next export.' });
+  };
 
   const authorsList = formData.author ? formData.author.split(',').map((s) => s.trim()).filter(Boolean) : [];
   const narratorsList = formData.narrator ? formData.narrator.split(',').map((s) => s.trim()).filter(Boolean) : [];
@@ -167,19 +192,14 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
   useEffect(() => {
     const serialized = JSON.stringify(formData);
     if (serialized === lastSavedDraft.current) return;
-    const timeout = window.setTimeout(async () => {
+    draftTimer.current = window.setTimeout(async () => {
       try {
-        const response = await fetch(`/api/jobs/${job.id}/metadata-draft`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ metadata: formData }),
-        });
-        if (response.ok) lastSavedDraft.current = serialized;
+        await persistDraft(formData);
       } catch {
         // The next edit retries; the explicit Save button still reports failures.
       }
     }, 750);
-    return () => window.clearTimeout(timeout);
+    return () => window.clearTimeout(draftTimer.current);
   }, [formData, job.id]);
 
   // Scan local folder for cover image (cover.jpg, cover.png, etc.)
@@ -315,7 +335,10 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
     setIsSaving(true);
     setSaveSuccess(false);
     try {
+      window.clearTimeout(draftTimer.current);
+      await draftWrite.current.catch(() => {});
       await onSaveMetadata(formData);
+      lastSavedDraft.current = JSON.stringify(formData);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 4000);
     } catch (err: any) {
@@ -327,6 +350,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
 
   return (
     <div className="space-y-6">
+      {showCoverGenerator && <CoverGenerator metadata={formData} onCancel={() => setShowCoverGenerator(false)} onUse={handleGeneratedCover} />}
       {/* Step Header Banner */}
       <div className={`relative bg-white rounded-xl p-5 pb-12 border shadow-xs ${job.pipelineSteps?.metadata_processing?.status === 'stale' ? 'border-orange-300' : job.pipelineSteps?.metadata_processing?.status === 'failed' ? 'border-red-300' : 'border-stone-200/80'}`}>
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -433,7 +457,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                       No cover art selected
                     </span>
                     <span className="text-[11px] text-stone-400 mt-1">
-                      Find a cover in the source folder, upload one, or paste an image link
+                      Generate a cover, find one in the source folder, upload one, or paste an image link
                     </span>
                   </div>
                 )}
@@ -479,6 +503,10 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                 </div>
               )}
             </div>
+
+            <button type="button" onClick={() => setShowCoverGenerator(true)} className="flex w-full items-center justify-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-800 hover:bg-amber-100">
+              <Sparkles className="h-4 w-4" />Generate Cover
+            </button>
 
             {/* Notification messages */}
             {scanMessage && (

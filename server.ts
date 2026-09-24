@@ -3,9 +3,12 @@ import { transcriptionSettings, selectTranscriptionAttempt, capabilityLabel, typ
 import { sourceProcessingKeys, transcriptionRequestKey, transcriptionResultKey, reusableTranscription, processingKey } from './tools/transcription-cache';
 import { StatusCache } from './tools/status-cache';
 import { rebuildAnalysis, waveformSlice } from './tools/audio-analysis';
-import { detectChapterHeadings } from './tools/chapter-detection';
-import { buildTranscriptWords, findTranscriptWordIndex, refineChapterStartIndex } from './src/utils/wordAlignment';
+import { detectMusicTransitions, MUSIC_DETECTOR_VERSION } from './tools/music-transitions';
+import { detectTitleBoundaries, TITLE_DETECTOR_VERSION } from './tools/title-boundaries';
+import { detectChapterHeadings, CHAPTER_DETECTOR_VERSION } from './tools/chapter-detection';
+import { buildTranscriptWords, findTranscriptWordIndex } from './src/utils/wordAlignment';
 import { PACKAGE_STATUS_SCRIPT } from './tools/package-status';
+import { discoverRuntime, cleanPythonEnv, optionalPackages, optionalRemoval, removalImpact, PRIVATE_UNINSTALL_CHECK, assertManagedTarget, type RuntimeSelection } from './tools/runtime-selection';
 import { youtubeUrl, youtubeBaseArgs, downloadYoutubeAudio } from './tools/youtube-audio';
 import { mountLibriVox } from './tools/librivox-import';
 import { inspect, fingerprint, makePreview, exportAudio, validateChapters } from './tools/audio-engine';
@@ -79,7 +82,7 @@ function runSpawnCmd(cmd: string, args: string[], onLog: (msg: string) => void):
     // spawn accepts executable paths with spaces when shell is false. Running
     // through cmd.exe can leave the wrapper open after pip has finished.
     onLog(`$ ${cmd} ${args.join(' ')}`);
-    const child = spawn(cmd, args, { shell: false, windowsHide: true });
+    const child = spawn(cmd, args, { shell: false, windowsHide: true, env: cleanPythonEnv() });
     let settled = false;
     const finish = (error?: Error) => {
       if (settled) return;
@@ -186,6 +189,24 @@ const getVenvPython = () => {
     const isWin = os.platform() === 'win32';
     return isWin ? path.join(VENV_DIR, 'Scripts', 'python.exe') : path.join(VENV_DIR, 'bin', 'python');
 };
+let runtimeSelection: RuntimeSelection | undefined;
+let runtimeMutationRunning = false;
+let runtimeDiscoveryRunning = false;
+let runtimeRequests = 0;
+const getFfmpeg = () => runtimeSelection?.ffmpeg.path || MANAGED_FFMPEG_PATH;
+const getFfprobe = () => runtimeSelection?.ffprobe.path || MANAGED_FFPROBE_PATH;
+const getBackendPython = (engine: TranscriptionBackend) => runtimeSelection?.backends[engine]?.path || getVenvPython();
+async function refreshRuntimeSelection() {
+  runtimeDiscoveryRunning = true;
+  try {
+    runtimeSelection = await discoverRuntime({ runtimeRoot: RUNTIME_DIR, python: getVenvPython(), ffmpeg: MANAGED_FFMPEG_PATH,
+      ffprobe: MANAGED_FFPROBE_PATH, ytDlp: LOCAL_YT_DLP_PATH, mode: process.env.SWISSMOUSE_RUNTIME_MODE === 'managed' ? 'managed' : 'hybrid' });
+    for (const key of ['python', 'ffmpeg', 'ffprobe', 'ytDlp'] as const) console.log(`[Runtime] ${key}: ${runtimeSelection[key].source} — ${runtimeSelection[key].path}`);
+    for (const engine of ['faster-whisper', 'openai-whisper'] as const) console.log(`[Runtime] ${engine}: ${runtimeSelection.backends[engine] ? 'system' : 'app fallback'} — ${getBackendPython(engine)}`);
+    for (const warning of runtimeSelection.warnings) console.warn(`[Runtime] ${warning}`);
+    invalidateRequirements();
+  } finally { runtimeDiscoveryRunning = false; }
+}
 
 // PyTorch 2.6 changed torch.load's default to `weights_only=True`. WhisperX
 // 3.7.4 ships a trusted Pyannote VAD checkpoint that contains legacy OmegaConf
@@ -311,6 +332,16 @@ if (fs.existsSync(VENV_DIR)) {
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+// Keep selected runtimes stable during work and prevent new work while they change.
+app.use('/api', (req, res, next) => {
+  if (req.method === 'GET' || req.path.startsWith('/requirements/')) return next();
+  if (runtimeMutationRunning || runtimeDiscoveryRunning) return res.status(409).json({ error: 'Wait for requirement changes to finish before starting another action.' });
+  runtimeRequests++;
+  let finished = false;
+  const done = () => { if (!finished) { finished = true; runtimeRequests--; } };
+  res.once('finish', done); res.once('close', done);
+  next();
+});
 
 const uploadDir = appPath('inputs');
 if (!fs.existsSync(uploadDir)) {
@@ -398,6 +429,7 @@ app.post('/api/upload-audio', requireFeatures(['file_import'], 'Import'), upload
 const CONFIG_PATH = appPath('config.json');
 const defaultConfig: WorkbenchConfig = {
   faster_transcription: true,
+  detect_musical_transitions: true,
   selected_model: 'small',
   ffmpeg_path: MANAGED_FFMPEG_PATH,
   ffprobe_path: MANAGED_FFPROBE_PATH,
@@ -920,21 +952,24 @@ function buildChapterCandidates(
   engine: TranscriptionEngineId,
 ): ChapterCandidate[] {
   const headings = detectChapterHeadings(transcriptSegments);
-  const leadIn = Math.max(0, currentConfig.lead_in_seconds ?? 1.5);
   return headings.map((heading, headingIndex) => {
     const rawTime = heading.start;
     const endTime = heading.end;
-    const headingWordIndex = heading.transcriptWordIndex !== undefined
-      ? heading.transcriptWordIndex
-      : findTranscriptWordIndex(transcriptWords, rawTime - 0.02);
-    const hasHeadingWord = headingWordIndex < transcriptWords.length;
+    const indexedWord = heading.transcriptWordIndex === undefined ? undefined : transcriptWords[heading.transcriptWordIndex];
+    const headingWordIndex = indexedWord && Math.abs(indexedWord.startSeconds - rawTime) < 0.0005
+      ? heading.transcriptWordIndex!
+      : findTranscriptWordIndex(transcriptWords, rawTime - 0.0005);
+    const hasHeadingWord = heading.transcriptWordIndex !== undefined && headingWordIndex < transcriptWords.length
+      && Math.abs(transcriptWords[headingWordIndex].startSeconds - rawTime) < 0.0005;
     const contextStart = Math.max(0, headingWordIndex - 18);
     const contextEnd = Math.min(transcriptWords.length, headingWordIndex + 26);
     const contextWords = hasHeadingWord ? transcriptWords.slice(contextStart, contextEnd) : [];
     const headingEndIndex = findTranscriptWordIndex(transcriptWords, endTime + 0.000001);
     const headingWords = hasHeadingWord ? transcriptWords.slice(headingWordIndex, headingEndIndex) : [];
-    const refinedStartIndex = hasHeadingWord ? refineChapterStartIndex(transcriptWords, headingWordIndex, leadIn) : headingWordIndex;
-    const refinedStart = transcriptWords[refinedStartIndex]?.startSeconds ?? rawTime;
+    // The word clicked in review and the detected heading share one timestamp.
+    // A legacy wordless segment must not snap forward to unrelated narration.
+    const refinedStartIndex = headingWordIndex;
+    const refinedStart = hasHeadingWord ? transcriptWords[headingWordIndex].startSeconds : rawTime;
     return {
       candidate_id: headingIndex + 1,
       candidate_start: formatTimestamp(refinedStart),
@@ -949,7 +984,7 @@ function buildChapterCandidates(
       recovered: heading.recovered,
       transcriptWordIndex: hasHeadingWord ? refinedStartIndex : undefined,
       status: headingIndex === 0 ? 'approved' : 'review',
-      notes: `${engine === 'faster-whisper' ? 'Faster Whisper' : 'OpenAI Whisper'} detected at ${formatTimestamp(rawTime)}${refinedStart < rawTime ? ` with ${leadIn}s maximum lead-in` : ''}`,
+      notes: `${engine === 'faster-whisper' ? 'Faster Whisper' : 'OpenAI Whisper'} heading at ${formatTimestamp(refinedStart)}${hasHeadingWord ? '; anchored to saved transcript word' : '; legacy segment timing'}`,
       words: contextWords,
     };
   });
@@ -961,6 +996,30 @@ function validatedTranscriptionSettingsMap(input: unknown): AudiobookJob['transc
     if (engine !== 'faster-whisper' && engine !== 'openai-whisper') throw new Error('Unknown transcription engine');
     return [engine, transcriptionSettings(engine, value)];
   }));
+}
+
+function chapterDetectionCacheKey(job: AudiobookJob, musicEnabled: boolean): string {
+  let previewSignature: string | undefined;
+  if (musicEnabled && job.previewPath && fs.existsSync(job.previewPath)) {
+    const stat = fs.statSync(job.previewPath);
+    previewSignature = `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+  }
+  // Version the decisions, not just the transcription request. Retranscribing
+  // with identical settings can still produce a different word timeline.
+  return processingKey('chapter-detection', job.transcriptKey || '', {
+    spokenVersion: CHAPTER_DETECTOR_VERSION,
+    segments: job.transcriptSegments,
+    words: job.transcriptWords,
+    ...(musicEnabled ? { musicVersion: MUSIC_DETECTOR_VERSION, titleVersion: TITLE_DETECTOR_VERSION, previewSignature } : {}),
+  });
+}
+
+function logChapterDetectionResult(candidates: ChapterCandidate[], musicEnabled: boolean) {
+  const musical = candidates.filter(candidate => candidate.headingType === 'music_transition').length;
+  logStep1(`Chapter detection: ${candidates.length - musical} spoken headings, ${musical} musical boundaries; music analysis ${musicEnabled ? 'enabled' : 'disabled'}.`);
+  if (!candidates.length) logStep1(musicEnabled
+    ? 'No supported chapter boundaries found. Review the transcript and audio; pauses alone do not establish chapters.'
+    : 'No spoken chapter headings found. Enable Detect Musical Chapter Transitions in Advanced settings if this book uses musical separators, then rerun chapter detection.');
 }
 async function transcriptionPlan(job: AudiobookJob, preparedAudioKey: string, engine = requestEngine(undefined)) {
   const model = speechModels.find(item => item.id === (job.selectedModelId || 'small')) || speechModels[1];
@@ -980,12 +1039,13 @@ async function transcribeExistingPreview(job: AudiobookJob, signal: AbortSignal,
     plan = await transcriptionPlan(job, keys.preparedAudioKey);
   }
   const { engine, model, settings, capability, requestKey } = plan;
-  const python = getVenvPython();
-  if (!fs.existsSync(python)) throw new Error('The private transcription runtime is not ready. Open System Requirements.');
+  const python = getBackendPython(engine);
+  if (!fs.existsSync(python)) throw new Error('The selected transcription runtime is not ready. Open System Requirements.');
   for (const dir of [TORCH_CACHE_DIR, MATPLOTLIB_CACHE_DIR, OPENAI_WHISPER_MODEL_CACHE_DIR]) fs.mkdirSync(dir, { recursive: true });
   const normalizedPath = path.join(path.dirname(job.previewPath), `${path.parse(job.previewPath).name}.rerun-${Date.now()}.transcript.json`);
   try {
-    const env = { ...transcriptionRuntimeEnv(), HF_HOME: WHISPERX_MODEL_CACHE_DIR, TORCH_HOME: TORCH_CACHE_DIR, MPLCONFIGDIR: MATPLOTLIB_CACHE_DIR };
+    const env = { ...transcriptionRuntimeEnv(engine), HF_HOME: WHISPERX_MODEL_CACHE_DIR, TORCH_HOME: TORCH_CACHE_DIR, MPLCONFIGDIR: MATPLOTLIB_CACHE_DIR };
+    logStep1(`Transcription runtime: ${runtimeSelection?.backends[engine] ? 'system' : 'app-managed'} — ${python}`);
     logStep1('Transcript cache: Miss (or explicit transcription rerun).');
     const normalized = await transcribeWithFallback(capability, settings, model.id, attempt =>
       transcriptionEngines[engine].transcribe({
@@ -1111,10 +1171,12 @@ async function detectHardwareEnvironment(): Promise<HardwareEnvironmentInfo> {
 }
 
 // Scan and test all base dependencies
-function transcriptionRuntimeEnv(): NodeJS.ProcessEnv {
-  const sitePackages = isWin ? path.join(VENV_DIR, 'Lib', 'site-packages') : path.join(VENV_DIR, 'lib', 'python3.10', 'site-packages');
-  const libraryPaths = ['cublas', 'cudnn'].map(name => path.join(sitePackages, 'nvidia', name, isWin ? 'bin' : 'lib')).filter(dir => fs.existsSync(dir));
-  return { ...process.env, PATH: [RUNTIME_BIN_DIR, ...libraryPaths, process.env.PATH || ''].join(path.delimiter),
+function transcriptionRuntimeEnv(engine?: TranscriptionBackend): NodeJS.ProcessEnv {
+  const privateSites = isWin ? [path.join(VENV_DIR, 'Lib', 'site-packages')] : fs.existsSync(path.join(VENV_DIR, 'lib'))
+    ? fs.readdirSync(path.join(VENV_DIR, 'lib')).filter(name => /^python3\.\d+$/.test(name)).map(name => path.join(VENV_DIR, 'lib', name, 'site-packages')) : [];
+  const external = engine && runtimeSelection?.backends[engine];
+  const libraryPaths = external ? external.libraryPaths : privateSites.flatMap(site => ['cublas', 'cudnn'].map(name => path.join(site, 'nvidia', name, isWin ? 'bin' : 'lib'))).filter(dir => fs.existsSync(dir));
+  return { ...cleanPythonEnv(), PATH: [path.dirname(getFfmpeg()), path.dirname(getFfprobe()), ...libraryPaths, process.env.PATH || ''].join(path.delimiter),
     LD_LIBRARY_PATH: [...libraryPaths, process.env.LD_LIBRARY_PATH || ''].join(path.delimiter) };
 }
 
@@ -1141,7 +1203,7 @@ const backendSnapshots = new Map<TranscriptionBackend, StatusCache<BackendCapabi
 async function getBackendCapabilities(engine: TranscriptionBackend, refresh = false) {
   if (!backendSnapshots.has(engine)) backendSnapshots.set(engine, new StatusCache<BackendCapabilities>(5 * 60_000));
   const cache = backendSnapshots.get(engine)!;
-  const load = async () => probeBackendCapabilities(getVenvPython(), engine, (await getFullHardwareEnvironment()).hasNvidiaGpu, transcriptionRuntimeEnv());
+  const load = async () => probeBackendCapabilities(getBackendPython(engine), engine, (await getFullHardwareEnvironment()).hasNvidiaGpu, transcriptionRuntimeEnv(engine));
   return refresh ? cache.refresh(load) : cache.get(load);
 }
 function invalidateRequirements(includeHardware = false) {
@@ -1152,25 +1214,31 @@ function invalidateRequirements(includeHardware = false) {
 }
 async function checkActiveRequirements(includeCapabilities = false): Promise<RequirementsReport> {
   const [hw, packages] = await Promise.all([getFullHardwareEnvironment(), pythonPackages()]);
-  const probe = (name: string): PythonProbe => packages[name] || {ok:false};
+  const packageEngine = (name: string): TranscriptionBackend => ['openai-whisper', 'torch'].includes(name) ? 'openai-whisper' : 'faster-whisper';
+  const probe = (name: string): PythonProbe => {
+    const external = runtimeSelection?.backends[packageEngine(name)];
+    return (external ? external.packages[name] : packages[name]) || {ok:false};
+  };
   const components: BaseRequirementItem[] = [];
   const item = (value: BaseRequirementItem) => { components.push(value); return value; };
 
-  const pythonPath = getVenvPython();
-  const pythonCheck = probe('python');
-  item({ id: 'python', name: 'Application Runtime', purpose: 'Private runtime used by local speech-recognition engines.', classification: 'required', group: 'core', status: pythonCheck.ok ? 'ready' : 'missing', installedVersion: pythonCheck.output, installLocation: pythonPath, isAppManaged: true, error: pythonCheck.ok ? undefined : 'The application runtime is not ready.' });
+  const systemPython = runtimeSelection?.python.source === 'system' ? runtimeSelection.python : undefined;
+  const pythonPath = systemPython?.path || getVenvPython();
+  const pythonCheck = systemPython ? { ok: true, output: systemPython.version } : packages.python || { ok: false };
+  item({ id: 'python', name: 'Python Runtime', purpose: 'System Python when compatible; missing engines use an isolated app environment.', classification: 'required', group: 'core', status: pythonCheck.ok ? 'ready' : 'missing', installedVersion: pythonCheck.output, installLocation: pythonPath, isAppManaged: !systemPython, source: systemPython ? 'system' : 'app', error: pythonCheck.ok ? undefined : 'The application runtime is not ready.' });
 
   for (const [id, name, binary, purpose] of [
-    ['ffmpeg', 'FFmpeg', MANAGED_FFMPEG_PATH, 'Required for audiobook processing, merging, encoding, and export.'],
-    ['ffprobe', 'FFprobe', MANAGED_FFPROBE_PATH, 'Required to inspect audio streams and validate output.'],
+    ['ffmpeg', 'FFmpeg', getFfmpeg(), 'Required for audiobook processing, merging, encoding, and export.'],
+    ['ffprobe', 'FFprobe', getFfprobe(), 'Required to inspect audio streams and validate output.'],
   ] as const) {
     let output = '';
     try { output = await managedBinaryStatus(binary); } catch {}
-    item({ id, name, purpose, classification: 'required', group: 'core', status: output ? 'ready' : 'missing', installLocation: binary, isAppManaged: true, error: output ? undefined : `${name} is not installed in the application runtime.` });
+    const source = runtimeSelection?.[id].source || 'app';
+    item({ id, name, purpose, classification: 'required', group: 'core', status: output ? 'ready' : 'missing', installedVersion: output.split(' ')[2], installLocation: binary, source, isAppManaged: source === 'app', error: output ? undefined : `${name} is unavailable. Check again to rediscover system tools or use the app fallback.` });
   }
 
   const ytDlp = await getYtDlpStatus();
-  item({ id: 'yt_dlp', name: 'yt-dlp', purpose: 'Optional download tool used only for YouTube inspection and audio import.', classification: 'optional', group: 'compatibility', status: ytDlp.status === 'installed' ? 'ready' : ytDlp.status === 'error' ? 'broken' : 'missing', installedVersion: ytDlp.version, installLocation: ytDlp.executablePath, isAppManaged: true, error: ytDlp.error });
+  item({ id: 'yt_dlp', name: 'yt-dlp', purpose: 'Optional download tool used only for YouTube inspection and audio import.', classification: 'optional', group: 'compatibility', status: ytDlp.status === 'installed' ? 'ready' : ytDlp.status === 'error' ? 'broken' : 'missing', installedVersion: ytDlp.version, installLocation: ytDlp.executablePath, isAppManaged: !ytDlp.isSystemInstalled, source: ytDlp.isSystemInstalled ? 'system' : 'app', managedInstalled: fs.existsSync(LOCAL_YT_DLP_PATH), managedLocation: LOCAL_YT_DLP_PATH, error: ytDlp.error });
 
   // Package discovery never imports a transcription engine or initializes CUDA.
   // Real device compatibility is tested by the transcription engine when used.
@@ -1190,13 +1258,26 @@ async function checkActiveRequirements(includeCapabilities = false): Promise<Req
   item({ id: 'nvidia_acceleration', name: 'NVIDIA GPU Acceleration', purpose: !hw.hasNvidiaGpu ? 'No compatible GPU detected. Optimized CPU transcription will be used.' : cudaDevices > 0 ? 'CUDA runtime packages are installed; device compatibility is verified when transcription starts.' : 'Optional CUDA libraries for Faster Whisper on compatible NVIDIA hardware. CPU transcription remains available.', classification: 'optional', group: 'optional_acceleration', status: gpuStatus, isAppManaged: hw.hasNvidiaGpu, diagnosticDetails: !hw.hasNvidiaGpu ? 'Optional; this computer is fully supported in CPU mode.' : cudaDevices > 0 ? 'CUDA libraries detected without initializing CTranslate2. Compatibility is checked during transcription.' : undefined, error: hw.hasNvidiaGpu && cudaDevices === 0 ? 'Optional performance improvement available; the application remains usable.' : undefined });
 
   for (const component of components) {
+    const names = optionalPackages[component.id];
+    if (names) {
+      const external = runtimeSelection?.backends[packageEngine(names[0])];
+      component.source = external ? 'system' : 'app';
+      component.isAppManaged = !external && (component.id !== 'nvidia_acceleration' || hw.hasNvidiaGpu);
+      component.installLocation = external?.path || getVenvPython();
+      component.managedInstalled = names.some(name => packages[name]?.ok);
+      component.managedLocation = VENV_DIR;
+      if (external && component.id === 'nvidia_acceleration') component.diagnosticDetails = 'CUDA libraries for this system engine must be managed in its own Python environment.';
+    }
+    component.canUninstall = component.classification === 'optional' && !!component.managedInstalled;
+    component.uninstallImpact = removalImpact[component.id];
     const error = compatibilityErrors.get(component.id);
-    if (error) { component.status = 'broken'; component.error = error; }
+    if (error && component.source !== 'system') { component.status = 'broken'; component.error = error; }
   }
 
   const readiness = evaluateRequirementReadiness(components, { hasNvidiaGpu: hw.hasNvidiaGpu, accelerationPackagesReady: cudaDevices > 0 });
   const statusColor = readiness.statusColor;
   return {
+    runtimeMode: runtimeSelection?.mode || 'hybrid', runtimeWarnings: runtimeSelection?.warnings || [],
     timestamp: new Date().toISOString(), allReady: readiness.allReady, statusColor,
     needsAttentionCount: readiness.needsAttentionCount,
     summaryMessage: statusColor === 'red'
@@ -1218,7 +1299,11 @@ async function checkActiveRequirements(includeCapabilities = false): Promise<Req
 // 1. Get Requirements Status Report
 app.get('/api/requirements/status', async (req, res) => {
   try {
-    if (req.query.refresh === 'true') invalidateRequirements(true);
+    if (req.query.refresh === 'true') {
+      if (cleanupInProgress() || runtimeRequests || runtimeDiscoveryRunning) return res.status(409).json({ error: 'Wait for active work to finish before rescanning system tools.' });
+      await refreshRuntimeSelection();
+      invalidateRequirements(true);
+    }
     const report = await checkActiveRequirements(true);
     res.json(report);
   } catch (err: any) {
@@ -1248,12 +1333,12 @@ app.get('/api/requirements/diagnostic-log', (req, res) => {
 
 // 3. Install / Repair Required Base Components
 app.post('/api/requirements/install-repair', async (req, res) => {
-  if (activeInstallProgress.isActive) {
+  if (cleanupInProgress() || runtimeRequests || runtimeDiscoveryRunning) {
     return res.status(400).json({ error: 'An installation or repair task is already running.' });
   }
 
   const report = await checkActiveRequirements();
-  if (step1TaskRunning) return res.status(409).json({ error: 'Wait for transcription/processing to finish before changing its runtime.' });
+  if (cleanupInProgress() || runtimeRequests || runtimeDiscoveryRunning) return res.status(409).json({ error: 'Wait for active work to finish before changing requirements.' });
   let torchPlan: ReturnType<typeof pytorchInstallPlan>;
   try { torchPlan = pytorchInstallPlan(report, req.body?.pytorchFlavor, req.body?.confirmPytorchReplacement === true); }
   catch (error: any) { return res.status(400).json({ error: error.message }); }
@@ -1276,6 +1361,7 @@ app.post('/api/requirements/install-repair', async (req, res) => {
     });
   }
 
+  runtimeMutationRunning = true;
   activeInstallProgress = {
     isActive: true,
     phase: 'preparing',
@@ -1371,7 +1457,8 @@ app.post('/api/requirements/install-repair', async (req, res) => {
         } else if (['faster_whisper', 'ctranslate2', 'openai_whisper', 'pytorch', 'nvidia_acceleration'].includes(comp.id)) {
           const python = getVenvPython();
           if (!fs.existsSync(python) || !fs.existsSync(path.join(VENV_DIR, 'pyvenv.cfg'))) {
-            await runSpawnCmd(PORTABLE_PYTHON_EXE, ['-m', 'venv', VENV_DIR], appendInstallDiagnostic);
+            const basePython = runtimeSelection?.python.source === 'system' ? runtimeSelection.python.path : PORTABLE_PYTHON_EXE;
+            await runSpawnCmd(basePython, ['-m', 'venv', VENV_DIR], appendInstallDiagnostic);
           }
           // Recheck after parent installs: pip may have already supplied this dependency.
           if ((comp.id === 'pytorch' && torchPlan) || (await checkActiveRequirements()).components.find(item => item.id === comp.id)?.status !== 'ready') {
@@ -1470,12 +1557,57 @@ app.post('/api/requirements/install-repair', async (req, res) => {
       activeInstallProgress.error = err.message || 'Installation error occurred.';
       activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] ERROR: ${err.message}`);
       appendInstallDiagnostic(`ERROR: ${err.stack || err.message}`, false);
+    } finally { runtimeMutationRunning = false; }
+  })();
+});
+
+// Removal targets are an allowlist of private distributions, never request paths.
+app.post('/api/requirements/uninstall', async (req, res) => {
+  if (cleanupInProgress() || runtimeRequests || runtimeDiscoveryRunning) return res.status(409).json({ error: 'Wait for active work to finish before removing requirements.' });
+  const id = String(req.body?.id || '');
+  let names: string[];
+  try {
+    const report = await checkActiveRequirements();
+    names = optionalRemoval(id, req.body?.confirmed === true, !!report.components.find(item => item.id === id)?.canUninstall);
+    assertManagedTarget(APP_ROOT, id === 'yt_dlp' ? LOCAL_YT_DLP_PATH : VENV_DIR);
+  } catch (error: any) { return res.status(400).json({ error: error.message }); }
+  if (cleanupInProgress() || runtimeRequests || runtimeDiscoveryRunning) return res.status(409).json({ error: 'Wait for active work to finish before removing requirements.' });
+  runtimeMutationRunning = true;
+  activeInstallProgress = { isActive: true, phase: 'in_progress', currentItemId: id, currentActivity: 'Removing app-managed component…', overallProgress: 10, logs: [], canCancel: false };
+  res.json({ status: 'started' });
+  void (async () => {
+    try {
+      appendInstallDiagnostic(`Uninstall requested: ${id}. Only the app-owned copy will be removed. Models, projects and system installations are preserved.`);
+      if (id === 'yt_dlp') await uninstallLocalYtDlp();
+      else {
+        const python = getVenvPython();
+        await execFileAsync(python, ['-c', PRIVATE_UNINSTALL_CHECK, VENV_DIR, JSON.stringify(names)], { env: cleanPythonEnv(), timeout: 15000, windowsHide: true });
+        await runSpawnCmd(python, ['-m', 'pip', 'uninstall', '--yes', ...names], appendInstallDiagnostic);
+        invalidateRequirements();
+        const remaining = await pythonPackages();
+        if (!remaining.python?.ok || names.some(name => remaining[name]?.ok)) throw new Error('Could not verify that the app-managed packages were removed. See the log.');
+      }
+      compatibilityErrors.delete(id);
+      invalidateRequirements();
+      activeInstallProgress.phase = 'completed';
+      activeInstallProgress.overallProgress = 100;
+      activeInstallProgress.successMessage = 'App-managed copy removed. Reinstall it here if needed. System tools, models and projects were kept.';
+      appendInstallDiagnostic(activeInstallProgress.successMessage);
+    } catch (error: any) {
+      activeInstallProgress.phase = 'error';
+      activeInstallProgress.error = String(error.stderr || error.message);
+      appendInstallDiagnostic(`ERROR removing ${id}: ${error.stack || error.message}\n${error.stderr || ''}`);
+    } finally {
+      invalidateRequirements();
+      activeInstallProgress.isActive = false;
+      runtimeMutationRunning = false;
     }
   })();
 });
 
 // 4. Cancel active installation
 app.post('/api/requirements/cancel', (req, res) => {
+  if (!activeInstallProgress.canCancel) return res.status(409).json({ error: 'This operation cannot be cancelled safely. Wait for it to finish.' });
   if (!activeInstallProgress.isActive) {
     return res.status(400).json({ error: 'No active installation task to cancel.' });
   }
@@ -1569,7 +1701,7 @@ const SUPPORTED_AUDIO_EXTENSIONS = new Set([
 
 // FFprobe / FFmpeg media inspector
 function probeAudioFile(filePath: string) {
-  return inspect(MANAGED_FFPROBE_PATH, filePath);
+  return inspect(getFfprobe(), filePath);
 }
 
 // Local Recursive Directory Scanner (Supports Layout A, Layout B, and Layout C with natural sorting)
@@ -1695,23 +1827,22 @@ async function checkBinaryVersion(executablePath: string, args: string[] = ['--v
 
 const ytDlpVersion = new StatusCache<string | null>(5 * 60_000);
 async function getYtDlpStatus(): Promise<YtDlpStatusInfo> {
-  // Check local managed yt-dlp first
-  let executablePath = LOCAL_YT_DLP_PATH;
-  const isSystemInstalled = false;
+  const executablePath = runtimeSelection?.ytDlp.path || LOCAL_YT_DLP_PATH;
+  const isSystemInstalled = runtimeSelection?.ytDlp.source === 'system';
   let version: string | undefined;
 
-  version = (await ytDlpVersion.get(() => checkBinaryVersion(LOCAL_YT_DLP_PATH))) || undefined;
+  version = isSystemInstalled ? runtimeSelection?.ytDlp.version : (await ytDlpVersion.get(() => checkBinaryVersion(LOCAL_YT_DLP_PATH))) || undefined;
 
   // Check FFmpeg and FFprobe
-  const ffmpegVerLine = await managedBinaryStatus(MANAGED_FFMPEG_PATH);
-  const ffprobeVerLine = await managedBinaryStatus(MANAGED_FFPROBE_PATH);
+  const ffmpegVerLine = await managedBinaryStatus(getFfmpeg());
+  const ffprobeVerLine = await managedBinaryStatus(getFfprobe());
   const ffmpegAvailable = Boolean(ffmpegVerLine);
   const ffprobeAvailable = Boolean(ffprobeVerLine);
 
   let status: YtDlpStatusState = 'not_installed';
   if (isYtDlpInstalling) {
     status = 'downloading';
-  } else if (ytDlpInstallError) {
+  } else if (ytDlpInstallError && !isSystemInstalled) {
     status = 'error';
   } else if (version) {
     status = 'installed';
@@ -1726,7 +1857,7 @@ async function getYtDlpStatus(): Promise<YtDlpStatusInfo> {
     ffmpegVersion: ffmpegVerLine ? ffmpegVerLine.split(' ')[2] : undefined,
     ffprobeAvailable,
     ffprobeVersion: ffprobeVerLine ? ffprobeVerLine.split(' ')[2] : undefined,
-    error: ytDlpInstallError || undefined,
+    error: isSystemInstalled ? undefined : ytDlpInstallError || undefined,
     lastCheckedAt: new Date().toISOString(),
     latestVersion: '2026.08.19',
   };
@@ -1793,9 +1924,8 @@ async function uninstallLocalYtDlp(): Promise<YtDlpStatusInfo> {
   // Removes only the application-managed yt-dlp executable in runtime/bin.
   // Never touches user audio, models, or settings!
   if (fs.existsSync(LOCAL_YT_DLP_PATH)) {
-    try {
-      fs.unlinkSync(LOCAL_YT_DLP_PATH);
-    } catch (e) {}
+    assertManagedTarget(APP_ROOT, LOCAL_YT_DLP_PATH);
+    fs.unlinkSync(LOCAL_YT_DLP_PATH);
   }
   ytDlpInstallError = null;
   ytDlpVersion.invalidate();
@@ -1886,7 +2016,7 @@ app.post('/api/models/:id/prepare', requireFeatures(['faster_model_management'],
   }
   const repository = FASTER_WHISPER_REPOSITORIES[modelId];
   if (!repository) return res.status(400).json({ error: `No Faster-Whisper repository is configured for '${modelId}'.` });
-  const venvPython = getVenvPython();
+  const venvPython = getBackendPython('faster-whisper');
   if (!fs.existsSync(venvPython)) {
     return res.status(400).json({ error: 'Faster Whisper runtime is not installed. Open System Requirements and install the missing requirements first.' });
   }
@@ -1922,7 +2052,7 @@ app.post('/api/models/:id/prepare', requireFeatures(['faster_model_management'],
   model.downloadSpeed = 'Preparing download...';
   model.downloadError = undefined;
   writeLog(`\n========== ${new Date().toISOString()} ${force ? 'Reinstall' : 'Install'} ${model.name} ==========\n`);
-  const child = spawn(venvPython, ['-c', pythonScript], { shell: false, windowsHide: true });
+  const child = spawn(venvPython, ['-c', pythonScript], { shell: false, windowsHide: true, env: transcriptionRuntimeEnv('faster-whisper') });
   activeFasterWhisperInstalls.set(modelId, child);
 
   const receiveOutput = (data: Buffer) => {
@@ -2313,6 +2443,14 @@ app.get('/api/tools/yt-dlp/status', async (req, res) => {
   res.json(status);
 });
 
+// The separate YouTube panel obeys the same runtime mutation lock.
+app.use('/api/tools/yt-dlp', (req, res, next) => {
+  if (req.method !== 'POST' || !['/install', '/update', '/uninstall'].includes(req.path)) return next();
+  if (cleanupInProgress() || runtimeRequests > 1) return res.status(409).json({ error: 'Wait for active work to finish before changing yt-dlp.' });
+  runtimeMutationRunning = true;
+  next();
+});
+
 // Install local yt-dlp binary
 app.post('/api/tools/yt-dlp/install', async (req, res) => {
   try {
@@ -2323,7 +2461,7 @@ app.post('/api/tools/yt-dlp/install', async (req, res) => {
     res.json({ status: 'ok', info: status, message: `yt-dlp installed successfully (${status.version || 'latest'}).` });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to install yt-dlp' });
-  }
+  } finally { runtimeMutationRunning = false; }
 });
 
 // Update local yt-dlp binary
@@ -2333,7 +2471,7 @@ app.post('/api/tools/yt-dlp/update', async (req, res) => {
     res.json({ status: 'ok', info: status, message: `yt-dlp updated to version ${status.version || 'latest'}.` });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to update yt-dlp' });
-  }
+  } finally { runtimeMutationRunning = false; }
 });
 
 // Uninstall local yt-dlp binary
@@ -2343,7 +2481,7 @@ app.post('/api/tools/yt-dlp/uninstall', async (req, res) => {
     res.json({ status: 'ok', info: status, message: 'Local yt-dlp binary uninstalled. Source files, whisper models, and projects were preserved.' });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to uninstall yt-dlp' });
-  }
+  } finally { runtimeMutationRunning = false; }
 });
 
 // Fetch YouTube video metadata via yt-dlp
@@ -2459,7 +2597,7 @@ app.post('/api/youtube/download', (req, res, next) => requireFeatures(
   if (sourceImports.has(jobId || '') || step1TaskRunning || targetJob?.exports?.some(e => ['queued','running'].includes(e.status))) return res.status(409).json({ error: 'Wait for the active import, processing or export to complete.' });
   sourceImports.add(jobId || '');
   try {
-    const latestFile = await downloadYoutubeAudio(status.executablePath, RUNTIME_BIN_DIR, importDir, cleanUrl, format);
+    const latestFile = await downloadYoutubeAudio(status.executablePath, path.dirname(getFfmpeg()), importDir, cleanUrl, format);
     const probe = probeAudioFile(latestFile.fullPath);
     const fileStat = fs.statSync(latestFile.fullPath);
 
@@ -2562,6 +2700,7 @@ app.get('/api/config', (req, res) => {
 // Update configuration
 app.post('/api/config', (req, res) => {
   const updates = req.body;
+  if (updates.detect_musical_transitions !== undefined && typeof updates.detect_musical_transitions !== 'boolean') return res.status(400).json({ error: 'Music transition detection must be a boolean.' });
   currentConfig = { ...currentConfig, ...updates };
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(currentConfig, null, 2), 'utf8');
   res.json({ status: 'ok', config: currentConfig });
@@ -2673,7 +2812,7 @@ app.get('/api/jobs/:id', (req, res) => {
   }
   if (!job.sourceBitrate && job.mergedMp3?.fullPath) {
     try {
-      const media = job.parts.map(part=>inspect(MANAGED_FFPROBE_PATH,path.resolve(APP_ROOT,job.sourceFolderPath || '',part.name)));
+      const media = job.parts.map(part=>inspect(getFfprobe(),path.resolve(APP_ROOT,job.sourceFolderPath || '',part.name)));
       job.sourceBitrate = Math.max(...media.map(m=>m.bitrate));
     } catch { /* Keep unknown explicit until the source can be inspected. */ }
   }
@@ -2721,7 +2860,7 @@ function clearManagedDirectory(root: string): number {
 }
 
 function cleanupInProgress(): boolean {
-  return step1TaskRunning || sourceImports.size > 0 || activeInstallProgress.isActive ||
+  return step1TaskRunning || sourceImports.size > 0 || activeInstallProgress.isActive || runtimeMutationRunning || isYtDlpInstalling ||
     activeModelDownloads.size > 0 || activeFasterWhisperInstalls.size > 0 ||
     jobs.some(job => job.exports?.some(item => item.status === 'queued' || item.status === 'running'));
 }
@@ -2981,7 +3120,7 @@ const handleStep1Process = async (req: any, res: any) => {
       // ----------------------------------------------------
       job.parts.sort((a,b) => naturalPathCompare(a.sourceRelativePath || a.name, b.sourceRelativePath || b.name));
       const sourcePaths = job.parts.map(part => path.resolve(APP_ROOT, job.sourceFolderPath || '', part.name));
-      const media = sourcePaths.map(p => inspect(MANAGED_FFPROBE_PATH, p));
+      const media = sourcePaths.map(p => inspect(getFfprobe(), p));
       job.discoveredFiles = job.parts.map((part,i)=>({
         relativePath: part.sourceRelativePath || part.name,
         storedName: part.name, fileName: path.basename(part.sourceRelativePath || part.name), folderName: path.dirname(part.sourceRelativePath || part.name),
@@ -2993,7 +3132,8 @@ const handleStep1Process = async (req: any, res: any) => {
       signal.throwIfAborted();
       const plan = chapterSource === 'existing_files' ? undefined : await transcriptionPlan({ ...job, selectedModelId, transcriptionSettings: selectedTranscriptionSettings }, preparedAudioKey, requestedEngine);
       const cachedTranscript = plan && reusableTranscription(job, plan.requestKey);
-      const detectionKey = processingKey('chapter-detection', plan?.requestKey || '', { leadIn: currentConfig.lead_in_seconds });
+      const musicEnabled = currentConfig.detect_musical_transitions === true;
+      const detectionKey = chapterDetectionCacheKey(job, musicEnabled);
       if (cachedTranscript && previousChapterSource === chapterSource && job.chapterDetectionKey === detectionKey && !job.staleSteps?.includes('chapter_detection') && job.previewPath && fs.existsSync(job.previewPath) && job.mergedMp3?.fullPath && fs.existsSync(job.mergedMp3.fullPath)) {
         logStep1(`Transcript cache: Hit; ${job.transcription!.engine}, ${job.transcription!.profile}, ${job.transcription!.device}, ${job.transcription!.computeType}, batch ${job.transcription!.batchSize ?? 'Off'}, beam ${job.transcription!.beamSize ?? 'native'}. Reusing reviewed chapters.`);
         saveJobs();
@@ -3031,11 +3171,11 @@ const handleStep1Process = async (req: any, res: any) => {
             durations: job.parts.map((part, index) => previousPreparedDurations[index] || part.durationSeconds || media[index].durationSeconds),
             normalized: mergeMethod === 'standard',
           }
-        : await prepareMaster(MANAGED_FFMPEG_PATH, MANAGED_FFPROBE_PATH, sourcePaths, intermediatesDir, mergeMethod, logStep1, signal);
+        : await prepareMaster(getFfmpeg(), getFfprobe(), sourcePaths, intermediatesDir, mergeMethod, logStep1, signal);
       if (reusePreparedAudio) logStep1('Reusing prepared master audio; skipping PCM conversion and stitching.');
       const master = prepared.master;
       job.sourceBitrate = Math.max(...media.map(m => m.bitrate));
-      const masterInfo = inspect(MANAGED_FFPROBE_PATH, master);
+      const masterInfo = inspect(getFfprobe(), master);
       job.sourceCodec = masterInfo.codec;
       job.sourceFormat = media.every(m => m.format === media[0].format) ? media[0].format : 'wav';
       job.totalDurationSeconds = masterInfo.durationSeconds;
@@ -3059,7 +3199,7 @@ const handleStep1Process = async (req: any, res: any) => {
         };
         if (media[0].artwork) {
           const coverPath = path.join(intermediatesDir, media[0].artwork.codec_name === 'png' ? 'original-cover.png' : 'original-cover.jpg');
-          await execFileAsync(MANAGED_FFMPEG_PATH, ['-v', 'error', '-y', '-i', master, '-map', '0:' + media[0].artwork.index, '-c', 'copy', coverPath]);
+          await execFileAsync(getFfmpeg(), ['-v', 'error', '-y', '-i', master, '-map', '0:' + media[0].artwork.index, '-c', 'copy', coverPath]);
           job.metadata.cover = { source: 'local', filename: path.basename(coverPath), url: 'data:image/' + (coverPath.endsWith('.png') ? 'png' : 'jpeg') + ';base64,' + fs.readFileSync(coverPath).toString('base64') };
         }
       }
@@ -3072,7 +3212,7 @@ const handleStep1Process = async (req: any, res: any) => {
         logStep1('Reusing existing analysis preview and waveform data.');
       } else {
         job.previewPath = path.join(intermediatesDir, 'analysis.wav');
-        await makePreview(MANAGED_FFMPEG_PATH, master, job.previewPath, signal, logStep1, true);
+        await makePreview(getFfmpeg(), master, job.previewPath, signal, logStep1, true);
         logStep1('Preview PCM and waveform data created successfully.');
       }
       signal.throwIfAborted();
@@ -3161,8 +3301,12 @@ const handleStep1Process = async (req: any, res: any) => {
       logStep1(`Speech recognition completed: ${transcriptSegments.length} segments and ${transcriptWordCount} words aligned.`);
       setStep1Stage('detecting_chapters', 'Finding chapter headings and refining their timestamps.', 'Detect chapter candidates');
       generatedCandidates = buildChapterCandidates(transcriptSegments, transcriptWords, job.transcription!.engine!);
-      job.chapterDetectionKey = detectionKey;
-      logStep1(`Chapter candidate detection completed: ${generatedCandidates.length} candidate markers found.`);
+      if (musicEnabled) {
+        generatedCandidates = await detectTitleBoundaries(job.previewPath!, transcriptWords, generatedCandidates, { signal, log: logStep1 });
+        generatedCandidates = await detectMusicTransitions(job.previewPath!, transcriptWords, generatedCandidates, { signal, log: logStep1 });
+      }
+      job.chapterDetectionKey = chapterDetectionCacheKey(job, musicEnabled);
+      logChapterDetectionResult(generatedCandidates, musicEnabled);
       job.pipelineSteps = completeStepRerun(job.pipelineSteps, 'detecting_chapters', now());
   } catch (err: any) {
     if (signal.aborted) throw err;
@@ -3312,7 +3456,13 @@ app.post('/api/jobs/:id/rerun/:step', async (req, res) => {
         job.transcriptKey = replacement.transcriptKey;
       } else if (step === 'detecting_chapters') {
         const words = job.transcriptWords?.length ? job.transcriptWords : buildTranscriptWords(job.transcriptSegments!);
-        const candidates = buildChapterCandidates(job.transcriptSegments!, words, job.transcription?.engine || 'openai-whisper');
+        const musicEnabled = currentConfig.detect_musical_transitions === true;
+        let candidates = buildChapterCandidates(job.transcriptSegments!, words, job.transcription?.engine || 'openai-whisper');
+        if (musicEnabled) {
+          if (!job.previewPath || !fs.existsSync(job.previewPath)) throw new Error('Music detection requires the prepared audio preview. Run Step 1 to prepare audio.');
+          candidates = await detectTitleBoundaries(job.previewPath, words, candidates, { signal: controller.signal, log: logStep1 });
+          candidates = await detectMusicTransitions(job.previewPath, words, candidates, { signal: controller.signal, log: logStep1 });
+        }
         const chapters: ChapterEntry[] = candidates.map((candidate, index) => ({
           id: `chap-${index + 1}`, start: candidate.candidate_start, title: candidate.proposed_title,
           notes: candidate.notes, headingType: candidate.headingType, chapterNumber: candidate.chapterNumber,
@@ -3322,7 +3472,8 @@ app.post('/api/jobs/:id/rerun/:step', async (req, res) => {
         const replacementChapters = applyDefaultChapterEnds(chapters, job.totalDurationSeconds);
         const replacementMetadata = generateFFMetaContent(replacementChapters, job.totalDurationSeconds, job.metadata);
         controller.signal.throwIfAborted();
-        job.chapterDetectionKey = processingKey('chapter-detection', job.transcription?.requestKey || '', { leadIn: currentConfig.lead_in_seconds });
+        job.chapterDetectionKey = chapterDetectionCacheKey(job, musicEnabled);
+        logChapterDetectionResult(candidates, musicEnabled);
         job.candidates = candidates;
         job.chapters = replacementChapters;
         job.ffmetaContent = replacementMetadata;
@@ -3604,26 +3755,35 @@ app.post('/api/jobs/:id/metadata', (req, res) => {
 // Step 4: Build Chaptered M4B (replicates app/m4b.py)
 app.post('/api/jobs/:id/build-m4b', requireFeatures(['audio_export'], 'Audio export'), async (req, res) => {
   const job = jobs.find(j => j.id === req.params.id);
-  if (!job?.mergedMp3?.fullPath || job.status === 'draft') return res.status(400).json({ error: 'Complete Step 1 first.' });
-  if (job.staleSteps?.some(step => step === 'chapter_detection' || step === 'chapter_review')) return res.status(409).json({ error: 'Rerun and review chapter detection before exporting.' });
+  const rejectExport = (status: number, message: string) => {
+    appendOperationFailure(job?.id, 'Audio export', message);
+    console.error(`[Audio export] ${message}`);
+    return res.status(status).json({ error: message });
+  };
+  if (!job?.mergedMp3?.fullPath || job.status === 'draft') return rejectExport(400, 'Complete Step 1 first.');
+  if (job.staleSteps?.some(step => step === 'chapter_detection' || step === 'chapter_review')) return rejectExport(409, 'Rerun and review chapter detection before exporting.');
   const preparedChapters = applyDefaultChapterEnds(job.chapters, job.totalDurationSeconds);
   const chapterError = validateChapterEntries(preparedChapters, job.totalDurationSeconds);
-  if (chapterError) return res.status(400).json({ error: `Fix chapter timestamps before exporting: ${chapterError}` });
+  if (chapterError) return rejectExport(400, `Fix chapter timestamps before exporting: ${chapterError}`);
   job.chapters = preparedChapters;
-  if (step1TaskRunning) return res.status(409).json({ error: 'Wait for source processing to complete.' });
+  if (step1TaskRunning) return rejectExport(409, 'Wait for source processing to complete.');
+  let exportSampleRateCeiling: number;
   try {
     const paths = job.parts.map(part => path.resolve(APP_ROOT, job.sourceFolderPath || '', part.name));
-    if (job.sourceKey !== await fingerprint(paths, {})) return res.status(409).json({ error: 'Source audio changed. Run Step 1 again to refresh the transcript and review timeline.' });
-  } catch (error: any) { return res.status(400).json({ error: error.message }); }
-  if (job.exports?.some(e => e.status === 'running' || e.status === 'queued')) return res.status(409).json({ error: 'An export is already running.' });
+    if (job.sourceKey !== await fingerprint(paths, {})) return rejectExport(409, 'Source audio changed. Run Step 1 again to refresh the transcript and review timeline.');
+    // Also cap older, higher-rate cached masters against the original inputs.
+    exportSampleRateCeiling = Math.min(...paths.map(file => inspect(getFfprobe(), file).sampleRate));
+    if (!Number.isSafeInteger(exportSampleRateCeiling) || exportSampleRateCeiling <= 0) throw new Error('Cannot detect a valid source sample rate.');
+  } catch (error: any) { return rejectExport(400, error.message); }
+  if (job.exports?.some(e => e.status === 'running' || e.status === 'queued')) return rejectExport(409, 'An export is already running.');
   const requestedFormats = req.body.outputFormats ?? [req.body.outputFormat || (outputFormats.includes(job.sourceFormat as any) ? job.sourceFormat : 'm4b')];
-  if (!Array.isArray(requestedFormats)) return res.status(400).json({error: 'Output formats must be a list.'});
+  if (!Array.isArray(requestedFormats)) return rejectExport(400, 'Output formats must be a list.');
   const formats = [...new Set(requestedFormats)] as OutputAudioFormat[];
-  if (!formats.length || formats.some(f => !outputFormats.includes(f))) return res.status(400).json({ error: 'Select supported output formats.' });
-  try { validateChapters(job.chapters, job.totalDurationSeconds); } catch (error: any) { return res.status(400).json({ error: error.message }); }
+  if (!formats.length || formats.some(f => !outputFormats.includes(f))) return rejectExport(400, 'Select supported output formats.');
+  try { validateChapters(job.chapters, job.totalDurationSeconds); } catch (error: any) { return rejectExport(400, error.message); }
   const outputDir = job.outputFolderPath || currentOutputFolder;
   try { fs.mkdirSync(outputDir, { recursive: true }); fs.accessSync(outputDir, fs.constants.W_OK); }
-  catch (error: any) { return res.status(400).json({error: 'Cannot write output folder: ' + error.message}); }
+  catch (error: any) { return rejectExport(400, 'Cannot write output folder: ' + error.message); }
   job.outputM4b = null; job.validation = null;
   job.exports = formats.map(format => ({ format, status: 'queued', progress: 0 }));
   const snapshot = JSON.parse(JSON.stringify(job));
@@ -3631,6 +3791,8 @@ app.post('/api/jobs/:id/build-m4b', requireFeatures(['audio_export'], 'Audio exp
 
   const safeName = (job.name || 'audiobook').replace(/[<>:"/\\|?*]/g, '_');
   const runId = Date.now();
+  // Keep each export's fixed-name cover beside its audio without replacing another book's cover.
+  const exportDir = path.join(outputDir, safeName + '-' + job.id + '-' + runId);
   for (const item of job.exports) {
     item.status = 'running'; saveJobs();
     try {
@@ -3640,22 +3802,27 @@ app.post('/api/jobs/:id/build-m4b', requireFeatures(['audio_export'], 'Audio exp
       if (lossy && !bitrateOptions.includes(Number(selectedRate) as any)) throw new Error('Unsupported bitrate selection');
       const encodingBitrate = req.body.bitrate || ((exportPlan.trimmed || req.body.convert === true || !canCopy(snapshot.sourceCodec,item.format)) && lossy ? selectedRate + 'k' : undefined);
       let cover: string | null | undefined;
+      let coverPath: string | undefined;
+      const coverUrl = snapshot.metadata?.cover?.url;
+      if (coverUrl) {
+        const match = /^data:image\/(png|jpeg);base64,(.+)$/.exec(coverUrl);
+        if (!match) throw new Error('Upload a PNG or JPEG cover before exporting.');
+        fs.mkdirSync(exportDir, { recursive: true });
+        coverPath = path.join(exportDir, match[1] === 'png' ? 'cover.png' : 'cover.jpg');
+        if (!fs.existsSync(coverPath)) fs.writeFileSync(coverPath, Buffer.from(match[2], 'base64'));
+      }
       if (JSON.stringify(snapshot.metadata?.cover) !== JSON.stringify(snapshot.importedMetadata?.cover)) {
         cover = null;
-        const url = snapshot.metadata?.cover?.url;
-        if (url) {
-          const match = /^data:image\/(png|jpeg);base64,(.+)$/.exec(url);
-          if (!match) throw new Error('Upload a PNG or JPEG cover before exporting.');
-          cover = path.join(outputDir, job.id + '-' + runId + '-cover.' + (match[1] === 'png' ? 'png' : 'jpg'));
-          fs.writeFileSync(cover, Buffer.from(match[2], 'base64'));
-        }
+        if (coverPath) cover = coverPath;
       }
-      const result = await exportAudio({ ffmpeg: MANAGED_FFMPEG_PATH, ffprobe: MANAGED_FFPROBE_PATH, source: snapshot.mergedMp3.fullPath, output: path.join(outputDir, safeName + '-' + runId + '.' + item.format), format: item.format, chapters: snapshot.chapters, tags, cover, convert: req.body.convert === true, bitrate: encodingBitrate, cue: req.body.cue !== false, onProgress: n => { item.progress = n; saveJobs(); } });
-      Object.assign(item, result, { status: 'success' });
+      fs.mkdirSync(exportDir, { recursive: true });
+      const result = await exportAudio({ ffmpeg: getFfmpeg(), ffprobe: getFfprobe(), source: snapshot.mergedMp3.fullPath, output: path.join(exportDir, safeName + '-' + runId + '.' + item.format), format: item.format, chapters: snapshot.chapters, tags, cover, convert: req.body.convert === true, bitrate: encodingBitrate, cue: req.body.cue !== false, sampleRateCeiling: exportSampleRateCeiling, onLog: message => { job.logs.push({timestamp:new Date().toISOString().replace('T',' ').slice(0,19),level:'INFO',message:`${item.format.toUpperCase()} export: ${message}`}); saveJobs(); }, onProgress: n => { item.progress = n; saveJobs(); } });
+      Object.assign(item, result, { coverPath, status: 'success' });
       job.outputM4b = result;
       job.status = 'built';
     } catch (error: any) {
       item.status = 'failed'; item.error = error.message;
+      console.error(`[Export ${item.format}] ${error.stack || error.message}`);
       job.logs.push({ timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19), level: 'ERROR', message: `Audio export failed (${item.format.toUpperCase()}). ${error.message}` });
     }
     saveJobs();
@@ -3690,7 +3857,7 @@ app.post('/api/jobs/:id/validate', requireFeatures(['output_validation'], 'Outpu
   // Exact validation rules from validate.py
   const sizeMb = Number((job.outputM4b.sizeBytes / (1024 * 1024)).toFixed(2));
   let inspected: ReturnType<typeof inspect>;
-  try { inspected = inspect(MANAGED_FFPROBE_PATH, job.outputM4b.fullPath || path.join(job.outputFolderPath || currentOutputFolder, job.outputM4b.filename)); }
+  try { inspected = inspect(getFfprobe(), job.outputM4b.fullPath || path.join(job.outputFolderPath || currentOutputFolder, job.outputM4b.filename)); }
   catch (error: any) {
     appendOperationFailure(job.id, 'Output validation', `Cannot read exported file: ${error.message}`);
     return res.status(400).json({ error: `Cannot read exported file: ${error.message}` });
@@ -3978,6 +4145,7 @@ app.post('/api/jobs/:id/import/chapters-csv', (req, res) => {
 // Vite Middleware / Static Server
 // ----------------------------------------------------
 async function startServer() {
+  await refreshRuntimeSelection();
   const initialThemes = scanCustomThemes();
   console.log(`[Themes] Loaded ${initialThemes.themes.length} custom theme(s) from ${CUSTOM_THEMES_DIR}.`);
   if (process.env.NODE_ENV !== "production") {

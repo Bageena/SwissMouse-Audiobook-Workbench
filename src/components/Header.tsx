@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AudiobookJob } from '../types';
 import { Plus, Settings, Trash2, BookOpen, Terminal, Wrench, MoreHorizontal, ChevronDown } from 'lucide-react';
 import swissMouseLogo from '../assets/swissmouse-logo-concept.png';
+import appPackage from '../../package.json';
 
 interface HeaderProps {
   jobs: AudiobookJob[];
@@ -63,8 +64,9 @@ export const Header: React.FC<HeaderProps> = ({
               className="w-full h-full object-cover"
             />
           </div>
+          <span className="font-mono text-[10px] font-medium text-stone-600 sm:hidden">v{appPackage.version}</span>
           <div className="hidden min-w-0 sm:block">
-            <span className="block text-base font-bold tracking-tight text-stone-950">SwissMouse</span>
+            <span className="flex items-center gap-2 text-base font-bold tracking-tight text-stone-950">SwissMouse <span className="rounded-md bg-stone-100 px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-normal text-stone-600">v{appPackage.version}</span></span>
             <span className="block text-[11px] font-medium text-stone-500">The Open Source Audiobook Workbench</span>
           </div>
         </button>

@@ -19,7 +19,7 @@ If you can support financially, thank you. If you can't, you're still every bit 
 
 # SwissMouse
 
-Current release: `0.1.0-alpha.3`
+Current release: `0.1.0-alpha.4`
 
 The open source audiobook workbench.
 
@@ -48,7 +48,7 @@ Original source audio files are never intentionally modified, and the applicatio
 
 On its first launch, SwissMouse automatically installs its locked JavaScript dependencies, builds the application, and opens it at `http://127.0.0.1:3000`. Later launches reuse those files.
 
-After the app opens, use its **System Requirements** screen to install the processing tools you want to use. SwissMouse can set up its application-local FFmpeg/FFprobe and transcription runtime from there; these are not required just to complete the initial launch.
+After the app opens, use its **System Requirements** screen to install the processing tools you want to use. SwissMouse checks PATH at startup for compatible system tools, then uses app-managed fallbacks where needed. The screen shows the active source/path and lets you remove app-owned optional components without touching system installations or your books. See the [requirements guide](REQUIREMENTS.md). Processing tools are not required just to complete the initial launch.
 
 The first launch needs an internet connection to download the app's JavaScript dependencies. Keep the server window open while using SwissMouse; closing it stops the local app.
 
@@ -80,6 +80,7 @@ See [verified format support and chapter repair](FORMAT-SUPPORT.md) for the inpu
 - Skip AI chapter detection when input files are already chapterized
 - Review, add, remove, rename, and fine-tune chapter markers in a browser-based interface
 - Edit audiobook metadata, including title, author, narrator, cover art, and other supported fields
+- Generate a 2000 × 2000 cover from Book details using gradients, a solid color, or a local image, with three automatic text layouts. **Use Cover** retains the image and editable design in the project draft; **Save book details** includes it in subsequent exports. **Cancel** keeps the existing artwork.
 - Download the best available YouTube audio stream without re-encoding by default and process it through the same workflow
 - Preserve original audio files; the app is designed not to overwrite, alter, or automatically delete them
 - Run locally as a Node.js web application
@@ -191,6 +192,14 @@ SwissMouse is intended for lawful personal audiobook organization, preservation,
 If you use YouTube downloads or other online sources, you are responsible for ensuring that your use complies with applicable copyright law, platform terms, and the rights of authors, narrators, publishers, musicians, and other creators.
 
 ## Contributing
+
+Chapter editing now includes **Clean Chapter Titles** with undo. Experimental
+acoustic detection is enabled by default and looks for recurring musical cues
+and isolated spoken titles supported by tonal transitions, including books
+without spoken chapter numbers. Its toggle is under Step 1's advanced
+transcription settings. Rerun chapter detection to apply it to a saved transcript.
+See [chapter detection and cleanup](CHAPTER-DETECTION.md)
+for usage, evidence thresholds, caching, and known limitations.
 
 This is an evolving personal project, and feedback is welcome.
 

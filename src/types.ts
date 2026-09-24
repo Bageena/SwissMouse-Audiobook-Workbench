@@ -1,5 +1,6 @@
 import type { BackendCapabilities, TranscriptionBackend, TranscriptionSettings } from './transcription';
 export interface WorkbenchConfig {
+  detect_musical_transitions?: boolean;
   faster_transcription: boolean;
   selected_model: string;
   ffmpeg_path: string;
@@ -62,7 +63,7 @@ export interface AlignedWord {
   confidence?: number;
 }
 
-export type HeadingType = 'numbered_chapter' | 'front_matter' | 'chapter_like' | 'section_divider' | 'back_matter';
+export type HeadingType = 'numbered_chapter' | 'front_matter' | 'chapter_like' | 'section_divider' | 'back_matter' | 'music_transition';
 
 export interface ChapterCandidate {
   transcriptWordIndex?: number;
@@ -111,7 +112,8 @@ export interface ValidationReport {
 }
 
 export interface CoverArtInfo {
-  source: 'local' | 'upload' | 'url';
+  source: 'local' | 'upload' | 'url' | 'generated';
+  design?: import('./utils/coverGenerator').CoverDesign;
   url: string; // Data URL or remote/local URL
   filename?: string;
   mimeType?: string;
@@ -282,7 +284,7 @@ export interface AudiobookJob {
   sourceTags?: Record<string, string>;
   importedMetadata?: AudiobookMetadata;
   existingChapters?: ChapterEntry[];
-  exports?: { format: OutputAudioFormat; status: 'queued' | 'running' | 'success' | 'failed'; progress: number; filename?: string; fullPath?: string; mode?: string; error?: string; warnings?: string[]; verifiedTags?: Record<string,string> }[];
+  exports?: { format: OutputAudioFormat; status: 'queued' | 'running' | 'success' | 'failed'; progress: number; filename?: string; fullPath?: string; coverPath?: string; mode?: string; error?: string; warnings?: string[]; verifiedTags?: Record<string,string>; sampleRate?: number; sourceSampleRate?: number; sampleRateCeiling?: number; encodingSampleRate?: number; sampleRateSummary?: string }[];
   id: string;
   name: string;
   author?: string;
@@ -371,6 +373,11 @@ export interface AudiobookJob {
     chaptersCount: number;
     codec: string;
     format?: OutputAudioFormat;
+    sampleRate?: number;
+    sourceSampleRate?: number;
+    sampleRateCeiling?: number;
+    encodingSampleRate?: number;
+    sampleRateSummary?: string;
   } | null;
 
   validation?: ValidationReport | null;
@@ -416,6 +423,11 @@ export interface BaseRequirementItem {
   updateAvailable?: boolean;
   installLocation?: string;
   isAppManaged: boolean;
+  source?: 'system' | 'app';
+  managedInstalled?: boolean;
+  managedLocation?: string;
+  canUninstall?: boolean;
+  uninstallImpact?: string;
   error?: string;
   diagnosticDetails?: string;
 }
@@ -437,6 +449,8 @@ export interface HardwareEnvironmentInfo {
 }
 
 export interface RequirementsReport {
+  runtimeMode?: 'hybrid' | 'managed';
+  runtimeWarnings?: string[];
   timestamp: string;
   allReady: boolean;
   statusColor: 'red' | 'yellow' | 'green';

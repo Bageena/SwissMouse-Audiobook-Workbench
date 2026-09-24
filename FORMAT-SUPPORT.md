@@ -34,6 +34,20 @@ Completed aligned transcripts are reused when source-content hashes and transcri
 
 ## Bitrates, source structure and direct stitching
 
+### Automatic sample-rate selection
+
+SwissMouse detects the actual input rate and reads the chosen FFmpeg encoder's supported rates. Conversion preserves an exact match; otherwise it selects the highest supported rate **at or below** the input rate. It never rounds up to a nearer higher rate. Encoders without a discrete rate list retain the input rate. If no supported rate fits, export fails with an explanation instead of upsampling. This is a sample-rate policy (Hz), not a change to PCM bit depth.
+
+For mixed-rate sources, standard PCM preparation now uses the **lowest** input rate, avoiding upsampling any part. Compatible direct stitching and ordinary stream-copy exports preserve the encoded audio. Existing higher-rate cached masters are capped against the original inputs during export; the new preparation policy also invalidates old normalization caches for the next full processing run. The separate 16 kHz analysis/Whisper preview does not become the export master.
+
+Examples: 44.1 kHz AAC/MP3 stays 44.1 kHz; 96 kHz MP3 becomes 48 kHz. With the installed libopus rate list, 44.1 kHz becomes **24 kHz encoder input**, and 22.05 kHz becomes **16 kHz encoder input**, rather than rounding upward. Opus files still report a 48 kHz decoding/playback clock; this is a format characteristic, not evidence that a higher-rate input was supplied. SwissMouse verifies both the Opus input-rate header and the reported playback rate. See [Ogg Opus identification headers](https://www.rfc-editor.org/rfc/rfc7845.html#section-5.1).
+
+The terminal, book log and saved export results record the input ceiling, chosen encoder rate and actual verified output rate. A mismatch fails verification rather than appearing as a successful export. The Created files panel shows the verified sample-rate summary.
+
+Ogg Vorbis tests its requested bitrate against the selected rate/channel count before encoding the book. If that combination is rejected but quality mode works, it uses **VBR quality 4** at the same sample rate and reports the fallback. The resulting bitrate may differ from the requested bitrate; it does not resample upward to make that bitrate work. Both failed preflight details and the successful fallback are logged. If quality mode also fails, the export remains a failure.
+
+### Bitrates and source structure
+
 - Final export offers 32, 64, 96, 128, 192, 256 and 320 kbps for lossy encoders. The default is the highest listed rate at or below the highest measured input audio bitrate, with a 32 kbps minimum and 96 kbps fallback when unknown. Higher settings do not restore source quality. Lossless outputs do not have a lossy bitrate control.
 - Prefer stream copy/remux is the default. Compatible outputs retain their encoded audio; bitrate settings apply only when converting. Selecting re-encode explicitly enables bitrate changes for otherwise compatible outputs.
 - Skip PCM requires verified matching container/codec/profile, sample format/rate, channel layout, time base and codec configuration. It retains the clean-audio warning and performs a full decode integrity check before direct stitching. Invalid or incompatible streams fail with an explanation; they do not silently bypass processing. Analysis/preview and the selected chapter-detection stage still run.

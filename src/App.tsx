@@ -36,6 +36,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isProcessingStep1, setIsProcessingStep1] = useState<boolean>(false);
   const [isBuildingM4b, setIsBuildingM4b] = useState<boolean>(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [isValidating, setIsValidating] = useState<boolean>(false);
 
   // Modals
@@ -304,6 +305,7 @@ export default function App() {
   // Step 4 Handler: Build Chaptered Audio Package (M4B, M4A, MP3, FLAC, Opus, WAV)
   const handleBuildM4b = async (outputFormats: OutputAudioFormat[] = ['m4b'], convert = false, cue = true, bitrates: Partial<Record<OutputAudioFormat,number>> = {}) => {
     if (!currentJob) return;
+    setExportError(null);
     setIsBuildingM4b(true);
     const poll = window.setInterval(() => refreshCurrentJob(currentJob.id), 1000);
     try {
@@ -316,6 +318,9 @@ export default function App() {
       if (!res.ok) throw new Error(data.error || 'Build failed');
       await refreshCurrentJob(currentJob.id);
     } catch (err: any) {
+      const message = err instanceof Error ? err.message : String(err);
+      setExportError(message);
+      console.error('Audio export failed:', err);
       await refreshCurrentJob(currentJob.id);
       setShowLogsDrawer(true);
     } finally {
@@ -625,6 +630,7 @@ export default function App() {
                 config={config}
                 onBuildM4b={handleBuildM4b}
                 isBuilding={isBuildingM4b}
+                error={exportError}
                 onNextStep={() => setActiveStep(5)}
               />
             )}

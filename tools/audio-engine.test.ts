@@ -25,6 +25,15 @@ const cover = path.join(root, 'cover.png');
 run(['-f', 'lavfi', '-i', 'color=c=blue:s=32x32', '-frames:v', '1', cover]);
 const packets = (file: string) => JSON.parse(execFileSync(fp, ['-v', 'error', '-select_streams', 'a:0', '-show_packets', '-show_data_hash', 'sha256', '-show_entries', 'packet=data_hash', '-of', 'json', file], {encoding: 'utf8', maxBuffer: 20e6})).packets.map((p: any) => p.data_hash);
 const fixtures: Record<string, string[]> = {mp3: ['-c:a','libmp3lame'], m4b: ['-c:a','aac','-f','mp4'], m4a: ['-c:a','aac'], aac: ['-c:a','aac'], ogg: ['-c:a','libvorbis'], oga: ['-c:a','libvorbis','-f','ogg'], opus: ['-c:a','libopus'], flac: ['-c:a','flac'], wav: ['-c:a','pcm_s16le'], aiff: ['-c:a','pcm_s16be'], aif: ['-c:a','pcm_s16be','-f','aiff'], wma: ['-c:a','wmav2'], alac: ['-c:a','alac','-f','mp4']};
+test('export accepts a final chapter at the rounded millisecond duration', () => {
+  const duration = 17790.275918;
+  assert.doesNotThrow(() => validateChapters([
+    { start: '00:00:00.000', end: '04:56:30.276', title: 'Opening' },
+  ], duration));
+  assert.throws(() => validateChapters([
+    { start: '00:00:00.000', end: '04:56:30.277', title: 'Opening' },
+  ], duration), /Invalid end timestamp/);
+});
 test('gap export removes the exact PCM samples and rebases chapters in every format', async () => {
   const ranges = [
     { start: '00:00:00.000', end: '00:00:02.000', title: 'Chapter 1' },
@@ -92,7 +101,7 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
   }
   if(process.env.TEST_YOUTUBE_URL) fs.copyFileSync(path.resolve('runtime/bin',binaryName('yt-dlp')),path.join(bin,binaryName('yt-dlp')));
   const port=39000+Math.floor(Math.random()*1000);
-  const child=spawn(process.execPath,[path.resolve('dist/server.cjs')],{env:{...process.env,APP_ROOT:appRoot,NODE_ENV:'production',PORT:String(port)},windowsHide:true,stdio:'pipe'});
+  const child=spawn(process.execPath,[path.resolve('dist/server.cjs')],{env:{...process.env,SWISSMOUSE_RUNTIME_MODE:'managed',APP_ROOT:appRoot,NODE_ENV:'production',PORT:String(port)},windowsHide:true,stdio:'pipe'});
   let logs='';child.stdout.on('data',b=>logs+=b);child.stderr.on('data',b=>logs+=b);
   const base='http://127.0.0.1:'+port;
   const request=async(url:string,body?:unknown)=>{const response=await fetch(base+url,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const bodyText=await response.text();let data:any;try{data=JSON.parse(bodyText);}catch{throw new Error(url+' returned '+response.status+': '+bodyText+'\n'+logs);}assert.ok(response.ok,JSON.stringify(data));return data;};
@@ -121,11 +130,17 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     const exports=await request('/api/jobs/'+job.id+'/build-m4b',{outputFormats});
     assert.equal(exports.exports.length,7);
     assert.ok(exports.exports.every((e:any)=>e.status==='success'),JSON.stringify(exports));
+    const exportedCover=exports.exports[0].coverPath;
+    assert.equal(path.basename(exportedCover),'cover.png');
+    assert.equal(path.dirname(exportedCover),path.dirname(exports.exports[0].fullPath));
+    assert.deepEqual(fs.readFileSync(exportedCover),Buffer.from(updated.metadata.cover.url.split(',')[1],'base64'));
+    assert.ok(exports.exports.every((e:any)=>e.coverPath===exportedCover));
     assert.equal(await fingerprint([source],{}),original);
     const validation=await request('/api/jobs/'+job.id+'/validate',{});assert.equal(validation.validation.status,'PASS');
     await request('/api/jobs/'+job.id+'/metadata',{metadata:{...updated.metadata,title:'Edited book',narrator:'Edited narrator',series:'Edited series',cover:null}});
     const edited=await request('/api/jobs/'+job.id+'/build-m4b',{outputFormats:['m4b']});
     assert.equal(edited.exports[0].status,'success',JSON.stringify(edited));
+    assert.equal(edited.exports[0].coverPath,undefined);
     const editedFile=inspect(fp,edited.exports[0].fullPath);
     assert.equal(editedFile.tags.title,'Edited book');assert.equal(editedFile.tags.composer,'Edited narrator');assert.equal(editedFile.tags.series,'Edited series');assert.equal(editedFile.artwork,undefined);
     const partial=await request('/api/jobs/'+job.id+'/build-m4b',{outputFormats:['mp3','wav'],bitrate:'invalid'});
@@ -283,7 +298,7 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     const whisperResponse=await fetch(base+'/api/jobs/'+whisperJob.id+'/process-step1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sourceFolderPath:loose,mergeMethod:'quick',chapterSource:'whisperx',selectedModelId:'small',parts:whisperParts})});
     assert.equal(whisperResponse.status,424);
     const whisperError:any=await whisperResponse.json();
-    assert.deepEqual(whisperError.missingRequirements,['Application Runtime','Faster Whisper','CTranslate2']);
+    assert.deepEqual(whisperError.missingRequirements,['Python Runtime','Faster Whisper','CTranslate2']);
     const whisper=await request('/api/jobs/'+whisperJob.id);
     assert.ok(!whisper.transcription);assert.ok(!whisper.transcriptWords?.length);
     assert.match(whisper.logs.at(-1).message,/Step 1 processing failed.*Missing requirements/);

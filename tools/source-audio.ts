@@ -4,6 +4,7 @@ import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import {inspect} from './audio-engine';
 import {stitchCompatibility} from '../src/audioFormats';
+import {sampleRateFloor} from './audio-sample-rate';
 const run=promisify(execFile);
 
 // Gapless duration metadata excludes encoder padding. A stream-copy concat must
@@ -36,7 +37,8 @@ export async function prepareMaster(ffmpeg:string, ffprobe:string, sources:strin
   if(sources.length===1) return {master:sources[0],media,durations:[media[0].durationSeconds],normalized:false};
   const inputs:string[]=[];
   const durations:number[]=[];
-  const targetRate=Math.max(...media.map(m=>m.sampleRate));
+  const targetRate=Math.min(...media.map(m=>sampleRateFloor(m.sampleRate)));
+  progress(`Source sample rates: ${media.map(m=>m.sampleRate).join(', ')} Hz. Master: ${targetRate} Hz; no source will be upsampled.`);
   const targetChannels=Math.max(...media.map(m=>m.channels));
   for(let i=0;i<sources.length;i++) {
     if(method==='quick') {
@@ -47,7 +49,9 @@ export async function prepareMaster(ffmpeg:string, ffprobe:string, sources:strin
       progress(`Normalizing PCM: ${i+1}/${sources.length}`);
       const normalized=path.join(directory,`part-${i}.wav`);
       await run(ffmpeg,['-v','error','-y','-i',sources[i],'-map','0:a:0','-c:a','pcm_s24le','-ar',String(targetRate),'-ac',String(targetChannels),'-rf64','auto',normalized],{windowsHide:true, signal});
-      inputs.push(normalized);durations.push(inspect(ffprobe,normalized).durationSeconds);
+      const info=inspect(ffprobe,normalized);
+      if(info.sampleRate!==targetRate) throw new Error(`PCM sample-rate verification failed: expected ${targetRate} Hz, got ${info.sampleRate} Hz.`);
+      inputs.push(normalized);durations.push(info.durationSeconds);
     }
   }
   const concat=path.join(directory,'concat.txt');
@@ -55,7 +59,9 @@ export async function prepareMaster(ffmpeg:string, ffprobe:string, sources:strin
   const master=path.join(directory,method==='quick'?'master.mka':'master.wav');
   progress('Stitching the complete recording');
   await run(ffmpeg,['-v','error','-xerror','-y','-f','concat','-safe','0','-i',concat,'-map','0:a:0','-map_metadata','-1','-map_chapters','-1','-c:a','copy',...(method==='quick'?[]:['-rf64','auto']),master],{windowsHide:true, signal});
-  const measured=inspect(ffprobe,master).durationSeconds;
+  const masterInfo=inspect(ffprobe,master);
+  if(masterInfo.sampleRate!==targetRate) throw new Error('Stitched sample rate does not match the selected master rate.');
+  const measured=masterInfo.durationSeconds;
   if(Math.abs(measured-durations.reduce((sum,d)=>sum+d,0))>0.15) throw new Error('Stitched duration does not match source coverage. Use PCM normalization or inspect the source timestamps.');
   return {master,media,durations,normalized:method==='standard'};
 }

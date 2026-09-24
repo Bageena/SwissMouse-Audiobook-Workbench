@@ -10,12 +10,13 @@ interface Step4Props {
   config: WorkbenchConfig;
   onBuildM4b: (formats: OutputAudioFormat[], convert: boolean, cue: boolean, bitrates: Partial<Record<OutputAudioFormat, number>>) => Promise<void>;
   isBuilding: boolean;
+  error: string | null;
   onNextStep: () => void;
 }
 
 const formatName = (format: OutputAudioFormat) => format.toUpperCase();
 
-export const Step4Export: React.FC<Step4Props> = ({ job, onBuildM4b, isBuilding, onNextStep }) => {
+export const Step4Export: React.FC<Step4Props> = ({ job, onBuildM4b, isBuilding, error, onNextStep }) => {
   const exportAvailability = useDependencyStatus().feature('audio_export');
   const [selected, setSelected] = useState<OutputAudioFormat[]>([
     outputFormats.includes(job.sourceFormat as OutputAudioFormat) ? job.sourceFormat as OutputAudioFormat : 'm4b',
@@ -28,6 +29,7 @@ export const Step4Export: React.FC<Step4Props> = ({ job, onBuildM4b, isBuilding,
   try { removedSeconds = planChapterExport(job.chapters, job.totalDurationSeconds).removedSeconds; } catch { /* Export validates incomplete chapters. */ }
   const requiresTrimming = removedSeconds > 0;
   const chaptersAreStale = job.staleSteps?.some(step => step === 'chapter_detection' || step === 'chapter_review') ?? false;
+  const exportedCoverPath = job.exports?.find(item => item.status === 'success' && item.coverPath)?.coverPath;
   const toggleFormat = (format: OutputAudioFormat) => setSelected(current => current.includes(format) ? current.filter(item => item !== format) : [...current, format]);
 
   return (
@@ -77,7 +79,7 @@ export const Step4Export: React.FC<Step4Props> = ({ job, onBuildM4b, isBuilding,
             <p className="mt-2 text-[11px] text-stone-500">Recommended when conversion is needed: {recommended} kbps. A higher setting increases file size but cannot improve the source recording.</p>
           </div>
           <label className="flex cursor-pointer items-center gap-2 text-sm text-stone-700" title="A CUE file is a small sidecar chapter list used by some players."><input type="checkbox" disabled={isBuilding} checked={cue} onChange={event => setCue(event.target.checked)} className="h-4 w-4 accent-amber-700" />Also create a CUE chapter file</label>
-          <p className="text-[11px] leading-relaxed text-stone-500">Cover art cannot be embedded in WAV, OGG, or Opus exports. Player support varies, so test playback in your preferred app afterward.</p>
+          <p className="text-[11px] leading-relaxed text-stone-500">A selected cover is saved as cover.jpg or cover.png beside the audiobook. Cover art cannot be embedded in WAV, OGG, or Opus exports. Player support varies, so test playback in your preferred app afterward.</p>
         </div>
       </details>
 
@@ -86,8 +88,10 @@ export const Step4Export: React.FC<Step4Props> = ({ job, onBuildM4b, isBuilding,
         <p className="text-xs text-stone-500">{selected.length ? `${selected.length} file type${selected.length === 1 ? '' : 's'} selected` : 'Choose at least one file type'}</p>
         <button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-amber-700 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-amber-800 disabled:bg-stone-300 disabled:text-stone-500" title={chaptersAreStale ? 'Review chapter detection before exporting' : exportAvailability.tooltip} disabled={chaptersAreStale || !exportAvailability.ready || isBuilding || !selected.length || !job.mergedMp3 || !job.chapters.length} onClick={() => onBuildM4b(selected, convert, cue, Object.fromEntries(outputFormats.map(format => [format, bitrates[format] ?? recommended])))}>{isBuilding ? <><Loader2 className="h-4 w-4 animate-spin" />Creating files…</> : <><Download className="h-4 w-4" />Create audiobook</>}</button>
       </div>
+      {error && <p role="alert" className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-medium text-red-900">Could not create audiobook: {error}</p>}
 
-      {!!job.exports?.length && <div aria-live="polite" className="space-y-2 border-t border-stone-100 pt-4"><h3 className="text-sm font-bold text-stone-900">Created files</h3>{job.exports.map(item => <div className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-sm" key={item.format}><div className="flex flex-wrap items-center justify-between gap-2"><span className="flex items-center gap-2 font-semibold text-stone-900"><FileAudio className="h-4 w-4 text-amber-700" />{formatName(item.format)}</span><span className="text-xs font-medium text-stone-600">{item.status} · {item.progress}% {item.mode === 'copy' ? '· original audio kept' : item.mode === 'convert' ? '· audio converted' : ''}</span></div><p className="mt-1 break-all text-xs text-stone-500">{item.fullPath || item.filename}</p>{item.error && <p className="mt-1 text-xs font-medium text-red-700">{item.error}</p>}{item.warnings?.map(warning => <p className="mt-1 text-xs text-amber-800" key={warning}>{warning}</p>)}{item.verifiedTags && <details className="mt-2 text-xs"><summary className="cursor-pointer font-semibold text-stone-600">Technical metadata</summary>{Object.entries(item.verifiedTags).map(([key, value]) => <p className="break-all" key={key}>{key}: {value}</p>)}</details>}</div>)}</div>}
+      {!!job.exports?.length && <div aria-live="polite" className="space-y-2 border-t border-stone-100 pt-4"><h3 className="text-sm font-bold text-stone-900">Created files</h3>{job.exports.map(item => <div className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-sm" key={item.format}><div className="flex flex-wrap items-center justify-between gap-2"><span className="flex items-center gap-2 font-semibold text-stone-900"><FileAudio className="h-4 w-4 text-amber-700" />{formatName(item.format)}</span><span className="text-xs font-medium text-stone-600">{item.status} · {item.progress}% {item.mode === 'copy' ? '· original audio kept' : item.mode === 'convert' ? '· audio converted' : ''}</span></div><p className="mt-1 break-all text-xs text-stone-500">{item.fullPath || item.filename}</p>{item.sampleRateSummary && <p className="mt-1 text-xs text-stone-600">{item.sampleRateSummary}</p>}{item.error && <p className="mt-1 text-xs font-medium text-red-700">{item.error}</p>}{item.warnings?.map(warning => <p className="mt-1 text-xs text-amber-800" key={warning}>{warning}</p>)}{item.verifiedTags && <details className="mt-2 text-xs"><summary className="cursor-pointer font-semibold text-stone-600">Technical metadata</summary>{Object.entries(item.verifiedTags).map(([key, value]) => <p className="break-all" key={key}>{key}: {value}</p>)}</details>}</div>)}</div>}
+      {exportedCoverPath && <p className="break-all text-xs text-stone-600">Cover saved: {exportedCoverPath}</p>}
       {job.outputM4b && <button className="inline-flex items-center gap-1 text-sm font-semibold text-amber-800 hover:text-amber-950" onClick={onNextStep} title="Check the latest exported file against your chapter list">Continue to final check <ArrowRight className="h-4 w-4" /></button>}
     </section>
   );
