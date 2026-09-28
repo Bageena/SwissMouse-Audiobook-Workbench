@@ -98,7 +98,7 @@ if cfg['engine'] == 'faster-whisper':
         # VAD segmentation is required for long-form batching. Faster Whisper
         # restores original source offsets, including every word timestamp.
         stream, info = pipeline.transcribe(cfg['audio'], language=cfg.get('language'),
-            word_timestamps=True, vad_filter=True, vad_parameters={'min_silence_duration_ms': 2000, 'speech_pad_ms': 400},
+            word_timestamps=True, vad_filter=True, vad_parameters={'threshold': 0.3, 'min_silence_duration_ms': 2000, 'speech_pad_ms': 400},
             beam_size=cfg['beam_size'], batch_size=cfg['batch_size'])
     else:
         stream, info = model.transcribe(cfg['audio'], language=cfg.get('language'),

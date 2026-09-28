@@ -1,4 +1,5 @@
 import { AlignedWord } from '../types';
+import { formatTimestampMs } from './chapters';
 
 // The persisted timeline used by both clickable transcript words and detection.
 // Preserve engine timestamps; this is formatting/filtering, not alignment.
@@ -54,11 +55,7 @@ export function refineChapterStartIndex(words: AlignedWord[], headingWordIndex: 
  * Format seconds to HH:MM:SS.mmm
  */
 export function formatTimestamp(seconds: number): string {
-  const safe = Math.max(0, seconds);
-  const hrs = Math.floor(safe / 3600);
-  const mins = Math.floor((safe % 3600) / 60);
-  const secs = safe % 60;
-  return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toFixed(3).padStart(6, '0')}`;
+  return formatTimestampMs(seconds * 1000);
 }
 
 /**

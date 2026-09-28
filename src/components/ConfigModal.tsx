@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { WorkbenchConfig } from '../types';
 import { AlertTriangle, FolderOpen, RefreshCw, Save, Settings, Sliders, Sparkles } from 'lucide-react';
 import { CustomTheme, themeLabels, themes } from '../theme';
+import { DEFAULT_LIBRARY_TEMPLATE, LIBRARY_FIELDS, libraryRelativePath } from '../utils/libraryPath';
 
 interface ConfigModalProps {
   config: WorkbenchConfig;
@@ -20,6 +21,18 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, theme, customT
   const [form, setForm] = useState<WorkbenchConfig>({ ...config });
   const [isSaving, setIsSaving] = useState(false);
   const [themeActionError, setThemeActionError] = useState('');
+  const templateInput = useRef<HTMLInputElement>(null);
+  const insertField = (field: string) => {
+    const input = templateInput.current;
+    const template = form.library_template ?? DEFAULT_LIBRARY_TEMPLATE;
+    const start = input?.selectionStart ?? template.length;
+    const end = input?.selectionEnd ?? template.length;
+    setForm({ ...form, library_template: template.slice(0, start) + `%${field}%` + template.slice(end) });
+    requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(start + field.length + 2, start + field.length + 2); });
+  };
+  let folderPreview = '';
+  try { folderPreview = libraryRelativePath(form.library_template ?? DEFAULT_LIBRARY_TEMPLATE, { title: 'Hitchhikers Guide to the Galaxy', author: 'Douglas Adams', narrator: 'Douglas Adams', series: "Hitchhiker's Guide to the Galaxy", seriesSequence: '1', genres: [], language: 'eng', abridged: false, explicit: false }).join(' / '); }
+  catch { folderPreview = 'Check the folder pattern.'; }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,6 +64,22 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, theme, customT
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+          <fieldset className="space-y-3 rounded-lg border border-stone-200 bg-stone-50 p-3.5">
+            <legend className="px-1 text-xs font-semibold text-stone-900">Audiobook library</legend>
+            <p className="text-[11px] text-stone-600">New projects use this location as their output folder. Existing project locations stay as selected.</p>
+            <label className="block font-semibold text-stone-800" htmlFor="library-folder">Library folder</label>
+            <div className="flex gap-2">
+              <input id="library-folder" type="text" value={form.library_folder || ''} onChange={event => setForm({ ...form, library_folder: event.target.value })} placeholder="Full folder path" className="min-w-0 flex-1 rounded border border-stone-300 bg-white px-2.5 py-2 font-mono text-xs text-stone-900" />
+              <button type="button" onClick={() => setForm({ ...form, library_folder: '' })} className="rounded border border-stone-300 bg-white px-2 font-semibold text-stone-700">Use default</button>
+            </div>
+            <p className="text-[11px] text-stone-500">The folder is created when you save settings. Clear it to use SwissMouse’s output folder.</p>
+            <label className="block font-semibold text-stone-800" htmlFor="library-template">Folder structure</label>
+            <input ref={templateInput} id="library-template" type="text" value={form.library_template ?? DEFAULT_LIBRARY_TEMPLATE} onChange={event => setForm({ ...form, library_template: event.target.value })} className="w-full rounded border border-stone-300 bg-white px-2.5 py-2 font-mono text-xs text-stone-900" />
+            <div className="flex flex-wrap gap-1.5">{LIBRARY_FIELDS.map(field => <button key={field} type="button" onClick={() => insertField(field)} className="rounded border border-stone-300 bg-white px-2 py-1 font-mono text-[11px] text-stone-700 hover:bg-amber-50">%{field}%</button>)}</div>
+            <button type="button" onClick={() => setForm({ ...form, library_template: DEFAULT_LIBRARY_TEMPLATE })} className="font-semibold text-amber-800 underline">Reset folder structure</button>
+            <p className="break-words rounded bg-white p-2 text-[11px] text-stone-600">Example: {folderPreview}</p>
+            <p className="text-[11px] text-stone-500">Use / between folders. Subtitle is available as an optional tag and is left out by default. Missing series and narrator fields are skipped.</p>
+          </fieldset>
           <fieldset className="theme-picker space-y-2 rounded-lg border border-stone-200 bg-stone-50 p-3.5">
             <legend className="px-1 text-xs font-semibold text-stone-900">Appearance / Theme</legend>
             <p className="text-[11px] text-stone-500">Choose a comfortable palette. Your choice is saved automatically for the next time SwissMouse opens.</p>

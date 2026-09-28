@@ -318,7 +318,7 @@ test('draft chapter finalization retains every candidate even when source chapte
   vm.runInNewContext(server.slice(start, end), { job, generatedCandidates, setStep1Stage() {} });
   assert.equal(job.candidates, generatedCandidates);
   assert.equal(job.chapters.length, 3);
-  assert.equal(job.chapters[0].title, 'Opening');
+  assert.equal(job.chapters[0].title, 'Prologue');
   assert.equal(job.chapters[1].title, 'Chapter Twelve');
   assert.equal(job.chapters[2].start, '00:00:12.000');
   assert.equal(job.chapters[2].headingType, 'numbered_chapter');

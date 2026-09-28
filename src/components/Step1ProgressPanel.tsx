@@ -14,6 +14,7 @@ import {
   ChevronDown,
   ChevronUp,
   RotateCcw,
+  Play,
 } from 'lucide-react';
 
 interface Step1ProgressPanelProps {
@@ -153,6 +154,8 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1">
         {stages.map((stg, idx) => {
           const status = getStageStatus(idx);
+          const hasOutput = pipelineSteps?.[stg.key as RerunnablePipelineStep]?.hasOutput ?? status === 'done';
+          const action = hasOutput ? 'Rerun' : 'Run';
           return (
             <div
               key={stg.key}
@@ -193,11 +196,11 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
                   type="button"
                   onClick={() => onRerunStep(stg.key as RerunnablePipelineStep)}
                   disabled={progress.isActive || !canRerunStep?.(stg.key as RerunnablePipelineStep)}
-                  title="Rerun this step"
-                  aria-label={`Rerun ${stg.label}`}
+                  title={`${action} this step`}
+                  aria-label={`${action} ${stg.label}`}
                   className="absolute bottom-2 right-2 inline-flex h-6 w-6 items-center justify-center rounded border border-current/20 bg-white/80 hover:bg-white disabled:cursor-not-allowed disabled:opacity-30"
                 >
-                  <RotateCcw className={`h-3.5 w-3.5 ${progress.rerunStep === stg.key && progress.isActive ? 'animate-spin' : ''}`} />
+                  {hasOutput ? <RotateCcw className={`h-3.5 w-3.5 ${progress.rerunStep === stg.key && progress.isActive ? 'animate-spin' : ''}`} /> : <Play className="h-3.5 w-3.5" />}
                 </button>
               )}
             </div>

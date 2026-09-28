@@ -220,6 +220,7 @@ test('Python runner passes beam and actual batching pipeline with word timestamp
     '    def __init__(self, model): assert isinstance(model, WhisperModel)',
     '    def transcribe(self, audio, **kwargs):',
     "        assert kwargs['batch_size'] == 4 and kwargs['vad_filter'] == True",
+    "        assert kwargs['vad_parameters']['threshold'] == 0.3",
     '        return answer(kwargs)', '',
   ].join('\n'));
   for (const batchSize of [null, 4]) {

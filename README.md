@@ -52,6 +52,20 @@ After the app opens, use its **System Requirements** screen to install the proce
 
 The first launch needs an internet connection to download the app's JavaScript dependencies. Keep the server window open while using SwissMouse; closing it stops the local app.
 
+## License
+
+Copyright (C) 2026 SwissMouse contributors. SwissMouse's original source code is licensed under the **GNU Affero General Public License v3.0 or later** (`AGPL-3.0-or-later`). See [LICENSE](LICENSE) for the unmodified license text and [GNU's AGPLv3 information](https://www.gnu.org/licenses/agpl-3.0.html) for the authoritative terms. Third-party software keeps its own licenses; see [THIRD_PARTY.md](THIRD_PARTY.md).
+
+Commercial use is permitted. You may fork, modify, rebrand, redistribute, sell copies of, and host SwissMouse as a service under the license. Companies may charge for hosting, GPU processing, storage, support, infrastructure, and other services they provide.
+
+Modified versions remain subject to the AGPL where applicable. When conveying covered works, follow its notice, licensing, and Corresponding Source requirements. If you modify SwissMouse and let users interact with that modified version remotely over a computer network, section 13 requires prominently offering those users access to its Corresponding Source, free of charge. The license text determines the precise obligations and conditions.
+
+Separate software and infrastructure do not automatically become part of SwissMouse merely by interacting with it. Independently developed billing, account/authentication, scheduling, and infrastructure services can remain proprietary where they are separate works. Whether a particular integration forms a covered combined work depends on the integration and the license; this README does not redefine those boundaries.
+
+Forks, hosted services, and rebranded versions are welcome. Crediting the original [SwissMouse project](https://github.com/Bageena/SwissMouse-Audiobook-Workbench) and linking back is appreciated, but this is a request, not an additional licensing condition. The actual AGPL requirements, including applicable preservation of notices, remain authoritative. There are no added noncommercial, hosting, or mandatory branding restrictions.
+
+Release ZIPs include SwissMouse source and build instructions alongside the compiled app. Installed processing tools and model caches are excluded. Browser dependencies that are included in the compiled app have separate notices in `dist/THIRD_PARTY_NOTICES.txt`. See the [distribution audit](LICENSING_AUDIT.md) for findings and items requiring maintainer review.
+
 ## Local Development
 
 For development, run the following from the repository folder after installing Node.js:

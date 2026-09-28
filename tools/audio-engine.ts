@@ -86,7 +86,7 @@ export function validateChapters(chapters: {start: string; end?: string; title: 
   let previous = -1;
   const durationMs = Math.round(duration * 1000);
   if (!chapters.length) throw new Error('Review at least one chapter before exporting');
-  if (seconds(chapters[0].start) !== 0) throw new Error('Add an Opening chapter at 00:00:00.000. MP4 chapter tracks require a chapter at time zero.');
+  if (seconds(chapters[0].start) !== 0) throw new Error('Add a Prologue chapter at 00:00:00.000. MP4 chapter tracks require a chapter at time zero.');
   for (let index = 0; index < chapters.length; index++) {
     const chapter = chapters[index];
     const start = Math.round(seconds(chapter.start) * 1000);
@@ -250,4 +250,44 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   const missing=Object.entries(tags).filter(([k,v])=>v && !/^chapter\d+/i.test(k) && !['handler_name','vendor_id','language'].includes(k) && !represented(k.toLowerCase(),v)).map(([k])=>k);
   if(missing.length) warnings.push('Metadata not represented exactly in this container: '+missing.join(', '));
   return { filename: path.basename(o.output), fullPath: o.output, format: o.format, duration: result.durationSeconds, sizeBytes: fs.statSync(o.output).size, codec: result.codec, bitrate: copy ? 'Original' : vorbisQualityFallback ? 'VBR quality 4' : o.bitrate || 'Default', sourceSampleRate: source.sampleRate, sampleRateCeiling: ceiling, encodingSampleRate: copy ? undefined : targetRate, sampleRate: result.sampleRate, sampleRateSummary, chaptersCount: result.chapters.length, mode: copy ? 'copy' : 'convert', warnings, verifiedTags: result.tags };
+}
+
+// Update an existing export by remuxing its streams. Verify the encoded audio
+// before replacing the original file, so metadata edits cannot re-encode it.
+export async function writeAudioMetadata(options: { ffmpeg: string; ffprobe: string; file: string; format: ExportFormat; tags: Record<string, string> }) {
+  const { ffmpeg, ffprobe, file, format, tags } = options;
+  if (!outputFormats.includes(format) || path.extname(file).slice(1).toLowerCase() !== format) throw new Error('Unsupported exported audio file.');
+  if (!fs.statSync(file).isFile() || fs.lstatSync(file).isSymbolicLink()) throw new Error('Exported audio path is not a regular file.');
+  const before = inspect(ffprobe, file);
+  const packetHash = async (target: string) => (await run(ffmpeg, ['-v', 'error', '-i', target, '-map', '0:a:0', '-c:a', 'copy', '-f', 'streamhash', '-hash', 'SHA256', '-'], { windowsHide: true, maxBuffer: 1024 * 1024 })).stdout.trim();
+  const beforeHash = await packetHash(file);
+  const temporary = path.join(path.dirname(file), `.${path.basename(file, path.extname(file))}.metadata-${process.pid}-${Date.now()}.${format}`);
+  try {
+    const args = ['-v', 'error', '-n', '-i', file, '-map', format === 'wav' ? '0:a:0' : '0', '-c', 'copy', '-map_metadata', format === 'wav' ? '-1' : '0', '-map_metadata:s:a', '-1', '-map_chapters', format === 'wav' ? '-1' : '0'];
+    for (const [key, value] of Object.entries(tags)) {
+      if (/^chapter\d+/i.test(key) || ['major_brand', 'minor_version', 'compatible_brands', 'encoder', 'handler_name', 'vendor_id'].includes(key.toLowerCase())) continue;
+      args.push('-metadata', `${key}=${value}`);
+    }
+    if (format === 'wav') args.push('-rf64', 'auto');
+    if (format === 'm4b' || format === 'm4a') args.push('-f', 'mp4');
+    args.push(temporary);
+    await run(ffmpeg, args, { windowsHide: true, maxBuffer: 8 * 1024 * 1024 });
+    if (format === 'm4b' || format === 'm4a') preserveMp4Metadata(file, temporary, tags, false);
+    if (format === 'wav') {
+      if (before.chapters.length) wavCues(temporary, before.chapters, before.sampleRate);
+      writeWavMetadata(temporary, tags);
+    }
+    const after = inspect(ffprobe, temporary);
+    if (before.codec !== after.codec || before.sampleRate !== after.sampleRate || Boolean(before.artwork) !== Boolean(after.artwork) || Math.abs(before.durationSeconds - after.durationSeconds) > 0.025 ||
+      before.chapters.length !== after.chapters.length || before.chapters.some((chapter, index) => chapter.title !== after.chapters[index].title || Math.abs(seconds(chapter.start) - seconds(after.chapters[index].start)) > 0.025) ||
+      beforeHash !== await packetHash(temporary)) throw new Error('Audio or chapter read-back changed; original file was kept.');
+    const readTags = Object.fromEntries(Object.entries(after.tags).map(([key, value]) => [key.toLowerCase(), String(value)]));
+    for (const key of ['title', 'artist', 'composer', 'genre'] as const) {
+      if (tags[key] && readTags[key] !== tags[key]) throw new Error(`Metadata read-back failed for ${key}: ${String(readTags[key])}; original file was kept.`);
+    }
+    fs.renameSync(temporary, file);
+    return { verifiedTags: after.tags, sizeBytes: fs.statSync(file).size };
+  } finally {
+    if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true });
+  }
 }

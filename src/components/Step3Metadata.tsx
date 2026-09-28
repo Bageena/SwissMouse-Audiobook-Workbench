@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AudiobookJob, AudiobookMetadata, CoverArtInfo } from '../types';
 import { CoverGenerator } from './CoverGenerator';
+import { QUICK_ADD_CATEGORIES, alphabetical, quickAddCategory, selectedCategory } from '../utils/metadataQuickAdd';
+import { audiobookshelfMetadata } from '../utils/audiobookshelfMetadata';
+import { planChapterExport } from '../utils/chapterExport';
 import {
   Image,
   Upload,
@@ -26,6 +29,7 @@ import {
   ShieldAlert,
   HelpCircle,
   RotateCcw,
+  Play,
 } from 'lucide-react';
 
 interface Step3MetadataProps {
@@ -35,34 +39,6 @@ interface Step3MetadataProps {
   onRerunMetadata?: () => Promise<void>;
   isRerunning?: boolean;
 }
-
-export const GOODREADS_POPULAR_TAGS = [
-  'Fiction',
-  'Non-Fiction',
-  'Fantasy',
-  'Science Fiction',
-  'Mystery & Thriller',
-  'Romance',
-  'Historical Fiction',
-  'Young Adult',
-  'Biography & Memoir',
-  'History',
-  'Classics',
-  'Horror',
-  'Crime',
-  'Self-Help',
-  'Philosophy',
-  'Dystopian',
-  'Adventure',
-  'Paranormal',
-  'Psychology',
-  'Humor',
-  'Graphic Novels',
-  'Poetry',
-  'Contemporary',
-  'Business',
-  'Audiobook',
-];
 
 const COMMON_LANGUAGES = [
   { code: 'eng', label: 'English (eng)' },
@@ -115,6 +91,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [tagInput, setTagInput] = useState<string>('');
+  const [genreInput, setGenreInput] = useState<string>('');
   const [tagFilter, setTagFilter] = useState<string>('');
   const [authorInput, setAuthorInput] = useState<string>('');
   const [narratorInput, setNarratorInput] = useState<string>('');
@@ -122,6 +99,11 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
   const [showCoverGenerator, setShowCoverGenerator] = useState(false);
   const draftTimer = useRef<number>();
   const draftWrite = useRef<Promise<void>>(Promise.resolve());
+  const coverReadRequest = useRef(0);
+  const dragDepth = useRef(0);
+  const [isDraggingCover, setIsDraggingCover] = useState(false);
+  const metadataWasProcessed = job.pipelineSteps?.metadata_processing?.hasOutput
+    ?? ['metadata_ready', 'built', 'validated'].includes(job.status);
 
   const persistDraft = (metadata: AudiobookMetadata) => {
     const write = draftWrite.current.catch(() => {}).then(async () => {
@@ -136,6 +118,8 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
   };
 
   const handleGeneratedCover = async (cover: CoverArtInfo) => {
+    ++coverReadRequest.current;
+    setIsLoadingUrl(false);
     window.clearTimeout(draftTimer.current);
     const metadata = { ...formData, cover };
     await persistDraft(metadata);
@@ -204,6 +188,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
 
   // Scan local folder for cover image (cover.jpg, cover.png, etc.)
   const handleScanLocalFolder = async () => {
+    const request = coverReadRequest.current;
     setIsScanningLocal(true);
     setScanMessage(null);
     try {
@@ -211,6 +196,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
         method: 'POST',
       });
       const data = await res.json();
+      if (request !== coverReadRequest.current) return;
       if (data.found && data.cover) {
         setFormData((prev) => ({ ...prev, cover: data.cover }));
         setScanMessage({
@@ -240,22 +226,26 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
     }
   }, [job.id]);
 
-  // Handle image file upload (drag & drop or file dialog)
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  // Browse and drop use the same image loader and draft update.
+  const loadCoverFile = (file?: File) => {
     if (!file) return;
+    const request = ++coverReadRequest.current;
+    setIsLoadingUrl(false);
 
     if (!file.type.startsWith('image/')) {
-      alert('Please upload a valid image file (.jpg, .jpeg, .png, .webp).');
+      setScanMessage({ type: 'error', text: 'Please choose a valid image file (.jpg, .jpeg, .png, .webp).' });
       return;
     }
 
+    setScanMessage(null);
     const reader = new FileReader();
     reader.onload = (event) => {
+      if (request !== coverReadRequest.current) return;
       const result = event.target?.result as string;
       // Probe image dimensions
       const img = new window.Image();
       img.onload = () => {
+        if (request !== coverReadRequest.current) return;
         const newCover: CoverArtInfo = {
           source: 'upload',
           url: result,
@@ -271,15 +261,34 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
           text: `Loaded uploaded cover '${file.name}' (${img.naturalWidth}×${img.naturalHeight}px).`,
         });
       };
+      img.onerror = () => {
+        if (request === coverReadRequest.current) setScanMessage({ type: 'error', text: `Could not open '${file.name}' as a cover image.` });
+      };
       img.src = result;
     };
+    reader.onerror = () => {
+      if (request === coverReadRequest.current) setScanMessage({ type: 'error', text: `Could not read '${file.name}'. Please try again.` });
+    };
     reader.readAsDataURL(file);
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    loadCoverFile(event.target.files?.[0]);
+    event.target.value = '';
+  };
+
+  const handleCoverDrop = (event: React.DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    dragDepth.current = 0;
+    setIsDraggingCover(false);
+    loadCoverFile(event.dataTransfer.files?.[0]);
   };
 
   // Handle URL cover fetch
   const handleFetchCoverUrl = () => {
     const trimmed = coverUrlInput.trim();
     if (!trimmed) return;
+    const request = ++coverReadRequest.current;
 
     setIsLoadingUrl(true);
     setScanMessage(null);
@@ -287,6 +296,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
     const img = new window.Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
+      if (request !== coverReadRequest.current) return;
       const newCover: CoverArtInfo = {
         source: 'url',
         url: trimmed,
@@ -303,6 +313,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
       });
     };
     img.onerror = () => {
+      if (request !== coverReadRequest.current) return;
       setIsLoadingUrl(false);
       setScanMessage({
         type: 'error',
@@ -312,13 +323,18 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
     img.src = trimmed;
   };
 
-  // Tag / Genre management
+  // Manual fields stay independent; quick add uses the first free genre slot.
   const handleAddGenre = (genreToAdd: string) => {
     const trimmed = genreToAdd.trim();
     if (!trimmed) return;
-    if (!formData.genres.includes(trimmed)) {
-      setFormData((prev) => ({ ...prev, genres: [...prev.genres, trimmed] }));
-    }
+    setFormData(prev => selectedCategory(prev, trimmed) ? prev : { ...prev, genres: [...prev.genres, trimmed] });
+    setGenreInput('');
+  };
+
+  const handleAddTag = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    setFormData(prev => selectedCategory(prev, trimmed) ? prev : { ...prev, tags: alphabetical([...(prev.tags || []), trimmed]) });
     setTagInput('');
   };
 
@@ -327,6 +343,23 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
       ...prev,
       genres: prev.genres.filter((g) => g !== genreToRemove),
     }));
+  };
+
+  const handleRemoveTag = (value: string) => setFormData(prev => ({ ...prev, tags: (prev.tags || []).filter(tag => tag !== value) }));
+
+  const downloadAudiobookshelfMetadata = () => {
+    let chapters = job.chapters;
+    try { chapters = planChapterExport(job.chapters, job.totalDurationSeconds).chapters as typeof job.chapters; }
+    catch { chapters = []; }
+    const blob = new Blob([JSON.stringify(audiobookshelfMetadata(formData, chapters), null, 2) + '\n'], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'metadata.json';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   // Form submit
@@ -414,11 +447,11 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
             type="button"
             onClick={onRerunMetadata}
             disabled={isRerunning || !job.metadata || !job.chapters.length}
-            title="Rerun this step"
-            aria-label="Rerun metadata processing"
+            title={metadataWasProcessed ? 'Rerun this step' : 'Run this step'}
+            aria-label={`${metadataWasProcessed ? 'Rerun' : 'Run'} metadata processing`}
             className="absolute bottom-3 right-3 inline-flex h-7 w-7 items-center justify-center rounded border border-stone-300 bg-white text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-30"
           >
-            <RotateCcw className={`h-3.5 w-3.5 ${isRerunning && job.pipelineSteps?.metadata_processing?.status === 'running' ? 'animate-spin' : ''}`} />
+            {metadataWasProcessed ? <RotateCcw className={`h-3.5 w-3.5 ${isRerunning && job.pipelineSteps?.metadata_processing?.status === 'running' ? 'animate-spin' : ''}`} /> : <Play className="h-3.5 w-3.5" />}
           </button>
         )}
       </div>
@@ -599,7 +632,13 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                   <Upload className="w-3.5 h-3.5 text-amber-700" />
                   <span>Upload a cover image</span>
                 </div>
-                <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-stone-300 rounded-lg bg-white hover:bg-stone-50 cursor-pointer transition">
+                <label
+                  onDragEnter={event => { event.preventDefault(); dragDepth.current++; setIsDraggingCover(true); }}
+                  onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }}
+                  onDragLeave={event => { event.preventDefault(); dragDepth.current = Math.max(0, dragDepth.current - 1); if (!dragDepth.current) setIsDraggingCover(false); }}
+                  onDrop={handleCoverDrop}
+                  className={`flex flex-col items-center justify-center p-3 border-2 border-dashed rounded-lg cursor-pointer transition ${isDraggingCover ? 'border-amber-500 bg-amber-50' : 'border-stone-300 bg-white hover:bg-stone-50'}`}
+                >
                   <Upload className="w-5 h-5 text-stone-400 mb-1" />
                   <span className="text-xs font-semibold text-stone-700">
                     Click to browse or drop cover here
@@ -861,23 +900,19 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                   />
                 </div>
 
-                {/* Genres / Tags */}
+                {/* Genres and Tags */}
                 <div className="md:col-span-3 space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="flex items-center space-x-1.5 text-xs font-bold text-stone-700">
                       <Tag className="w-3.5 h-3.5 text-stone-400" />
-                      <span>Genres & Subject Tags</span>
-                      <span className="text-[11px] text-stone-500 font-normal">
-                        ({formData.genres.length} selected)
-                      </span>
+                      <span>Genres and Tags</span>
                     </label>
-                    <span className="text-[11px] text-stone-500">
-                      Goodreads & Audiobookshelf compatible
-                    </span>
+                    <button type="button" onClick={downloadAudiobookshelfMetadata} className="text-[11px] font-semibold text-amber-800 hover:text-amber-950">Download Audiobookshelf metadata.json</button>
                   </div>
-
-                  {/* Active genre chips */}
-                  <div className="flex flex-wrap gap-1.5 min-h-[36px] p-2.5 bg-stone-50 border border-stone-200 rounded-lg">
+                  <p className="text-[11px] text-stone-500">Save this file beside the audiobook in its Audiobookshelf book folder.</p>
+                  <div>
+                    <label htmlFor="manual-genre" className="mb-1 block text-xs font-semibold text-stone-700">Genre</label>
+                    <div className="flex flex-wrap gap-1.5 min-h-[36px] p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
                     {formData.genres.map((g) => (
                       <span
                         key={g}
@@ -896,23 +931,33 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                     ))}
                     {formData.genres.length === 0 && (
                       <span className="text-xs text-stone-400 italic py-0.5">
-                        No tags added yet. Choose from the popular tags below or add a custom tag.
+                        First quick add choice becomes the Genre.
                       </span>
                     )}
+                    </div>
+                    <div className="mt-2 flex gap-1.5">
+                      <input id="manual-genre" type="text" value={genreInput} onChange={e => setGenreInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddGenre(genreInput); } }} placeholder="Add a genre" className="min-w-0 flex-1 bg-stone-50/50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-xs text-stone-800" />
+                      <button type="button" onClick={() => handleAddGenre(genreInput)} disabled={!genreInput.trim()} className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-40 text-white rounded-lg text-xs font-semibold">+ Add</button>
+                    </div>
                   </div>
-
-                  {/* Custom tag add input & Tag search input */}
+                  <div>
+                    <label htmlFor="manual-tag" className="mb-1 block text-xs font-semibold text-stone-700">Tags</label>
+                    <div className="flex flex-wrap gap-1.5 min-h-[36px] p-2.5 bg-stone-50 border border-stone-200 rounded-lg">
+                      {alphabetical(formData.tags || []).map(tag => <span key={tag} className="inline-flex items-center gap-1 rounded-full border border-stone-300 bg-white px-2.5 py-1 text-xs text-stone-800"><span>{tag}</span><button type="button" onClick={() => handleRemoveTag(tag)} title={`Remove ${tag}`} className="ml-1 font-bold text-stone-500 hover:text-rose-700">×</button></span>)}
+                      {!(formData.tags || []).length && <span className="py-0.5 text-xs italic text-stone-400">Later quick add choices become Tags.</span>}
+                    </div>
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {/* Add Custom Tag */}
                     <div className="flex space-x-1.5">
                       <input
+                        id="manual-tag"
                         type="text"
                         value={tagInput}
                         onChange={(e) => setTagInput(e.target.value)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
-                            handleAddGenre(tagInput);
+                            handleAddTag(tagInput);
                           }
                         }}
                         placeholder="Add custom tag (e.g. Space Opera)..."
@@ -920,7 +965,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                       />
                       <button
                         type="button"
-                        onClick={() => handleAddGenre(tagInput)}
+                        onClick={() => handleAddTag(tagInput)}
                         disabled={!tagInput.trim()}
                         className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-40 text-white rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer"
                       >
@@ -934,7 +979,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                         type="text"
                         value={tagFilter}
                         onChange={(e) => setTagFilter(e.target.value)}
-                        placeholder="Filter 25 popular Goodreads tags..."
+                        placeholder="Filter quick add choices..."
                         className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-xs text-stone-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
                       />
                       {tagFilter && (
@@ -949,32 +994,33 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                     </div>
                   </div>
 
-                  {/* Popular Goodreads 25-Tag Chip Cloud */}
+                  {/* Alphabetical quick add choices */}
                   <div className="p-3 bg-stone-50/70 border border-stone-200/80 rounded-lg space-y-2">
                     <div className="flex items-center justify-between text-[11px] text-stone-500 font-medium">
-                      <span>Popular Book Tags (Goodreads-inspired • 25 tags):</span>
-                      <span>Click to toggle</span>
+                      <span>Quick Add (Goodreads-inspired • {QUICK_ADD_CATEGORIES.length} choices)</span>
+                      <span>First: Genre · Later: Tags</span>
                     </div>
 
                     <div className="flex flex-wrap gap-1.5">
-                      {GOODREADS_POPULAR_TAGS.filter((tg) =>
+                      {QUICK_ADD_CATEGORIES.filter((tg) =>
                         tg.toLowerCase().includes(tagFilter.toLowerCase().trim())
                       ).map((tg) => {
-                        const active = formData.genres.includes(tg);
+                        const active = selectedCategory(formData, tg);
+                        const isGenre = formData.genres.some(g => g.toLowerCase() === tg.toLowerCase());
                         return (
                           <button
                             key={tg}
                             type="button"
-                            onClick={() =>
-                              active ? handleRemoveGenre(tg) : handleAddGenre(tg)
-                            }
+                            onClick={() => setFormData(prev => quickAddCategory(prev, tg))}
+                            aria-pressed={active}
+                            title={active ? `${tg} already selected as ${isGenre ? 'Genre' : 'Tag'}` : `Add ${tg} as ${formData.genres.filter(g => g !== 'Audiobook').length ? 'Tag' : 'Genre'}`}
                             className={`text-xs px-2.5 py-1 rounded-full cursor-pointer transition-all border font-medium ${
                               active
                                 ? 'bg-amber-600 border-amber-600 text-white shadow-2xs'
                                 : 'bg-white hover:bg-stone-100 border-stone-300 text-stone-700'
                             }`}
                           >
-                            {active ? `✓ ${tg}` : `+ ${tg}`}
+                            {active ? `✓ ${tg} · ${isGenre ? 'Genre' : 'Tag'}` : `+ ${tg}`}
                           </button>
                         );
                       })}

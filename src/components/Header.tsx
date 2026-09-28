@@ -55,7 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
   return (
     <header className="app-header sticky top-0 z-30 border-b border-stone-200/80 bg-white/95 text-stone-900 shadow-sm backdrop-blur-xl">
-      <div className="mx-auto flex min-h-16 max-w-[1480px] items-center gap-3 px-3 py-2 sm:px-5 lg:px-7">
+      <div className={`mx-auto flex min-h-16 items-center gap-3 px-3 py-2 sm:px-5 lg:px-7 ${currentJob ? 'max-w-[1480px]' : 'max-w-none'}`}>
         <button type="button" onClick={onCloseProject} className="flex min-w-0 items-center gap-2.5 rounded-xl p-1 text-left transition hover:bg-stone-100" title="Go to your books">
           <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-stone-950 shadow-sm ring-1 ring-stone-200">
             <img
@@ -81,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             </div>
           ) : (
-            <div className="text-sm font-medium text-stone-500">Your audiobook library</div>
+            <div className="text-sm font-medium text-stone-500">Library Manager</div>
           )}
         </div>
 

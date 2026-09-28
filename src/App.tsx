@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   AudiobookJob,
+  LibraryBook,
   WorkbenchConfig,
   ChapterEntry,
   AudiobookMetadata,
@@ -20,11 +21,14 @@ import { ConfigModal } from './components/ConfigModal';
 import { NewJobModal } from './components/NewJobModal';
 import { RequirementsModal } from './components/RequirementsModal';
 import { LogsDrawer } from './components/LogsDrawer';
-import { CheckCircle2, Clock, HardDrive, Plus, ArrowRight, Trash2, BookOpen } from 'lucide-react';
+import { LibraryManager } from './components/LibraryManager';
+import { CheckCircle2, Clock, HardDrive } from 'lucide-react';
 import { CustomTheme, ThemeDiscoveryResponse, applyTheme, getStoredTheme, isAppTheme, persistTheme } from './theme';
+import type { JobLog } from './types';
 
 export default function App() {
   const [jobs, setJobs] = useState<AudiobookJob[]>([]);
+  const [libraryBooks, setLibraryBooks] = useState<LibraryBook[]>([]);
   const [currentJobId, setCurrentJobId] = useState<string | null>(localStorage.getItem('workbench_active_job_id'));
   const [config, setConfig] = useState<WorkbenchConfig | null>(null);
   const [activeStep, setActiveStep] = useState<1 | 2 | 3 | 4 | 5>(1);
@@ -45,6 +49,7 @@ export default function App() {
   const [showNewJobModal, setShowNewJobModal] = useState<boolean>(false);
   const [showRequirementsModal, setShowRequirementsModal] = useState<boolean>(false);
   const [showLogsDrawer, setShowLogsDrawer] = useState<boolean>(false);
+  const [masterLogs, setMasterLogs] = useState<JobLog[]>([]);
 
   // Helper to determine the starting step based on job status
   const getStartingStepForJob = (job: AudiobookJob): 1 | 2 | 3 | 4 | 5 => {
@@ -61,12 +66,12 @@ export default function App() {
     async function loadInitialData() {
       try {
         const [jobsRes, cfgRes] = await Promise.all([
-          fetch('/api/jobs'),
+          fetch('/api/library'),
           fetch('/api/config'),
         ]);
         const jobsData = await jobsRes.json();
         const cfgData = await cfgRes.json();
-        setJobs(jobsData);
+        setLibraryBooks(jobsData);
         setConfig(cfgData);
         
         // Validate saved jobId exists
@@ -74,10 +79,8 @@ export default function App() {
            setCurrentJobId(null);
            localStorage.removeItem('workbench_active_job_id');
         } else if (currentJobId) {
-          const job = jobsData.find((j: any) => j.id === currentJobId);
-          if (job) {
-             setActiveStep(getStartingStepForJob(job));
-          }
+          const response = await fetch(`/api/jobs/${currentJobId}`);
+          if (response.ok) { const job = await response.json(); setJobs([job]); setActiveStep(getStartingStepForJob(job)); }
         }
       } catch (err) {
         console.error('Failed to load initial data:', err);
@@ -151,12 +154,11 @@ export default function App() {
   };
 
   // Handler for opening a project
-  const handleOpenProject = (id: string) => {
-    setCurrentJobId(id);
+  const handleOpenProject = async (id: string) => {
     const job = jobs.find(j => j.id === id);
-    if (job) {
-      setActiveStep(getStartingStepForJob(job));
-    }
+    if (job) { setCurrentJobId(id); setActiveStep(getStartingStepForJob(job)); return; }
+    const response = await fetch(`/api/jobs/${id}`);
+    if (response.ok) { const loaded = await response.json() as AudiobookJob; setJobs([loaded]); setCurrentJobId(id); setActiveStep(getStartingStepForJob(loaded)); }
   };
 
   // Refresh current job from server
@@ -166,11 +168,28 @@ export default function App() {
       if (res.ok) {
         const updated = await res.json();
         setJobs((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
+        setLibraryBooks(prev => prev.map(book => book.id === jobId ? { ...book, name: updated.name, status: updated.status, metadataUpdatedAt: updated.metadataUpdatedAt, metadata: { ...updated.metadata, cover: undefined }, coverUrl: updated.metadata?.cover?.url?.startsWith('data:') ? `/api/library/${encodeURIComponent(jobId)}/cover?v=${encodeURIComponent(updated.metadataUpdatedAt || updated.createdAt)}` : updated.metadata?.cover?.url } : book));
       }
     } catch (err) {
       console.error('Failed to refresh job:', err);
     }
   };
+
+  // The Settings terminal combines every project's saved activity with the
+  // section streams, including work performed while no project is open.
+  useEffect(() => {
+    if (!showLogsDrawer) return;
+    let stopped = false;
+    const refresh = async () => {
+      try {
+        const response = await fetch('/api/logs');
+        if (response.ok && !stopped) setMasterLogs(await response.json());
+      } catch (error) { console.error('Failed to read technical logs:', error); }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 750);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [showLogsDrawer]);
 
   // Step 1 Handler
   const handleRunStep1 = async (options?: {
@@ -238,7 +257,7 @@ export default function App() {
         if (!accepted) return;
         ({ response, data } = await start(true));
       }
-      if (!response.ok) throw new Error(data.error || 'Step rerun failed');
+      if (!response.ok) throw new Error(data.error || 'Step failed');
       while (true) {
         await new Promise(resolve => setTimeout(resolve, 600));
         const progressResponse = await fetch('/api/step1/progress');
@@ -250,7 +269,7 @@ export default function App() {
         }
       }
     } catch (error) {
-      console.error('Step rerun failed:', error);
+      console.error('Step failed:', error);
       setShowLogsDrawer(true);
     } finally {
       await refreshCurrentJob(currentJob.id);
@@ -387,26 +406,37 @@ export default function App() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Create job failed');
-    setJobs((prev) => [data, ...prev]);
+    setJobs([data]);
+    const libraryResponse = await fetch('/api/library');
+    if (libraryResponse.ok) setLibraryBooks(await libraryResponse.json());
     setCurrentJobId(data.id);
     setActiveStep(1);
   };
 
-  const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
+  const handleSaveLibraryMetadata = async (changes: { id: string; fields: Partial<AudiobookMetadata> }[]) => {
+    const response = await fetch('/api/library/metadata', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ changes }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not save library metadata.');
+    const changed = new Map((data.books as LibraryBook[]).map(book => [book.id, book]));
+    setLibraryBooks(current => current.map(book => changed.get(book.id) || book));
+    if (currentJobId && changed.has(currentJobId)) await refreshCurrentJob(currentJobId);
+  };
 
-  // Toggle selection for a job
-  const toggleJobSelection = (e: React.MouseEvent, jobId: string) => {
-    e.stopPropagation();
-    setSelectedJobIds(prev => 
-        prev.includes(jobId) 
-            ? prev.filter(id => id !== jobId) 
-            : [...prev, jobId]
-    );
+  const handleWriteLibraryAudioMetadata = async (ids: string[]) => {
+    const written: string[] = [];
+    const failures: string[] = [];
+    for (const id of ids) {
+      const response = await fetch(`/api/library/${encodeURIComponent(id)}/write-audio-metadata`, { method: 'POST' });
+      const result = await response.json();
+      written.push(...(result.written || []));
+      failures.push(...(result.failures || (response.ok ? [] : [result.error || 'Could not write audio metadata.'])));
+    }
+    return { written, failures };
   };
 
   // Bulk Delete Handler
-  const handleDeleteMultiple = async () => {
-    const count = selectedJobIds.length;
+  const handleDeleteMultiple = async (ids: string[]) => {
+    const count = ids.length;
     if (count === 0) return;
 
     const confirmMsg = `Are you sure you want to delete ${count} selected project${count > 1 ? 's' : ''}?\n\nThis will permanently remove all project data and Workbench-managed files.`;
@@ -414,16 +444,17 @@ export default function App() {
     if (window.confirm(confirmMsg)) {
         try {
             // Process deletions sequentially or in parallel
-            await Promise.all(selectedJobIds.map(id => 
-                fetch(`/api/jobs/${id}`, { method: 'DELETE' })
-            ));
+            for (const id of ids) {
+              const response = await fetch(`/api/jobs/${id}`, { method: 'DELETE' });
+              if (!response.ok) throw new Error((await response.json()).error || `Could not delete ${id}.`);
+            }
             
-            setJobs(prev => prev.filter(j => !selectedJobIds.includes(j.id)));
-            if (currentJobId && selectedJobIds.includes(currentJobId)) {
+            setJobs(prev => prev.filter(j => !ids.includes(j.id)));
+            setLibraryBooks(prev => prev.filter(book => !ids.includes(book.id)));
+            if (currentJobId && ids.includes(currentJobId)) {
                 setCurrentJobId(null);
                 setActiveStep(1);
             }
-            setSelectedJobIds([]);
         } catch (err: any) {
             alert(`Bulk Delete Error: ${err.message}`);
         }
@@ -431,8 +462,7 @@ export default function App() {
   };
 
   // Delete Job Handler
-  const handleDeleteProject = async (e: React.MouseEvent, jobId: string, jobName: string) => {
-    e.stopPropagation(); // Don't trigger the "Open Project" click
+  const handleDeleteProject = async (jobId: string, jobName: string) => {
     
     const confirmMsg = `Are you sure you want to delete the project "${jobName}"?\n\nThis will permanently remove the project data and any files uploaded to the Workbench. Files stored outside of the program folder will not be removed.`;
     
@@ -443,7 +473,7 @@ export default function App() {
             });
             if (res.ok) {
                 setJobs(prev => prev.filter(j => j.id !== jobId));
-                setSelectedJobIds(prev => prev.filter(id => id !== jobId));
+                setLibraryBooks(prev => prev.filter(book => book.id !== jobId));
                 if (currentJobId === jobId) {
                     setCurrentJobId(null);
                     setActiveStep(1);
@@ -505,7 +535,7 @@ export default function App() {
       />
 
       {/* Main Workspace */}
-      <main className="flex-1 max-w-[1480px] w-full mx-auto px-3 sm:px-5 lg:px-7 py-4 sm:py-6 space-y-5">
+      <main className={`flex-1 w-full mx-auto px-3 sm:px-5 lg:px-7 py-4 sm:py-6 space-y-5 ${currentJob ? 'max-w-[1480px]' : 'max-w-none'}`}>
         {currentJob ? (
           <>
             {/* Book Meta & Step Progress Navigation */}
@@ -644,132 +674,21 @@ export default function App() {
             )}
           </>
         ) : (
-          <div className="space-y-5">
-            <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-6 lg:p-8">
-                <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-                    <div>
-                        <p className="mb-1 text-xs font-bold uppercase tracking-[0.16em] text-amber-700">Your library</p>
-                        <h2 className="text-2xl font-bold tracking-tight text-stone-950">Audiobooks</h2>
-                        <p className="mt-1 text-sm text-stone-500">Pick up where you left off or start a new book.</p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                        {selectedJobIds.length > 0 && (
-                            <button
-                                onClick={handleDeleteMultiple}
-                                className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-sm font-semibold text-red-700 transition hover:bg-red-100"
-                            >
-                                <Trash2 className="w-4 h-4" />
-                                <span>Delete {selectedJobIds.length} Selected</span>
-                            </button>
-                        )}
-                        <button
-                            onClick={() => setShowNewJobModal(true)}
-                            className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-amber-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-800"
-                        >
-                            <Plus className="w-4 h-4" />
-                            <span>Add book</span>
-                        </button>
-                    </div>
-                </div>
-
-                {jobs.length > 0 ? (
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                        {jobs.map((job) => (
-                            <div
-                                key={job.id}
-                                onClick={() => handleOpenProject(job.id)}
-                                className={`group relative rounded-2xl border bg-stone-50 p-5 pt-9 transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-md ${
-                                    selectedJobIds.includes(job.id) ? 'border-amber-500 ring-1 ring-amber-500/20 bg-amber-50/10' : 'border-stone-200 hover:border-amber-400'
-                                }`}
-                            >
-                                {/* Selection Circle */}
-                                <div 
-                                    onClick={(e) => toggleJobSelection(e, job.id)}
-                                    className={`absolute top-3 left-3 w-5 h-5 rounded-full border-2 transition-all flex items-center justify-center ${
-                                        selectedJobIds.includes(job.id) 
-                                            ? 'bg-amber-500 border-amber-500' 
-                                            : 'bg-white border-stone-300 opacity-0 group-hover:opacity-100 hover:border-amber-400'
-                                    }`}
-                                >
-                                    {selectedJobIds.includes(job.id) && (
-                                        <div className="w-2 h-2 bg-white rounded-full shadow-sm" />
-                                    )}
-                                </div>
-
-                                <div className="flex items-start justify-between">
-                                    <div className="space-y-1">
-                                        <h3 className="font-bold text-stone-900 group-hover:text-amber-900 transition-colors">{job.name}</h3>
-                                        <p className="text-xs text-stone-500 line-clamp-1">{job.author || 'No Author'} • {job.narrator || 'No Narrator'}</p>
-                                    </div>
-                                    <div className="flex flex-col items-end space-y-2">
-                                        <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
-                                            job.status === 'validated' ? 'bg-emerald-100 text-emerald-700' :
-                                            job.status === 'draft' ? 'bg-stone-200 text-stone-600' : 'bg-amber-100 text-amber-800'
-                                        }`}>
-                                            {statusLabel(job.status)}
-                                        </span>
-                                        <button
-                                            onClick={(e) => handleDeleteProject(e, job.id, job.name)}
-                                            className="p-1.5 text-stone-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                                            title="Delete project"
-                                        >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
-                                    </div>
-                                </div>
-                                <div className="mt-4 flex items-center justify-between text-[11px] text-stone-400 font-mono">
-                                    <div className="flex items-center space-x-3">
-                                        <span className="flex items-center space-x-1">
-                                            <Clock className="w-3 h-3" />
-                                            <span>{formatDuration(job.totalDurationSeconds)}</span>
-                                        </span>
-                                        <span>•</span>
-                                        <span>{job.parts.length} files</span>
-                                    </div>
-                                    <span className="flex items-center gap-1 font-bold text-amber-700 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-                                        <span>Open</span>
-                                        <ArrowRight className="w-3 h-3" />
-                                    </span>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div className="rounded-2xl border-2 border-dashed border-stone-200 py-16 text-center">
-                        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-50 text-amber-700">
-                            <BookOpen className="h-8 w-8" />
-                        </div>
-                        <h3 className="text-lg font-semibold text-stone-900">Your shelf is ready</h3>
-                        <p className="mx-auto mt-2 max-w-sm text-sm text-stone-500">Add an audiobook to combine its audio, review chapters, and create a finished file.</p>
-                        <button
-                            onClick={() => setShowNewJobModal(true)}
-                            className="mt-6 inline-flex min-h-10 items-center gap-2 rounded-xl bg-amber-700 px-4 text-sm font-semibold text-white hover:bg-amber-800"
-                        >
-                            <Plus className="h-4 w-4" /> Add your first book
-                        </button>
-                    </div>
-                )}
-            </section>
-
-            {/* Quick Start / Help Card */}
-            <div className="flex items-start gap-3 rounded-2xl border border-stone-200 bg-white p-4">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
-                    <CheckCircle2 className="w-5 h-5" />
-                </div>
-                <div>
-                    <h3 className="text-sm font-bold text-stone-900">One book at a time</h3>
-                    <p className="mt-1 max-w-2xl text-xs leading-relaxed text-stone-600">
-                        SwissMouse keeps each book’s audio, chapters, and details together. Open any book above to safely resume it.
-                    </p>
-                </div>
-            </div>
-          </div>
+          <LibraryManager
+            books={libraryBooks}
+            onOpen={handleOpenProject}
+            onAdd={() => setShowNewJobModal(true)}
+            onSave={handleSaveLibraryMetadata}
+            onWriteAudioMetadata={handleWriteLibraryAudioMetadata}
+            onDelete={handleDeleteProject}
+            onDeleteMany={handleDeleteMultiple}
+          />
         )}
       </main>
 
-      {/* Logs / Console Bottom Drawer */}
+      {/* Technical log follows the workspace so it never covers its controls. */}
       <LogsDrawer
-        logs={currentJob?.logs || []}
+        logs={masterLogs}
         isOpen={showLogsDrawer}
         onClose={() => setShowLogsDrawer(false)}
       />

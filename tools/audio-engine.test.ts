@@ -110,6 +110,7 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     assert.ok(ready,logs);
     const source=path.join(root,'export.m4b');const original=await fingerprint([source],{});
     const job=await request('/api/jobs',{name:'API fixture',author:'Project author',narrator:'Project narrator',parts:[{name:source}]});
+    assert.equal((await fetch(base+'/api/jobs/'+job.id+'/export/open-folder',{method:'POST'})).status,400,'unfinished projects cannot open an export folder');
     await request('/api/jobs/'+job.id+'/process-step1',{chapterSource:'existing_files'});
     let updated:any;
     for(let i=0;i<100;i++){updated=await request('/api/jobs/'+job.id);if(updated.status==='transcribed')break;await new Promise(r=>setTimeout(r,100));}
@@ -286,6 +287,15 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     assert.ok(uploadResponse.ok);const upload:any=await uploadResponse.json();
     assert.equal(new Set(upload.files.map((f:any)=>f.filename)).size,3);
     assert.deepEqual(upload.files.map((f:any)=>f.originalName),['01/1.mp3','01/2.mp3','02/1.mp3']);
+    const importMessages=(await request('/api/jobs/'+uploadedJob.id)).logs.map((entry:any)=>entry.message);
+    assert.ok(importMessages.some((message:string)=>message.includes('Copying "01/1.mp3"')));
+    assert.ok(importMessages.some((message:string)=>message.includes('Validated "01/1.mp3"')));
+    assert.ok(importMessages.some((message:string)=>message.includes('Committed 3/3')));
+    assert.ok(importMessages.at(-1).includes('Completed: 3 file(s)'));
+    const masterLogs=await request('/api/logs');
+    assert.ok(masterLogs.some((entry:any)=>entry.message.includes('[Folder upload] Audio import: Copying "01/1.mp3"')));
+    assert.ok(masterLogs.some((entry:any)=>entry.message.includes('[Step 1 '+job.id+']')));
+    assert.ok(masterLogs.some((entry:any)=>entry.message.includes("Job 'API fixture' initialized")));
     const uploadedParts=upload.files.map((f:any)=>({name:f.filename,sourceRelativePath:f.originalName}));
     await request('/api/jobs/'+uploadedJob.id+'/step1-settings',{sourceFolderPath:upload.uploadDir,parts:uploadedParts});
     assert.deepEqual((await request('/api/jobs/'+uploadedJob.id)).parts.map((p:any)=>p.sourceRelativePath),['01/1.mp3','01/2.mp3','02/1.mp3']);

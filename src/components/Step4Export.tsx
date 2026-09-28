@@ -18,9 +18,7 @@ const formatName = (format: OutputAudioFormat) => format.toUpperCase();
 
 export const Step4Export: React.FC<Step4Props> = ({ job, onBuildM4b, isBuilding, error, onNextStep }) => {
   const exportAvailability = useDependencyStatus().feature('audio_export');
-  const [selected, setSelected] = useState<OutputAudioFormat[]>([
-    outputFormats.includes(job.sourceFormat as OutputAudioFormat) ? job.sourceFormat as OutputAudioFormat : 'm4b',
-  ]);
+  const [selected, setSelected] = useState<OutputAudioFormat[]>(['m4a']);
   const [convert, setConvert] = useState(false);
   const [cue, setCue] = useState(true);
   const [bitrates, setBitrates] = useState<Partial<Record<OutputAudioFormat, number>>>({});

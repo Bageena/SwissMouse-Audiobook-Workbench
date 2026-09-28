@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { AlignedWord } from '../types';
 import { AudioWaveform, WaveformMarker } from './AudioWaveform';
 import { playbackTranscriptWindow, revealTranscriptWord } from '../utils/wordAlignment';
+import { formatTimestampMs } from '../utils/chapters';
 import {
   Play,
   Pause,
@@ -50,6 +51,9 @@ interface ChapterAudioPlayerProps {
   onChapterMarker?: (id: string) => void;
   onSeek?: (seconds: number) => void;
   onPlaybackTime?: (seconds: number) => void;
+  timestampTarget?: string;
+  onSetTimestamp?: (seconds: number) => void;
+  onCancelTimestamp?: () => void;
 }
 
 export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
@@ -67,6 +71,9 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   onChapterMarker = () => {},
   onSeek,
   onPlaybackTime,
+  timestampTarget,
+  onSetTimestamp,
+  onCancelTimestamp,
 }) => {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(audioSrc);
@@ -81,15 +88,6 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const wordPane = useRef<HTMLDivElement>(null);
   const highlightedWord = useRef<HTMLButtonElement>(null);
-
-  // Helper: Format seconds to HH:MM:SS
-  const formatSec = (s: number): string => {
-    const safe = Math.max(0, s);
-    const hrs = Math.floor(safe / 3600);
-    const mins = Math.floor((safe % 3600) / 60);
-    const secs = Math.floor(safe % 60);
-    return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
 
   // Play audio chime using Web Audio API for auditory feedback on clicks
   const playWordChime = (pitch: number = 740) => {
@@ -228,6 +226,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
     if (audioRef.current && audioUrl) audioRef.current.currentTime = nextTime;
     onSeek?.(nextTime);
   };
+  const captureTimestamp = () => onSetTimestamp?.(audioRef.current?.currentTime ?? currentTime);
   const handleSeekOffset = (offset: number) => {
     seekTo(currentTime + offset);
   };
@@ -427,7 +426,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
       {/* Main Transport & Timeline Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
         {/* Play / Pause / Seek Buttons */}
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             id="btn-player-seek-back"
             onClick={() => handleSeekOffset(-5)}
@@ -476,12 +475,22 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
           >
             <Square className="w-4 h-4" />
           </button>
+          {timestampTarget && onSetTimestamp && (
+            <div className="flex items-center gap-2 border-l border-stone-200 pl-2">
+              <button type="button" onClick={captureTimestamp}
+                className="rounded-lg bg-amber-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-amber-500 cursor-pointer"
+                title={`Set ${timestampTarget} start to the player's current position`}>
+                Set Timestamp
+              </button>
+              <button type="button" onClick={onCancelTimestamp} className="text-xs text-stone-500 hover:text-stone-800 cursor-pointer" title="Cancel timestamp selection">Cancel</button>
+            </div>
+          )}
         </div>
 
         {/* Timestamp Scrubber & Display */}
         <div className="flex-1 flex items-center space-x-3 px-2">
           <span className="font-mono text-xs text-amber-700 font-semibold">
-            {formatSec(currentTime)}
+            {formatTimestampMs(currentTime * 1000)}
           </span>
 
           <div className="flex-1 relative flex items-center">
@@ -489,7 +498,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
               type="range"
               min={0}
               max={duration}
-              step="0.5"
+              step="0.001"
               value={currentTime}
               onChange={(e) => {
                 seekTo(parseFloat(e.target.value));
@@ -499,9 +508,10 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
           </div>
 
           <span className="font-mono text-xs text-stone-500">
-            {formatSec(duration)}
+            {formatTimestampMs(duration * 1000)}
           </span>
         </div>
+        {timestampTarget && <span className="text-xs text-amber-800">Set {timestampTarget} to the current position</span>}
 
         {/* Volume Controls */}
         <div className="flex items-center space-x-2">

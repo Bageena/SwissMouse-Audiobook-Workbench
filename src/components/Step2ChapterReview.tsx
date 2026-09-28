@@ -3,7 +3,7 @@ import { AlignedWord, AudiobookJob, ChapterCandidate, ChapterEntry } from '../ty
 import { ChapterAudioPlayer, ActiveAudioTrack } from './ChapterAudioPlayer';
 import { cleanChapterTitles, undoChapterTitleCleanup, type TitleCleanupUndo } from '../utils/chapterTitles';
 import { buildAlignedWords, findClosestTranscriptWordIndex, findTranscriptWordIndex, getTranscriptWordsNear, parseTimestampToMs, revealTranscriptWord, transcriptPageOffset } from '../utils/wordAlignment';
-import { applyChapterNumberFormat, applyDefaultChapterEnds, formatChapterTitle, getSessionChapterNumberFormat, isIncompleteChapter, parseCsvRow, prepareChapters, validateChapterEntries, type ChapterNumberFormat } from '../utils/chapters';
+import { applyChapterNumberFormat, applyDefaultChapterEnds, formatChapterTitle, formatTimestampMs, getSessionChapterNumberFormat, isIncompleteChapter, parseCsvRow, prepareChapters, validateChapterEntries, type ChapterNumberFormat } from '../utils/chapters';
 import {
   Check,
   Plus,
@@ -83,6 +83,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
   // Audio preview playback state
   const [activeTrack, setActiveTrack] = useState<ActiveAudioTrack | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [selectedMissingChapterId, setSelectedMissingChapterId] = useState<string | null>(null);
   const [wordUpdateNotification, setWordUpdateNotification] = useState<string | null>(null);
   const [transcriptSearch, setTranscriptSearch] = useState('');
   const [transcriptOffset, setTranscriptOffset] = useState(0);
@@ -119,26 +120,8 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     if (element && transcriptPane.current) revealTranscriptWord(transcriptPane.current, element);
   }, [transcriptSelection, transcriptOffset, transcriptSearch]);
 
-  // Helper: Format seconds to HH:MM:SS.mmm
-  const formatTs = (seconds: number): string => {
-    const s = Math.max(0, seconds);
-    const hrs = Math.floor(s / 3600);
-    const mins = Math.floor((s % 3600) / 60);
-    const secs = s % 60;
-    return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toFixed(3).padStart(6, '0')}`;
-  };
-
-  // Helper: Parse HH:MM:SS.mmm to milliseconds
-  const parseMs = (ts: string): number => {
-    const match = ts.trim().match(/^(\d+):(\d{2}):(\d{2})(?:\.(\d+))?$/);
-    if (!match) return -1;
-    const [, hrs, mins, secs, ms] = match;
-    let totalMs = (parseInt(hrs, 10) * 3600 + parseInt(mins, 10) * 60 + parseInt(secs, 10)) * 1000;
-    if (ms) {
-      totalMs += parseInt((ms + "000").slice(0, 3), 10);
-    }
-    return totalMs;
-  };
+  const formatTs = (seconds: number): string => formatTimestampMs(seconds * 1000);
+  const parseMs = parseTimestampToMs;
 
   const validateChaptersList = (list: ChapterEntry[]): string | null => validateChapterEntries(list, job.totalDurationSeconds);
 
@@ -208,6 +191,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     };
     const recalculated = field === 'start' && timestampMs >= 0 ? applyDefaultChapterEnds(updated, job.totalDurationSeconds) : updated;
     setChapters(recalculated);
+    if (field === 'start' && timestampMs >= 0 && updated[index].id === selectedMissingChapterId) setSelectedMissingChapterId(null);
     if (field === 'start' && timestampMs >= 0) syncPlayerToChapter(recalculated[index], index);
     else if (field === 'end' && parseMs(val) >= 0) syncPlayerToChapter(recalculated[index], index, val);
     else if (field === 'title' && activeTrack?.chapterIndex === index) {
@@ -228,6 +212,20 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
       return current && chapter ? { ...current, title: chapter.title } : current;
     });
     setValidationError(validateChaptersList(result.chapters));
+  };
+
+  const selectMissingChapter = (chapter: ChapterEntry, index: number) => {
+    setSelectedMissingChapterId(chapter.id);
+    if (activeTrack) return; // Keep a position the user has already located.
+    let before = index - 1, after = index + 1;
+    while (before >= 0 && parseMs(chapters[before].start) < 0) before--;
+    while (after < chapters.length && parseMs(chapters[after].start) < 0) after++;
+    const beforeMs = before >= 0 ? parseMs(chapters[before].start) : 0;
+    const afterMs = after < chapters.length ? parseMs(chapters[after].start) : beforeMs;
+    const fraction = after < chapters.length ? (index - before) / (after - before) : 0;
+    const previewMs = Math.round(beforeMs + (afterMs - beforeMs) * fraction);
+    syncPlayerToChapter(chapter, index, formatTimestampMs(previewMs));
+    setIsPlaying(false);
   };
 
   // Add a new blank chapter
@@ -376,10 +374,10 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
   const handleWordTimestampSelect = (timestamp: string, word: string, seconds: number) => {
     const transcriptWordIndex = resolveTranscriptWordIndex(seconds);
     navigateToTranscriptWord(transcriptWordIndex);
-    let targetIdx = activeTrack?.chapterIndex;
+    let targetIdx = selectedMissingChapterId ? chapters.findIndex(chapter => chapter.id === selectedMissingChapterId) : activeTrack?.chapterIndex;
 
     // If active track is candidate, look for chapter matching either candidate start or candidate title
-    if (targetIdx === undefined && activeTrack) {
+    if ((targetIdx === undefined || targetIdx < 0) && activeTrack) {
       targetIdx = chapters.findIndex(
         c => c.start === activeTrack.start || c.title.toLowerCase() === activeTrack.title.toLowerCase()
       );
@@ -412,10 +410,13 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
 
   const handleTranscriptWordSelect = (word: AlignedWord, transcriptWordIndex: number) => {
     navigateToTranscriptWord(transcriptWordIndex);
-    let targetIdx = 0;
-    chapters.forEach((chapter, index) => {
-      if (parseMs(chapter.start) / 1000 <= word.startSeconds) targetIdx = index;
-    });
+    let targetIdx = selectedMissingChapterId ? chapters.findIndex(chapter => chapter.id === selectedMissingChapterId) : -1;
+    if (targetIdx < 0) {
+      targetIdx = 0;
+      chapters.forEach((chapter, index) => {
+        if (parseMs(chapter.start) / 1000 <= word.startSeconds) targetIdx = index;
+      });
+    }
     handleUpdateChapter(targetIdx, 'start', word.start, transcriptWordIndex);
     setIsPlaying(true);
     setWordUpdateNotification(`✓ Snapped ${chapters[targetIdx]?.title || 'chapter'} to ${word.start} from actual transcript word "${word.word}"`);
@@ -496,6 +497,14 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
   };
 
   const currentError = validationError || validateChaptersList(chapters);
+  const selectedMissingChapter = chapters.find(chapter => chapter.id === selectedMissingChapterId && isIncompleteChapter(chapter));
+  const handleSetMissingTimestamp = (seconds: number) => {
+    if (!selectedMissingChapter || !Number.isFinite(seconds)) return;
+    const index = chapters.findIndex(chapter => chapter.id === selectedMissingChapter.id);
+    if (index < 0) return;
+    handleUpdateChapter(index, 'start', formatTimestampMs(seconds * 1000));
+    setSelectedMissingChapterId(null);
+  };
 
   return (
     <div className="space-y-6">
@@ -607,7 +616,11 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
         onStop={() => {
           setIsPlaying(false);
           setActiveTrack(null);
+          setSelectedMissingChapterId(null);
         }}
+        timestampTarget={selectedMissingChapter?.title}
+        onSetTimestamp={handleSetMissingTimestamp}
+        onCancelTimestamp={() => setSelectedMissingChapterId(null)}
         onWordClick={handleWordTimestampSelect}
         totalDurationSeconds={job.totalDurationSeconds}
         audioSrc={`/api/jobs/${job.id}/audio-preview`}
@@ -968,6 +981,8 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                         className={`hover:bg-stone-50 transition-colors ${draggedChapterId === chap.id ? 'opacity-50' : ''} ${
                           isThisPlaying
                             ? 'bg-amber-50/80 ring-1 ring-amber-300'
+                            : selectedMissingChapterId === chap.id
+                            ? 'bg-amber-50/80 ring-1 ring-amber-300'
                             : isIncomplete || !isValidEnd
                             ? 'bg-red-50/70'
                             : ''
@@ -993,8 +1008,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                         <td className="py-2 px-1 text-center">
                           <button
                             id={`btn-play-chapter-${idx}`}
-                            onClick={() => handleToggleChapterPlay(chap, idx)}
-                            disabled={isIncomplete}
+                            onClick={() => isIncomplete ? selectMissingChapter(chap, idx) : handleToggleChapterPlay(chap, idx)}
                             className={`w-7 h-7 rounded-md inline-flex items-center justify-center transition-all cursor-pointer ${
                               isThisPlaying
                                 ? 'bg-amber-500 text-stone-950 font-bold shadow-xs animate-pulse ring-2 ring-amber-400'
@@ -1002,18 +1016,19 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                                 ? 'bg-amber-100 text-amber-900 hover:bg-amber-200'
                                 : 'bg-stone-100 text-stone-700 hover:bg-amber-100 hover:text-amber-900 disabled:opacity-30'
                             }`}
-                            title={
+                            title={isIncomplete ? `Locate ${chap.title} using the player, then Set Timestamp` :
                               isThisPlaying
                                 ? `Pause preview of ${chap.title}`
                                 : `Listen to ${chap.title} at ${chap.start} to verify accuracy`
                             }
                           >
-                            {isThisPlaying ? (
+                            {isIncomplete ? <Clock className="w-3.5 h-3.5" /> : isThisPlaying ? (
                               <Pause className="w-3.5 h-3.5 fill-current" />
                             ) : (
                               <Play className="w-3.5 h-3.5 fill-current" />
                             )}
                           </button>
+                          {isIncomplete && <span className="block text-[10px] text-amber-800">Locate</span>}
                         </td>
 
                         <td className="py-2 px-2">
@@ -1022,7 +1037,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                               type="text"
                               value={chap.start}
                               aria-label={`Start of ${chap.title || `chapter ${idx + 1}`}`}
-                              onFocus={() => syncPlayerToChapter(chap, idx)}
+                              onFocus={() => isIncomplete ? selectMissingChapter(chap, idx) : syncPlayerToChapter(chap, idx)}
                               onChange={(e) => handleUpdateChapter(idx, 'start', e.target.value)}
                               className={`w-full px-2 py-1 font-mono rounded text-xs border ${
                                 isNonNegative

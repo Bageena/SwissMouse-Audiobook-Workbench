@@ -1,5 +1,7 @@
 import type { BackendCapabilities, TranscriptionBackend, TranscriptionSettings } from './transcription';
 export interface WorkbenchConfig {
+  library_folder?: string;
+  library_template?: string;
   detect_musical_transitions?: boolean;
   faster_transcription: boolean;
   selected_model: string;
@@ -129,7 +131,8 @@ export interface AudiobookMetadata {
   narrator: string; // Stored in Composer tag per Audiobookshelf standard
   series?: string; // Stored in Series/Album
   seriesSequence?: string; // Stored in Series-Part / Track
-  genres: string[]; // Genres / Tags
+  genres: string[]; // Book genres, separate from subject tags
+  tags?: string[]; // Audiobookshelf subject tags
   publishedYear?: string; // Release Year (e.g. 2024)
   releaseDate?: string; // Full date if available (YYYY-MM-DD)
   publisher?: string;
@@ -271,6 +274,7 @@ export interface YtDlpStatusInfo {
 }
 
 export interface AudiobookJob {
+  metadataUpdatedAt?: string;
   pipelineSteps?: Partial<Record<RerunnablePipelineStep, PipelineStepState>>;
   staleSteps?: PipelineResultStep[];
   sourceBitrate?: number;
@@ -382,6 +386,16 @@ export interface AudiobookJob {
 
   validation?: ValidationReport | null;
   logs: JobLog[];
+}
+
+export interface LibraryBook {
+  id: string;
+  name: string;
+  status: 'draft' | 'merged' | 'transcribed' | 'metadata_ready' | 'built' | 'validated';
+  createdAt: string;
+  metadataUpdatedAt?: string;
+  metadata: AudiobookMetadata;
+  coverUrl?: string;
 }
 
 export type RerunnablePipelineStep = 'generating_waveform' | 'transcribing_whisper' | 'detecting_chapters' | 'extracting_chapters' | 'metadata_processing';

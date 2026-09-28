@@ -24,6 +24,7 @@ export function transcriptionRequestKey(preparedAudioKey: string, model: string,
     model, language: settings.language, devicePreference: settings.device, batching: settings.batching,
     beamSize: settings.beamSize ?? 'native-whisper-default', initialAttempt: attempt,
     wordTimestamps: true, decodingPolicy: 1,
+    ...(attempt.batchSize === null ? {} : { batchedVadThreshold: 0.3 }),
   });
 }
 export function transcriptionResultKey(requestKey: string, actual: { engine?: string; device?: string; computeType?: string; batchSize?: number | null; beamSize?: number }): string {

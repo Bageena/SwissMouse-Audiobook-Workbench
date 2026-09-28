@@ -33,7 +33,7 @@ export function hasManualChapterWork(job: Pick<AudiobookJob, 'chapters' | 'candi
   if (!job.chapters.length) return false;
   if (job.chapters.some(chapter => chapter.startManuallyEdited || chapter.endManuallyEdited || chapter.titleManuallyEdited || chapter.manuallyInserted || chapter.isMissing)) return true;
   if (job.chapterSource === 'existing_files') return false;
-  const generated = job.chapters.filter(chapter => !(chapter.id === 'opening' && chapter.start === '00:00:00.000' && chapter.title === 'Opening'));
+  const generated = job.chapters.filter(chapter => !(chapter.id === 'opening' && chapter.start === '00:00:00.000' && (chapter.title === 'Opening' || chapter.title === 'Prologue')));
   return generated.length !== job.candidates.length || generated.some(chapter => !job.candidates.some(candidate =>
     chapter.start === candidate.candidate_start && chapter.title === candidate.proposed_title));
 }

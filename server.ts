@@ -1,5 +1,8 @@
+// Copyright (C) 2026 SwissMouse contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { probeBackendCapabilities } from './tools/transcription-capabilities';
 import { transcriptionSettings, selectTranscriptionAttempt, capabilityLabel, type BackendCapabilities, type TranscriptionBackend } from './src/transcription';
+import { DEFAULT_LIBRARY_TEMPLATE, libraryRelativePath, validateLibraryTemplate } from './src/utils/libraryPath';
 import { sourceProcessingKeys, transcriptionRequestKey, transcriptionResultKey, reusableTranscription, processingKey } from './tools/transcription-cache';
 import { StatusCache } from './tools/status-cache';
 import { rebuildAnalysis, waveformSlice } from './tools/audio-analysis';
@@ -11,7 +14,7 @@ import { PACKAGE_STATUS_SCRIPT } from './tools/package-status';
 import { discoverRuntime, cleanPythonEnv, optionalPackages, optionalRemoval, removalImpact, PRIVATE_UNINSTALL_CHECK, assertManagedTarget, type RuntimeSelection } from './tools/runtime-selection';
 import { youtubeUrl, youtubeBaseArgs, downloadYoutubeAudio } from './tools/youtube-audio';
 import { mountLibriVox } from './tools/librivox-import';
-import { inspect, fingerprint, makePreview, exportAudio, validateChapters } from './tools/audio-engine';
+import { inspect, fingerprint, makePreview, exportAudio, validateChapters, writeAudioMetadata } from './tools/audio-engine';
 import { prepareMaster } from './tools/source-audio';
 import { audiobookTags } from './tools/audiobook-metadata';
 import { naturalPathCompare, sourceChapterGroups } from './src/utils/sourceStructure';
@@ -24,7 +27,7 @@ import { evaluateRequirementReadiness, selectedMissingRequirements, pytorchBuild
 import { missingDependencies, missingRequirementsTooltip } from './tools/feature-dependencies';
 import { discoverCustomThemes, isSafeThemeAssetName } from './tools/custom-themes';
 import type { FeatureId } from './tools/feature-dependencies';
-import type { WorkbenchConfig, ChapterEntry, AudiobookMetadata, AudiobookJob, HardwareInfo, SpeechModelInfo, InstallRepairProgress, Step1ProcessState, Step1ProcessStage, Step1ProgressStage, HardwareEnvironmentInfo, RequirementsReport, BaseRequirementItem, FolderScanResult, DiscoveredAudioFile, UnsupportedFileItem, YtDlpStatusInfo, YtDlpStatusState, YouTubeVideoInfo, YouTubeAudioFormat, ChapterCandidate, CoverArtInfo, OutputAudioFormat, RerunnablePipelineStep } from './src/types';
+import type { WorkbenchConfig, ChapterEntry, AudiobookMetadata, AudiobookJob, LibraryBook, HardwareInfo, SpeechModelInfo, InstallRepairProgress, Step1ProcessState, Step1ProcessStage, Step1ProgressStage, HardwareEnvironmentInfo, RequirementsReport, BaseRequirementItem, FolderScanResult, DiscoveredAudioFile, UnsupportedFileItem, YtDlpStatusInfo, YtDlpStatusState, YouTubeVideoInfo, YouTubeAudioFormat, ChapterCandidate, CoverArtInfo, OutputAudioFormat, RerunnablePipelineStep } from './src/types';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -34,6 +37,7 @@ import https from 'https';
 import { execSync, exec, execFile, execFileSync, spawn } from 'child_process';
 import { createHash, randomUUID } from 'crypto';
 import AdmZip from 'adm-zip';
+import { installFfmpegDistribution } from './tools/ffmpeg-distribution';
 import { promisify } from 'util';
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -295,17 +299,12 @@ async function installManagedFfmpeg(onLog: (message: string) => void): Promise<v
     // Do not invoke Windows tar.exe or PowerShell here. In some Windows setups
     // those extractors can terminate the parent server during a large ZIP
     // operation. The archive is checksum-verified above, then this pure
-    // JavaScript reader writes only the two required application-local files.
+    // JavaScript reader retains upstream companion files and installs the two
+    // required application-local binaries without running an external extractor.
     const zip = new AdmZip(archivePath);
-    const entries = zip.getEntries();
-    const ffmpegEntry = entries.find((entry) => /(^|\/)bin\/ffmpeg\.exe$/i.test(entry.entryName));
-    const ffprobeEntry = entries.find((entry) => /(^|\/)bin\/ffprobe\.exe$/i.test(entry.entryName));
-    if (!ffmpegEntry || !ffprobeEntry) {
-      throw new Error('The downloaded FFmpeg archive did not contain both ffmpeg.exe and ffprobe.exe.');
-    }
-    onLog('Writing FFmpeg and FFprobe to runtime/bin...');
-    fs.writeFileSync(MANAGED_FFMPEG_PATH, ffmpegEntry.getData());
-    fs.writeFileSync(MANAGED_FFPROBE_PATH, ffprobeEntry.getData());
+    const retained = installFfmpegDistribution(zip.getEntries(), RUNTIME_DIR, actual);
+    onLog(`Preserved ${retained.preservedFiles} upstream FFmpeg distribution files in ${retained.noticesDirectory}.`);
+    onLog('Wrote FFmpeg and FFprobe to runtime/bin.');
     installSucceeded = true;
   } finally {
     if (installSucceeded) {
@@ -359,7 +358,36 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage, preservePath: true });
+function importLog(jobId: string | undefined, level: 'INFO' | 'ERROR', message: string) {
+  const job = jobs.find(item => item.id === jobId);
+  if (!job) return;
+  job.logs.push({ timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19), level, message: `Audio import: ${message}` });
+  saveJobs();
+}
+
+const uploadStorage: multer.StorageEngine = {
+  _handleFile(req, file, cb) {
+    const jobId = req.query.jobId as string | undefined;
+    const name = file.originalname.replace(/\\/g, '/');
+    let bytes = 0;
+    let reported = 0;
+    importLog(jobId, 'INFO', `Copying "${name}" into the internal workspace.`);
+    file.stream.on('data', (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes - reported >= 16 * 1024 * 1024) {
+        reported = bytes;
+        importLog(jobId, 'INFO', `Copying "${name}": ${(bytes / 1048576).toFixed(1)} MiB received.`);
+      }
+    });
+    storage._handleFile(req, file, (error, info) => {
+      if (error) importLog(jobId, 'ERROR', `Could not copy "${name}" after ${(bytes / 1048576).toFixed(1)} MiB: ${error.message}`);
+      else importLog(jobId, 'INFO', `Staged "${name}": ${(bytes / 1048576).toFixed(1)} MiB copied to ${info.path}.`);
+      cb(error, info);
+    });
+  },
+  _removeFile(req, file, cb) { storage._removeFile(req, file, cb); },
+};
+const upload = multer({ storage: uploadStorage, preservePath: true });
 
 function appendOperationFailure(jobId: string | undefined, operation: string, message: string) {
   const job = jobId ? jobs.find(item => item.id === jobId) : undefined;
@@ -381,8 +409,17 @@ function requireFeatures(features: FeatureId[], operation: string, jobId: (req: 
   };
 }
 
-app.post('/api/upload-audio', requireFeatures(['file_import'], 'Import'), upload.array('files'), (req, res) => {
+app.post('/api/upload-audio', requireFeatures(['file_import'], 'Import'), (req, res, next) => {
+  const jobId = req.query.jobId as string | undefined;
+  importLog(jobId, 'INFO', `Started receiving audio files${req.headers['content-length'] ? ` (${(Number(req.headers['content-length']) / 1048576).toFixed(1)} MiB multipart request)` : ''}.`);
+  upload.array('files')(req, res, error => {
+    if (!error) return next();
+    importLog(jobId, 'ERROR', `Transfer failed: ${error.message}. Multer removed staged files.`);
+    res.status(400).json({ error: 'Import failed', message: error.message });
+  });
+}, (req, res) => {
   if (!req.files || req.files.length === 0) {
+    importLog(req.query.jobId as string | undefined, 'ERROR', 'No files were received.');
     return res.status(400).json({ error: 'No files uploaded.' });
   }
 
@@ -400,12 +437,18 @@ app.post('/api/upload-audio', requireFeatures(['file_import'], 'Import'), upload
   const moved: string[] = [];
   try {
     // Validate every staged file before committing any of them to the project.
-    const probes = staged.map(file => probeAudioFile(file.path));
+    const probes = staged.map((file, index) => {
+      importLog(jobId, 'INFO', `Validating ${index + 1}/${staged.length}: "${file.originalname.replace(/\\/g, '/')}" with FFprobe.`);
+      const probe = probeAudioFile(file.path);
+      importLog(jobId, 'INFO', `Validated "${file.originalname.replace(/\\/g, '/')}": ${probe.format}, ${probe.codec}, ${probe.sampleRate} Hz, ${probe.channels} channel(s), ${probe.durationSeconds.toFixed(2)} s.`);
+      return probe;
+    });
     fs.mkdirSync(finalUploadDir, { recursive: true });
     const uploadedFiles = staged.map((file, index) => {
       const finalPath = path.join(finalUploadDir, file.filename);
       fs.renameSync(file.path, finalPath);
       moved.push(finalPath);
+      importLog(jobId, 'INFO', `Committed ${index + 1}/${staged.length}: "${file.originalname.replace(/\\/g, '/')}" to ${finalPath}.`);
       const probe = probes[index];
       return {
         originalName: file.originalname.replace(/\\/g, '/'), filename: file.filename, path: finalPath, size: file.size,
@@ -413,6 +456,7 @@ app.post('/api/upload-audio', requireFeatures(['file_import'], 'Import'), upload
         sampleRate: probe.sampleRate, channels: probe.channels, streamSignature: probe.streamSignature,
       };
     });
+    importLog(jobId, 'INFO', `Completed: ${uploadedFiles.length} file(s), ${(uploadedFiles.reduce((total, file) => total + file.size, 0) / 1048576).toFixed(1)} MiB, all validated and committed.`);
     res.json({ message: 'Successfully uploaded files.', files: uploadedFiles, uploadDir: finalUploadDir });
   } catch (error: any) {
     for (const file of staged) { try { if (fs.existsSync(file.path)) fs.unlinkSync(file.path); } catch {} }
@@ -420,6 +464,7 @@ app.post('/api/upload-audio', requireFeatures(['file_import'], 'Import'), upload
     try { if (fs.existsSync(finalUploadDir) && fs.readdirSync(finalUploadDir).length === 0) fs.rmdirSync(finalUploadDir); } catch {}
     const message = `${error.message || 'Audio validation failed'}. No files were imported; staged files were removed.`;
     appendOperationFailure(jobId, 'Import', message);
+    importLog(jobId, 'ERROR', `Validation or commit failed; rolled back ${moved.length} committed file(s) and removed staged files. Cause: ${error.message || 'Audio validation failed'}`);
     res.status(400).json({ error: 'Import failed', message });
   }
 });
@@ -428,6 +473,8 @@ app.post('/api/upload-audio', requireFeatures(['file_import'], 'Import'), upload
 // Initial workbench configuration matching config.json from original Python app
 const CONFIG_PATH = appPath('config.json');
 const defaultConfig: WorkbenchConfig = {
+  library_folder: appPath('output'),
+  library_template: DEFAULT_LIBRARY_TEMPLATE,
   faster_transcription: true,
   detect_musical_transitions: true,
   selected_model: 'small',
@@ -574,6 +621,15 @@ function generateFFMetaContent(chapters: ChapterEntry[], totalDurationSeconds: n
 }
 
 const JOBS_FILE = appPath('jobs.json');
+const MASTER_LOG_FILE = appPath('logs', 'workbench-events.jsonl');
+
+function appendMasterEvent(source: string, message: string, level: 'INFO' | 'WARNING' | 'ERROR' = 'INFO') {
+  const entry = { timestamp: new Date().toISOString(), level, message: `[${source}] ${message}` };
+  try {
+    fs.mkdirSync(path.dirname(MASTER_LOG_FILE), { recursive: true });
+    fs.appendFileSync(MASTER_LOG_FILE, JSON.stringify(entry) + '\n', 'utf8');
+  } catch (error) { console.error('Failed to write master technical log:', error); }
+}
 
 function saveJobs() {
     try {
@@ -849,7 +905,7 @@ const activeModelDownloads = new Map<string, ActiveModelDownloadTask>();
 const activeFasterWhisperInstalls = new Map<string, ReturnType<typeof spawn>>();
 
 // Local Output Folder State
-let currentOutputFolder = appPath('output');
+let currentOutputFolder = path.resolve(APP_ROOT, currentConfig.library_folder || appPath('output'));
 if (!fs.existsSync(currentOutputFolder)) {
   try {
     fs.mkdirSync(currentOutputFolder, { recursive: true });
@@ -890,8 +946,15 @@ let activeInstallProgress: InstallRepairProgress = {
 };
 const INSTALL_DIAGNOSTIC_LOG = appPath('logs', 'install-repair.log');
 
+function recordInstallUiLine(line: string, mirror = true) {
+  activeInstallProgress.logs.push(line);
+  if (activeInstallProgress.logs.length > 50) activeInstallProgress.logs.shift();
+  if (mirror) appendMasterEvent('System check', line, /error|failed/i.test(line) ? 'ERROR' : 'INFO');
+}
+
 function appendInstallDiagnostic(message: string, includeInUi = true) {
   const line = `[${new Date().toLocaleTimeString()}] ${message}`;
+  appendMasterEvent('System check', line, /error|failed/i.test(message) ? 'ERROR' : 'INFO');
   try {
     fs.mkdirSync(path.dirname(INSTALL_DIAGNOSTIC_LOG), { recursive: true });
     fs.appendFileSync(INSTALL_DIAGNOSTIC_LOG, `${line}\n`, 'utf8');
@@ -899,8 +962,7 @@ function appendInstallDiagnostic(message: string, includeInUi = true) {
     console.error('Failed to write installation diagnostic log:', error);
   }
   if (includeInUi) {
-    activeInstallProgress.logs.push(line);
-    if (activeInstallProgress.logs.length > 50) activeInstallProgress.logs.shift();
+    recordInstallUiLine(line, false);
   }
 }
 
@@ -925,6 +987,19 @@ let activeStep1ProgressState: Step1ProcessState = {
   error: null,
   summary: null,
 };
+
+// Combine saved project activity with the section streams. The file retains
+// Step 1 and system messages that otherwise disappear when progress resets.
+app.get('/api/logs', (_req, res) => {
+  let sectionLogs: AudiobookJob['logs'] = [];
+  try {
+    if (fs.existsSync(MASTER_LOG_FILE)) sectionLogs = fs.readFileSync(MASTER_LOG_FILE, 'utf8').split(/\r?\n/).filter(Boolean).flatMap(line => {
+      try { return [JSON.parse(line)]; } catch { return []; }
+    });
+  } catch (error) { console.error('Failed to read master technical log:', error); }
+  const projectLogs = jobs.flatMap(job => (job.logs || []).map(log => ({ ...log, message: `[${job.name}] ${log.message}` })));
+  res.json([...sectionLogs, ...projectLogs].sort((a, b) => a.timestamp.replace(' ', 'T').localeCompare(b.timestamp.replace(' ', 'T'))));
+});
 
 let activeStep1Timer: NodeJS.Timeout | null = null;
 let activeStep1StartTime = 0;
@@ -1402,7 +1477,7 @@ app.post('/api/requirements/install-repair', async (req, res) => {
         const comp = componentsToFix[i];
         activeInstallProgress.currentItemId = comp.id;
         activeInstallProgress.currentActivity = `Setting up ${comp.name}...`;
-        activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Starting repair/installation: ${comp.name}`);
+        recordInstallUiLine(`[${new Date().toLocaleTimeString()}] Starting repair/installation: ${comp.name}`);
 
         // Handle specific component
         if (comp.id.startsWith('dir_')) {
@@ -1416,14 +1491,14 @@ app.post('/api/requirements/install-repair', async (req, res) => {
               const testFile = path.join(targetDir, `.perm_test_${Date.now()}.tmp`);
               fs.writeFileSync(testFile, 'ready', 'utf8');
               fs.unlinkSync(testFile);
-              activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Created and verified folder permissions: ${targetDir}`);
+              recordInstallUiLine(`[${new Date().toLocaleTimeString()}] Created and verified folder permissions: ${targetDir}`);
             } catch (err: any) {
-              activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Warning: ${err.message}`);
+              recordInstallUiLine(`[${new Date().toLocaleTimeString()}] Warning: ${err.message}`);
             }
           }
         } else if (comp.id === 'python') {
           activeInstallProgress.currentActivity = 'Deploying Isolated Python Runtime...';
-          activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Downloading the application-managed Python 3.10.11 runtime...`);
+          recordInstallUiLine(`[${new Date().toLocaleTimeString()}] Downloading the application-managed Python 3.10.11 runtime...`);
 
           try {
             if (!fs.existsSync(RUNTIME_DIR)) fs.mkdirSync(RUNTIME_DIR, { recursive: true });
@@ -1431,7 +1506,7 @@ app.post('/api/requirements/install-repair', async (req, res) => {
 
             const zipDest = path.join(RUNTIME_DIR, 'python.zip');
             await downloadFile(PORTABLE_PYTHON_URL, zipDest);
-            activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Download complete. Extracting to ${PORTABLE_PYTHON_DIR}...`);
+            recordInstallUiLine(`[${new Date().toLocaleTimeString()}] Download complete. Extracting to ${PORTABLE_PYTHON_DIR}...`);
 
             // Extraction using system tools to keep binary count low
             if (isWin) {
@@ -1444,14 +1519,14 @@ app.post('/api/requirements/install-repair', async (req, res) => {
             try { fs.unlinkSync(zipDest); } catch(e) {}
 
             if (fs.existsSync(PORTABLE_PYTHON_EXE)) {
-              activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Isolated Python runtime successfully deployed.`);
+              recordInstallUiLine(`[${new Date().toLocaleTimeString()}] Isolated Python runtime successfully deployed.`);
               await runSpawnCmd(PORTABLE_PYTHON_EXE, ['-m', 'venv', VENV_DIR], appendInstallDiagnostic);
               pythonSnapshot.invalidate();
             } else {
               throw new Error("Extraction failed: Python executable not found in expected location.");
             }
           } catch (err: any) {
-            activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Critical Error during Python deployment: ${err.message}`);
+            recordInstallUiLine(`[${new Date().toLocaleTimeString()}] Critical Error during Python deployment: ${err.message}`);
             throw err;
           }
         } else if (['faster_whisper', 'ctranslate2', 'openai_whisper', 'pytorch', 'nvidia_acceleration'].includes(comp.id)) {
@@ -1473,7 +1548,7 @@ app.post('/api/requirements/install-repair', async (req, res) => {
           }
         } else if (comp.id === 'ffmpeg' || comp.id === 'ffprobe') {
           if (mediaBinariesConfigured) {
-            activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Application-local FFmpeg and FFprobe were already configured during this repair.`);
+            recordInstallUiLine(`[${new Date().toLocaleTimeString()}] Application-local FFmpeg and FFprobe were already configured during this repair.`);
             currentProgress += stepWeight;
             activeInstallProgress.overallProgress = Math.min(95, Math.round(currentProgress));
             continue;
@@ -1522,7 +1597,7 @@ app.post('/api/requirements/install-repair', async (req, res) => {
       activeInstallProgress.phase = 'verifying';
       activeInstallProgress.currentActivity = 'Running post-installation verification check...';
       activeInstallProgress.overallProgress = 96;
-      activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Running automated post-installation diagnostics...`);
+      recordInstallUiLine(`[${new Date().toLocaleTimeString()}] Running automated post-installation diagnostics...`);
       await new Promise(r => setTimeout(r, 800));
 
       invalidateRequirements();
@@ -1540,14 +1615,14 @@ app.post('/api/requirements/install-repair', async (req, res) => {
         activeInstallProgress.phase = 'completed';
         activeInstallProgress.currentActivity = 'Installation and repair complete.';
         activeInstallProgress.successMessage = 'Selected components installed and verified. Download a speech model in Models if needed.';
-        activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] All required base components are ready. Speech models remain separately managed.`);
+        recordInstallUiLine(`[${new Date().toLocaleTimeString()}] All required base components are ready. Speech models remain separately managed.`);
       } else {
         const remaining = selectedMissingRequirements(updatedReport.components, selectedIds);
         activeInstallProgress.isActive = false;
         activeInstallProgress.phase = 'error';
         activeInstallProgress.currentActivity = 'Installation did not pass verification.';
         activeInstallProgress.error = `Verification failed: ${remaining.map(component => component.name).join(', ')} still need attention.`;
-        activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] ${activeInstallProgress.error}`);
+        recordInstallUiLine(`[${new Date().toLocaleTimeString()}] ${activeInstallProgress.error}`);
       }
     } catch (err: any) {
       invalidateRequirements();
@@ -1555,7 +1630,7 @@ app.post('/api/requirements/install-repair', async (req, res) => {
       activeInstallProgress.canCancel = false;
       activeInstallProgress.phase = 'error';
       activeInstallProgress.error = err.message || 'Installation error occurred.';
-      activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] ERROR: ${err.message}`);
+      recordInstallUiLine(`[${new Date().toLocaleTimeString()}] ERROR: ${err.message}`);
       appendInstallDiagnostic(`ERROR: ${err.stack || err.message}`, false);
     } finally { runtimeMutationRunning = false; }
   })();
@@ -1616,7 +1691,7 @@ app.post('/api/requirements/cancel', (req, res) => {
   activeInstallProgress.phase = 'cancelled';
   activeInstallProgress.isActive = false;
   activeInstallProgress.currentActivity = 'Installation cancelled by user.';
-  activeInstallProgress.logs.push(`[${new Date().toLocaleTimeString()}] Installation cancelled by user. Safe state preserved. You can run Repair on the next check.`);
+  recordInstallUiLine(`[${new Date().toLocaleTimeString()}] Installation cancelled by user. Safe state preserved. You can run Repair on the next check.`);
   res.json({ status: 'ok', message: 'Installation cancelled.' });
 });
 
@@ -2405,7 +2480,7 @@ app.post('/api/system/scan-folder', requireFeatures(['folder_scan'], 'Folder sca
 app.get('/api/system/output-folder', (req, res) => {
   res.json({
     outputFolder: currentOutputFolder,
-    defaultOutputFolder: appPath('output'),
+    defaultOutputFolder: currentOutputFolder,
     isWritable: fs.existsSync(currentOutputFolder),
   });
 });
@@ -2413,16 +2488,15 @@ app.get('/api/system/output-folder', (req, res) => {
 app.post('/api/system/output-folder', (req, res) => {
   const { outputFolder } = req.body;
   if (outputFolder !== undefined && typeof outputFolder !== 'string') return res.status(400).json({error: 'Output folder must be a path.'});
-  const target = outputFolder ? path.resolve(APP_ROOT, outputFolder) : appPath('output');
+  const target = outputFolder ? path.resolve(APP_ROOT, outputFolder) : currentOutputFolder;
   try {
     if (!fs.existsSync(target)) {
       fs.mkdirSync(target, { recursive: true });
     }
     fs.accessSync(target, fs.constants.W_OK);
-    currentOutputFolder = target;
     res.json({
-      outputFolder: currentOutputFolder,
-      defaultOutputFolder: appPath('output'),
+      outputFolder: target,
+      defaultOutputFolder: currentOutputFolder,
       isWritable: true,
     });
   } catch (err: any) {
@@ -2701,7 +2775,18 @@ app.get('/api/config', (req, res) => {
 app.post('/api/config', (req, res) => {
   const updates = req.body;
   if (updates.detect_musical_transitions !== undefined && typeof updates.detect_musical_transitions !== 'boolean') return res.status(400).json({ error: 'Music transition detection must be a boolean.' });
+  if (updates.library_folder !== undefined && typeof updates.library_folder !== 'string') return res.status(400).json({ error: 'Library folder must be a path.' });
+  if (updates.library_template !== undefined && typeof updates.library_template !== 'string') return res.status(400).json({ error: 'Folder pattern must be text.' });
+  const template = updates.library_template ?? currentConfig.library_template ?? DEFAULT_LIBRARY_TEMPLATE;
+  const templateError = validateLibraryTemplate(template);
+  if (templateError) return res.status(400).json({ error: templateError });
+  const libraryFolder = path.resolve(APP_ROOT, updates.library_folder !== undefined ? (updates.library_folder.trim() || appPath('output')) : (currentConfig.library_folder || appPath('output')));
+  try { fs.mkdirSync(libraryFolder, { recursive: true }); fs.accessSync(libraryFolder, fs.constants.W_OK); }
+  catch (error: any) { return res.status(400).json({ error: `Cannot write library folder: ${error.message}` }); }
   currentConfig = { ...currentConfig, ...updates };
+  currentConfig.library_folder = libraryFolder;
+  currentConfig.library_template = template;
+  currentOutputFolder = libraryFolder;
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(currentConfig, null, 2), 'utf8');
   res.json({ status: 'ok', config: currentConfig });
 });
@@ -2735,6 +2820,73 @@ app.get('/api/themes/assets/:themeId/:assetName', (req, res) => {
   if (assetRelative.startsWith('..') || path.isAbsolute(assetRelative)) return res.status(404).json({ error: 'Theme asset is outside its theme folder.' });
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.sendFile(assetPath);
+});
+
+function libraryBook(job: AudiobookJob): LibraryBook {
+  const metadata = { title: job.name, author: job.author || '', narrator: job.narrator || '', genres: [], language: 'eng', abridged: false, explicit: false, ...job.metadata };
+  const coverUrl = metadata.cover?.url;
+  return { id: job.id, name: job.name, status: job.status, createdAt: job.createdAt, metadataUpdatedAt: job.metadataUpdatedAt,
+    metadata: { ...metadata, cover: undefined },
+    coverUrl: coverUrl && !coverUrl.startsWith('data:') ? coverUrl : coverUrl ? `/api/library/${encodeURIComponent(job.id)}/cover?v=${encodeURIComponent(job.metadataUpdatedAt || job.createdAt)}` : undefined };
+}
+
+const libraryThumbnails = new Map<string, Buffer>();
+const pendingThumbnails = new Map<string, Promise<Buffer>>();
+const thumbnailQueue: (() => void)[] = [];
+let activeThumbnails = 0;
+function renderLibraryThumbnail(input: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const start = () => {
+      activeThumbnails++;
+      let child: ReturnType<typeof spawn>;
+      try { child = spawn(getFfmpeg(), ['-v', 'error', '-i', 'pipe:0', '-vf', 'scale=320:320:force_original_aspect_ratio=decrease', '-frames:v', '1', '-f', 'image2', '-vcodec', 'mjpeg', 'pipe:1'], { windowsHide: true }); }
+      catch (error) { activeThumbnails--; thumbnailQueue.shift()?.(); reject(error); return; }
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        activeThumbnails--;
+        thumbnailQueue.shift()?.();
+        if (error || !bytes) reject(error || new Error('Could not resize cover.'));
+        else resolve(Buffer.concat(chunks));
+      };
+      const timeout = setTimeout(() => { child.kill(); finish(new Error('Cover resize timed out.')); }, 15000);
+      child.stdout.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes > 4 * 1024 * 1024) { child.kill(); finish(new Error('Cover thumbnail is too large.')); } else chunks.push(chunk); });
+      child.stderr.resume();
+      child.on('error', finish);
+      child.on('close', code => finish(code === 0 ? undefined : new Error('Could not resize cover.')));
+      child.stdin.on('error', () => {});
+      child.stdin.end(input);
+    };
+    if (activeThumbnails < 2) start(); else thumbnailQueue.push(start);
+  });
+}
+app.get('/api/library', (_req, res) => res.json(jobs.map(libraryBook)));
+app.get('/api/library/:id/cover', async (req, res) => {
+  const url = jobs.find(job => job.id === req.params.id)?.metadata?.cover?.url;
+  const match = /^data:image\/(png|jpeg|webp);base64,(.+)$/.exec(url || '');
+  if (!match) return res.status(404).end();
+  const key = createHash('sha256').update(url!).digest('hex');
+  const input = Buffer.from(match[2], 'base64');
+  if (input.length > 20 * 1024 * 1024) return res.status(413).end();
+  let thumbnail = libraryThumbnails.get(key);
+  if (!thumbnail) {
+    let task = pendingThumbnails.get(key);
+    if (!task) { task = renderLibraryThumbnail(input); pendingThumbnails.set(key, task); }
+    try {
+      thumbnail = await task;
+      if (libraryThumbnails.size >= 256) libraryThumbnails.delete(libraryThumbnails.keys().next().value!);
+      libraryThumbnails.set(key, thumbnail);
+    } catch {
+      // Keep covers visible when the optional resize tool is unavailable.
+      return res.type(`image/${match[1]}`).send(input);
+    } finally { pendingThumbnails.delete(key); }
+  }
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  res.type('image/jpeg').send(thumbnail);
 });
 
 // List jobs
@@ -2772,6 +2924,7 @@ app.post('/api/jobs', (req, res) => {
   const newJob: AudiobookJob = {
     id,
     name: name.trim(),
+    outputFolderPath: currentOutputFolder,
     author: author?.trim() || '',
     narrator: narrator?.trim() || '',
     metadata: {
@@ -3009,6 +3162,7 @@ const logStep1 = (msg: string) => {
     const timestamp = new Date().toLocaleTimeString();
     const formatted = `[${timestamp}] ${msg}`;
     activeStep1ProgressState.logs.push(formatted);
+    appendMasterEvent(`Step 1 ${jobIdForStep1 || ''}`.trim(), msg, msg.startsWith('ERROR:') ? 'ERROR' : 'INFO');
     const terminalMessage = `[Step1: ${jobIdForStep1 || 'Global'}] ${formatted}`;
     if (msg.startsWith('ERROR:')) console.error(terminalMessage);
     else console.log(terminalMessage);
@@ -3333,7 +3487,7 @@ const handleStep1Process = async (req: any, res: any) => {
     transcriptWordIndex: c.transcriptWordIndex,
   }));
 
-  if (!job.chapters.length || job.chapters[0].start !== '00:00:00.000') job.chapters.unshift({ id: 'opening', start: '00:00:00.000', title: 'Opening' });
+  if (!job.chapters.length || job.chapters[0].start !== '00:00:00.000') job.chapters.unshift({ id: 'opening', start: '00:00:00.000', title: 'Prologue' });
   setStep1Stage('saving_project', 'Saving transcript and candidate chapter markers for review.', 'Finalize chapter review data');
   job.status = 'transcribed';
   job.staleSteps = [];
@@ -3403,13 +3557,13 @@ app.post('/api/jobs/:id/rerun/:step', async (req, res) => {
   const job = jobs.find(item => item.id === req.params.id);
   const step = req.params.step as RerunnablePipelineStep;
   if (!job) return res.status(404).json({ error: 'Job not found' });
-  if (!rerunnableSteps.has(step)) return res.status(400).json({ error: 'This processing step cannot be rerun independently.' });
+  if (!rerunnableSteps.has(step)) return res.status(400).json({ error: 'This processing step cannot be run independently.' });
   if (activeInstallProgress.isActive) return res.status(409).json({ error: 'Wait for runtime installation to finish.' });
   if (step1TaskRunning) return res.status(409).json({ error: 'Another processing step is already running.' });
   if (!canRerunStep(job, step)) return res.status(400).json({ error: 'Required input for this step is unavailable.' });
   if ((step === 'detecting_chapters' || step === 'extracting_chapters') && hasManualChapterWork(job) && req.body?.confirmReplaceManualChapters !== true) {
     return res.status(409).json({
-      error: 'Rerunning this step will replace chapter names, Start and End timestamps, inserted chapters, and missing placeholders. Confirm to continue.',
+      error: 'Running this step will replace chapter names, Start and End timestamps, inserted chapters, and missing placeholders. Confirm to continue.',
       requiresConfirmation: true,
     });
   }
@@ -3420,8 +3574,10 @@ app.post('/api/jobs/:id/rerun/:step', async (req, res) => {
     : step === 'transcribing_whisper' ? !!job.transcription
     : step === 'detecting_chapters' ? job.candidates.length > 0
     : step === 'extracting_chapters' ? job.chapters.length > 0
-    : !!job.ffmetaContent;
+    : ['metadata_ready', 'built', 'validated'].includes(job.status);
   const previousStepState = job.pipelineSteps?.[step] || (inferredOutput ? { status: 'current' as const, hasOutput: true } : undefined);
+  const isRerun = previousStepState?.hasOutput === true;
+  const action = isRerun ? 'Rerun' : 'Run';
   job.pipelineSteps = { ...job.pipelineSteps, [step]: beginStepRerun(previousStepState) };
   if (step === 'transcribing_whisper' && job.candidates.length && !job.pipelineSteps.detecting_chapters) {
     job.pipelineSteps.detecting_chapters = { status: 'current', hasOutput: true };
@@ -3431,11 +3587,11 @@ app.post('/api/jobs/:id/rerun/:step', async (req, res) => {
   activeStep1StartTime = Date.now();
   activeStep1ProgressState = {
     jobId: job.id, rerunStep: step,
-    isActive: true, stage: definition.key, label: `Rerunning ${definition.label}`,
+    isActive: true, stage: definition.key, label: `${isRerun ? 'Rerunning' : 'Running'} ${definition.label}`,
     currentTask: definition.desc, currentStageNumber: 1, totalStages: 1, stages: [definition], failedStage: null,
     percentage: 0, isDeterminate: false, elapsedSeconds: 0,
-    liveStatusMessage: `Rerunning only ${definition.label}. Previous successful output is preserved until completion.`,
-    logs: [`[${new Date().toLocaleTimeString()}] Rerun started: ${definition.label}`],
+    liveStatusMessage: `${isRerun ? 'Rerunning' : 'Running'} ${definition.label}.${isRerun ? ' Previous successful output is preserved until completion.' : ''}`,
+    logs: [`[${new Date().toLocaleTimeString()}] ${action} started: ${definition.label}`],
     canCancel: true, isCancelling: false, error: null, summary: null,
   };
   const controller = new AbortController();
@@ -3468,7 +3624,7 @@ app.post('/api/jobs/:id/rerun/:step', async (req, res) => {
           notes: candidate.notes, headingType: candidate.headingType, chapterNumber: candidate.chapterNumber,
           recovered: candidate.recovered, transcriptWordIndex: candidate.transcriptWordIndex,
         }));
-        if (!chapters.length || chapters[0].start !== '00:00:00.000') chapters.unshift({ id: 'opening', start: '00:00:00.000', title: 'Opening' });
+        if (!chapters.length || chapters[0].start !== '00:00:00.000') chapters.unshift({ id: 'opening', start: '00:00:00.000', title: 'Prologue' });
         const replacementChapters = applyDefaultChapterEnds(chapters, job.totalDurationSeconds);
         const replacementMetadata = generateFFMetaContent(replacementChapters, job.totalDurationSeconds, job.metadata);
         controller.signal.throwIfAborted();
@@ -3505,19 +3661,19 @@ app.post('/api/jobs/:id/rerun/:step', async (req, res) => {
       job.pipelineSteps = completeStepRerun(job.pipelineSteps, step, completedAt);
       if (step === 'detecting_chapters') job.staleSteps = (job.staleSteps || []).filter(item => item !== 'chapter_detection');
       job.staleSteps = markDependentResultsStale(job.staleSteps, step);
-      job.logs.push({ timestamp: completedAt, level: 'INFO', message: `Rerun completed: ${definition.label}.` });
+      job.logs.push({ timestamp: completedAt, level: 'INFO', message: `${action} completed: ${definition.label}.` });
       saveJobs();
       activeStep1ProgressState = {
-        ...activeStep1ProgressState, isActive: false, stage: 'completed', label: `${definition.label} rerun complete`,
-        currentTask: 'Replacement output saved successfully.', percentage: 100, isDeterminate: true,
+        ...activeStep1ProgressState, isActive: false, stage: 'completed', label: `${definition.label} ${isRerun ? 'rerun' : 'run'} complete`,
+        currentTask: `${isRerun ? 'Replacement output' : 'Output'} saved successfully.`, percentage: 100, isDeterminate: true,
         canCancel: false, liveStatusMessage: `${definition.label} is current.`,
         summary: { rerunStep: step },
       };
-      logStep1(`Rerun completed successfully: ${definition.label}.`);
+      logStep1(`${action} completed successfully: ${definition.label}.`);
     } catch (error: any) {
-      const message = controller.signal.aborted ? 'Rerun cancelled. Previous successful output was preserved.' : error.message || String(error);
+      const message = controller.signal.aborted ? `${action} cancelled.${isRerun ? ' Previous successful output was preserved.' : ''}` : error.message || String(error);
       job.pipelineSteps = { ...job.pipelineSteps, [step]: failStepRerun(previousStepState, message) };
-      job.logs.push({ timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19), level: 'ERROR', message: `Rerun failed: ${definition.label}. ${message}` });
+      job.logs.push({ timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19), level: 'ERROR', message: `${action} failed: ${definition.label}. ${message}` });
       saveJobs();
       activeStep1ProgressState.failedStage = definition.key;
       activeStep1ProgressState.stage = controller.signal.aborted ? 'cancelled' : 'error';
@@ -3525,7 +3681,7 @@ app.post('/api/jobs/:id/rerun/:step', async (req, res) => {
       activeStep1ProgressState.canCancel = false;
       activeStep1ProgressState.error = message;
       activeStep1ProgressState.liveStatusMessage = message;
-      logStep1(`Rerun failed: ${message}`);
+      logStep1(`${action} failed: ${message}`);
     } finally {
       step1TaskRunning = false;
       step1Abort = undefined;
@@ -3699,18 +3855,7 @@ app.post('/api/jobs/:id/metadata-draft', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Update Audiobook Metadata (Standard Audiobookshelf metadata with Narrator in Composer)
-app.post('/api/jobs/:id/metadata', (req, res) => {
-  const job = jobs.find(j => j.id === req.params.id);
-  if (!job) {
-    return res.status(404).json({ error: 'Job not found' });
-  }
-
-  const { metadata } = req.body as { metadata: AudiobookMetadata };
-  if (!metadata || !metadata.title) {
-    return res.status(400).json({ error: 'Metadata title is required.' });
-  }
-
+function applySavedMetadata(job: AudiobookJob, metadata: AudiobookMetadata) {
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
   job.metadata = {
@@ -3719,8 +3864,10 @@ app.post('/api/jobs/:id/metadata', (req, res) => {
     author: metadata.author?.trim() || '',
     narrator: metadata.narrator?.trim() || '',
     genres: Array.isArray(metadata.genres) ? metadata.genres : ['Audiobook'],
+    tags: Array.isArray(metadata.tags) ? metadata.tags : [],
   };
   job.metadataDraft = undefined;
+  job.metadataUpdatedAt = new Date().toISOString();
 
   // Synchronize top-level fields for convenience
   job.name = job.metadata.title;
@@ -3736,13 +3883,21 @@ app.post('/api/jobs/:id/metadata', (req, res) => {
     job.status = 'metadata_ready';
   }
 
-  saveJobs();
-
   job.logs.push({
     timestamp: now,
     level: 'INFO',
     message: `Updated audiobook metadata: "${job.metadata.title}" by ${job.metadata.author || 'Unknown'}. Narrator mapped to Composer tag: "${job.metadata.narrator || 'None'}". Cover: ${job.metadata.cover ? `${job.metadata.cover.source} (${job.metadata.cover.filename || 'URL'})` : 'None'}.`,
   });
+}
+
+// Update Audiobook Metadata (Standard Audiobookshelf metadata with Narrator in Composer)
+app.post('/api/jobs/:id/metadata', (req, res) => {
+  const job = jobs.find(j => j.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  const { metadata } = req.body as { metadata: AudiobookMetadata };
+  if (!metadata || !metadata.title?.trim()) return res.status(400).json({ error: 'Metadata title is required.' });
+  applySavedMetadata(job, metadata);
+  saveJobs();
 
   res.json({
     status: 'ok',
@@ -3750,6 +3905,75 @@ app.post('/api/jobs/:id/metadata', (req, res) => {
     ffmeta: job.ffmetaContent,
     message: 'Audiobook metadata saved successfully.',
   });
+});
+
+const editableLibraryFields = new Set(['title', 'subtitle', 'author', 'narrator', 'series', 'seriesSequence', 'description', 'genres', 'tags', 'publishedYear', 'publisher', 'language', 'isbn', 'asin', 'releaseDate', 'copyright', 'abridged', 'explicit']);
+app.post('/api/library/metadata', (req, res) => {
+  const changes = req.body?.changes as { id: string; fields: Partial<AudiobookMetadata> }[];
+  if (!Array.isArray(changes) || !changes.length || changes.length > 10000) return res.status(400).json({ error: 'Select books and fields to update.' });
+  const planned: { job: AudiobookJob; metadata: AudiobookMetadata; fields: Partial<AudiobookMetadata> }[] = [];
+  const jobsById = new Map(jobs.map(job => [job.id, job]));
+  const ids = new Set<string>();
+  for (const change of changes) {
+    const job = jobsById.get(change?.id);
+    if (!job || ids.has(change.id) || !change.fields || typeof change.fields !== 'object' || Array.isArray(change.fields)) return res.status(400).json({ error: 'Invalid book update.' });
+    ids.add(change.id);
+    const fields = Object.keys(change.fields);
+    if (!fields.length || fields.some(field => !editableLibraryFields.has(field))) return res.status(400).json({ error: 'Select supported metadata fields.' });
+    for (const field of fields) {
+      const value = (change.fields as Record<string, unknown>)[field];
+      if (field === 'genres' || field === 'tags' ? !Array.isArray(value) || value.some(item => typeof item !== 'string') : ['abridged', 'explicit'].includes(field) ? typeof value !== 'boolean' : typeof value !== 'string') return res.status(400).json({ error: `Invalid ${field} value.` });
+    }
+    const metadata = { ...job.metadata, title: job.metadata?.title || job.name, author: job.metadata?.author || job.author || '', narrator: job.metadata?.narrator || job.narrator || '', genres: job.metadata?.genres || [], language: job.metadata?.language || 'eng', abridged: job.metadata?.abridged || false, explicit: job.metadata?.explicit || false, ...change.fields } as AudiobookMetadata;
+    if (!metadata.title.trim()) return res.status(400).json({ error: 'Metadata title is required.' });
+    planned.push({ job, metadata, fields: change.fields });
+  }
+  for (const { job, metadata, fields } of planned) {
+    const originalDraft = job.metadataDraft;
+    applySavedMetadata(job, metadata);
+    if (originalDraft) job.metadataDraft = { ...originalDraft, ...fields };
+  }
+  saveJobs();
+  res.json({ books: planned.map(({ job }) => libraryBook(job)) });
+});
+
+const metadataWriteJobs = new Set<string>();
+app.post('/api/library/:id/write-audio-metadata', requireFeatures(['audio_export'], 'Audio metadata write'), async (req, res) => {
+  const job = jobs.find(item => item.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Book not found.' });
+  if (!job.metadata) return res.status(400).json({ error: 'Save book metadata before writing an audio file.' });
+  if (job.exports?.some(item => item.status === 'queued' || item.status === 'running')) return res.status(409).json({ error: 'Wait for the current export to finish.' });
+  if (metadataWriteJobs.has(job.id)) return res.status(409).json({ error: 'Metadata is already being written to this book.' });
+  const outputs = (job.exports || []).filter(item => item.status === 'success' && item.fullPath);
+  if (!outputs.length) return res.status(400).json({ error: 'This book has no exported audio file. Create an audiobook first.' });
+  metadataWriteJobs.add(job.id);
+  const written: string[] = [];
+  const failures: string[] = [];
+  try {
+  for (const item of outputs) {
+    const file = path.resolve(item.fullPath!);
+    try {
+      if (job.mergedMp3?.fullPath && file === path.resolve(job.mergedMp3.fullPath)) throw new Error('The source master cannot be changed here.');
+      const original = inspect(getFfprobe(), file);
+      const tags = audiobookTags(job.metadata, undefined, Object.fromEntries(Object.entries(original.tags).map(([key, value]) => [key, String(value)])), item.format);
+      const result = await writeAudioMetadata({ ffmpeg: getFfmpeg(), ffprobe: getFfprobe(), file, format: item.format, tags });
+      item.verifiedTags = result.verifiedTags;
+      if (job.outputM4b?.fullPath === item.fullPath) job.outputM4b.sizeBytes = result.sizeBytes;
+      written.push(file);
+      job.logs.push({ timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19), level: 'INFO', message: `Wrote metadata to exported audio file: ${file}` });
+    } catch (error: any) {
+      failures.push(`${item.format.toUpperCase()}: ${error.message}`);
+      job.logs.push({ timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19), level: 'ERROR', message: `Could not write metadata to ${file}: ${error.message}` });
+    }
+    saveJobs();
+  }
+  if (written.length) {
+    job.validation = null;
+    job.staleSteps = failures.length ? job.staleSteps : (job.staleSteps || []).filter(step => step !== 'export');
+    saveJobs();
+  }
+  res.status(written.length ? 200 : 500).json({ written, failures, error: failures.length ? failures.join('; ') : undefined });
+  } finally { metadataWriteJobs.delete(job.id); }
 });
 
 // Step 4: Build Chaptered M4B (replicates app/m4b.py)
@@ -3776,12 +4000,13 @@ app.post('/api/jobs/:id/build-m4b', requireFeatures(['audio_export'], 'Audio exp
     if (!Number.isSafeInteger(exportSampleRateCeiling) || exportSampleRateCeiling <= 0) throw new Error('Cannot detect a valid source sample rate.');
   } catch (error: any) { return rejectExport(400, error.message); }
   if (job.exports?.some(e => e.status === 'running' || e.status === 'queued')) return rejectExport(409, 'An export is already running.');
+  if (metadataWriteJobs.has(job.id)) return rejectExport(409, 'Wait for metadata to finish writing to the exported file.');
   const requestedFormats = req.body.outputFormats ?? [req.body.outputFormat || (outputFormats.includes(job.sourceFormat as any) ? job.sourceFormat : 'm4b')];
   if (!Array.isArray(requestedFormats)) return rejectExport(400, 'Output formats must be a list.');
   const formats = [...new Set(requestedFormats)] as OutputAudioFormat[];
   if (!formats.length || formats.some(f => !outputFormats.includes(f))) return rejectExport(400, 'Select supported output formats.');
   try { validateChapters(job.chapters, job.totalDurationSeconds); } catch (error: any) { return rejectExport(400, error.message); }
-  const outputDir = job.outputFolderPath || currentOutputFolder;
+  const outputDir = path.resolve(APP_ROOT, job.outputFolderPath || currentOutputFolder);
   try { fs.mkdirSync(outputDir, { recursive: true }); fs.accessSync(outputDir, fs.constants.W_OK); }
   catch (error: any) { return rejectExport(400, 'Cannot write output folder: ' + error.message); }
   job.outputM4b = null; job.validation = null;
@@ -3789,10 +4014,16 @@ app.post('/api/jobs/:id/build-m4b', requireFeatures(['audio_export'], 'Audio exp
   const snapshot = JSON.parse(JSON.stringify(job));
   const exportPlan = planChapterExport(snapshot.chapters, job.totalDurationSeconds);
 
-  const safeName = (job.name || 'audiobook').replace(/[<>:"/\\|?*]/g, '_');
-  const runId = Date.now();
-  // Keep each export's fixed-name cover beside its audio without replacing another book's cover.
-  const exportDir = path.join(outputDir, safeName + '-' + job.id + '-' + runId);
+  let libraryParts: string[];
+  try { libraryParts = libraryRelativePath(currentConfig.library_template || DEFAULT_LIBRARY_TEMPLATE, snapshot.metadata); }
+  catch (error: any) { return rejectExport(400, error.message); }
+  const desiredDir = path.resolve(outputDir, ...libraryParts);
+  const relativeExportDir = path.relative(outputDir, desiredDir);
+  if (relativeExportDir.startsWith('..') || path.isAbsolute(relativeExportDir)) return rejectExport(400, 'Folder pattern resolves outside the library.');
+  // Preserve earlier exports when the same book is built again.
+  let exportDir = desiredDir;
+  for (let copy = 2; fs.existsSync(exportDir); copy++) exportDir = `${desiredDir} (${copy})`;
+  const safeName = libraryParts[libraryParts.length - 1];
   for (const item of job.exports) {
     item.status = 'running'; saveJobs();
     try {
@@ -3816,7 +4047,7 @@ app.post('/api/jobs/:id/build-m4b', requireFeatures(['audio_export'], 'Audio exp
         if (coverPath) cover = coverPath;
       }
       fs.mkdirSync(exportDir, { recursive: true });
-      const result = await exportAudio({ ffmpeg: getFfmpeg(), ffprobe: getFfprobe(), source: snapshot.mergedMp3.fullPath, output: path.join(exportDir, safeName + '-' + runId + '.' + item.format), format: item.format, chapters: snapshot.chapters, tags, cover, convert: req.body.convert === true, bitrate: encodingBitrate, cue: req.body.cue !== false, sampleRateCeiling: exportSampleRateCeiling, onLog: message => { job.logs.push({timestamp:new Date().toISOString().replace('T',' ').slice(0,19),level:'INFO',message:`${item.format.toUpperCase()} export: ${message}`}); saveJobs(); }, onProgress: n => { item.progress = n; saveJobs(); } });
+      const result = await exportAudio({ ffmpeg: getFfmpeg(), ffprobe: getFfprobe(), source: snapshot.mergedMp3.fullPath, output: path.join(exportDir, safeName + '.' + item.format), format: item.format, chapters: snapshot.chapters, tags, cover, convert: req.body.convert === true, bitrate: encodingBitrate, cue: req.body.cue !== false, sampleRateCeiling: exportSampleRateCeiling, onLog: message => { job.logs.push({timestamp:new Date().toISOString().replace('T',' ').slice(0,19),level:'INFO',message:`${item.format.toUpperCase()} export: ${message}`}); saveJobs(); }, onProgress: n => { item.progress = n; saveJobs(); } });
       Object.assign(item, result, { coverPath, status: 'success' });
       job.outputM4b = result;
       job.status = 'built';
@@ -3909,6 +4140,33 @@ app.post('/api/jobs/:id/validate', requireFeatures(['output_validation'], 'Outpu
   });
 
   res.json({ status: 'ok', validation: job.validation });
+});
+
+app.post('/api/jobs/:id/export/open-folder', (req, res) => {
+  const job = jobs.find(item => item.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Project not found.' });
+  const exportedFile = job.outputM4b?.fullPath || (job.outputM4b?.filename
+    ? path.join(job.outputFolderPath || currentOutputFolder, job.outputM4b.filename)
+    : undefined);
+  if (!job.validation || !exportedFile || job.validation.file !== job.outputM4b?.filename) {
+    return res.status(400).json({ error: 'Complete the final check before opening the export folder.' });
+  }
+  let directory: string;
+  try {
+    if (!fs.statSync(exportedFile).isFile()) throw new Error('Export is not a file.');
+    directory = path.dirname(fs.realpathSync(exportedFile));
+  } catch {
+    return res.status(404).json({ error: 'The exported file is no longer at its saved location.' });
+  }
+  const command = isWin ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+  const opener = spawn(command, [directory], { detached: true, stdio: 'ignore', windowsHide: false });
+  opener.once('error', (error) => {
+    if (!res.headersSent) res.status(500).json({ error: `Could not open the folder: ${error.message}` });
+  });
+  opener.once('spawn', () => {
+    opener.unref();
+    res.json({ status: 'ok', directory });
+  });
 });
 
 // Global storage cleanup. These actions only touch SwissMouse-managed folders.

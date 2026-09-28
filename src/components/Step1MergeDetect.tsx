@@ -707,11 +707,12 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     ...(chapterSource === 'whisperx' ? [fasterEnabled ? 'faster_transcription' : 'openai_transcription'] as const : []),
   );
   const canRunStep1 = processAvailability.ready && !isSwitchingEngine && !isSavingMusicSetting && hasSourceFolder && hasAudioFiles && isOutputValid && isWhisperXValid;
+  const hasCompletedStep1 = Boolean(job.pipelineSteps?.extracting_chapters?.hasOutput
+    || job.pipelineSteps?.detecting_chapters?.hasOutput
+    || (job.status !== 'draft' && job.chapters.length > 0));
   const runButtonLabel = chapterSource === 'existing_files'
-    ? 'Prepare audio and chapters'
-    : job.status !== 'draft'
-    ? 'Re-Run Processing'
-    : 'Prepare audiobook';
+    ? hasCompletedStep1 ? 'Re-run audio and chapters' : 'Prepare audio and chapters'
+    : hasCompletedStep1 ? 'Re-run processing' : 'Prepare audiobook';
 
   // Source summary object for SourceSummary component
   const sourceSummaryData: SourceSummaryData = useMemo(() => {
@@ -924,10 +925,10 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
           isActive: isRunning || step1Progress.isActive,
           ...(step1Progress.rerunStep ? { stages: rerunnableStageCards, totalStages: rerunnableStageCards.length } : {}),
         } : {
-          jobId: job.id, isActive: isRunning, stage: job.status === 'draft' ? 'idle' : 'completed', label: 'Ready to process audiobook source', currentTask: job.status === 'draft' ? 'Idle' : 'Individual stages can be rerun.',
+          jobId: job.id, isActive: isRunning, stage: hasCompletedStep1 ? 'completed' : 'idle', label: 'Ready to process audiobook source', currentTask: hasCompletedStep1 ? 'Individual stages can be rerun.' : 'Idle',
           currentStageNumber: 0, totalStages: rerunnableStageCards.length,
           stages: rerunnableStageCards,
-          percentage: job.status === 'draft' ? 0 : 100, isDeterminate: true, elapsedSeconds: 0, liveStatusMessage: job.status === 'draft' ? 'Idle' : 'Processing complete.', logs: [], canCancel: false,
+          percentage: hasCompletedStep1 ? 100 : 0, isDeterminate: true, elapsedSeconds: 0, liveStatusMessage: hasCompletedStep1 ? 'Processing complete.' : 'Idle', logs: [], canCancel: false,
         }}
         pipelineSteps={job.pipelineSteps}
         onRerunStep={async step => {
@@ -1219,7 +1220,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
               id="btn-reset-default-output"
               onClick={handleResetDefaultOutput}
               className="px-3 py-2 rounded-lg text-xs font-medium bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 transition-colors cursor-pointer flex items-center space-x-1.5"
-              title="Reset output destination to default workspace directory"
+              title="Reset output destination to the library folder in Settings"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>Reset to Default</span>
