@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AudiobookMetadata, CoverArtInfo } from '../types';
 import { COVER_SIZE, coverPresets, defaultCoverDesign, readCoverBackground, renderCover, type CoverDesign } from '../utils/coverGenerator';
 

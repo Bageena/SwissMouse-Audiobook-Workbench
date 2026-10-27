@@ -1,25 +1,12 @@
+import { DesktopWindow } from './DesktopWorkspace';
+import { MiniPlayerSeek } from './MiniPlayerSeek';
+import { MiniPlayerControls } from './MiniPlayerControls';
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { AlignedWord } from '../types';
 import { AudioWaveform, WaveformMarker } from './AudioWaveform';
 import { playbackTranscriptWindow, revealTranscriptWord } from '../utils/wordAlignment';
 import { formatTimestampMs } from '../utils/chapters';
-import {
-  Play,
-  Pause,
-  Square,
-  Volume2,
-  VolumeX,
-  RotateCcw,
-  RotateCw,
-  Upload,
-  Radio,
-  FileAudio,
-  Sparkles,
-  Info,
-  CheckCircle2,
-  Clock,
-  Pin
-} from 'lucide-react';
+import { Volume2, VolumeX, Sparkles, CheckCircle2, Clock, MapPin, Plus, ChevronsDown, ChevronsUp } from 'lucide-react';
 
 export interface ActiveAudioTrack {
   id: string;
@@ -27,13 +14,14 @@ export interface ActiveAudioTrack {
   title: string;
   start: string; // HH:MM:SS.mmm
   seconds: number;
+  stopSeconds?: number;
   seekRevision?: number;
   snippetText?: string;
   contextBefore?: string;
   matchedText?: string;
   contextAfter?: string;
   words?: AlignedWord[];
-  sourceType: 'chapter' | 'candidate';
+  sourceType: 'chapter' | 'candidate' | 'transcript';
 }
 
 interface ChapterAudioPlayerProps {
@@ -52,8 +40,9 @@ interface ChapterAudioPlayerProps {
   onSeek?: (seconds: number) => void;
   onPlaybackTime?: (seconds: number) => void;
   timestampTarget?: string;
+  selectedChapterId?: string;
   onSetTimestamp?: (seconds: number) => void;
-  onCancelTimestamp?: () => void;
+  onAddChapter?: (seconds: number) => void;
 }
 
 export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
@@ -72,20 +61,20 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   onSeek,
   onPlaybackTime,
   timestampTarget,
+  selectedChapterId,
   onSetTimestamp,
-  onCancelTimestamp,
+  onAddChapter,
 }) => {
-  const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | null>(audioSrc);
+  const audioUrl = audioSrc;
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(totalDurationSeconds || 60);
   const [volume, setVolume] = useState<number>(0.9);
   const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [transcriptExpanded, setTranscriptExpanded] = useState(false);
   const [lastClickedWord, setLastClickedWord] = useState<{ word: string; timestamp: string } | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastTrack = useRef<string>('');
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const wordPane = useRef<HTMLDivElement>(null);
   const highlightedWord = useRef<HTMLButtonElement>(null);
 
@@ -119,10 +108,14 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   // Derive words from the live playhead, including waveform seeks and end edits.
   const words = transcriptWords.length ? transcriptWords : activeTrack?.words || [];
   const windowPosition = playbackTranscriptWindow(words, currentTime);
-  const visibleWords = useMemo(() => words.slice(windowPosition.offset, windowPosition.offset + 70), [words, windowPosition.offset]);
+  const visibleWords = useMemo(() => words.slice(windowPosition.offset, windowPosition.offset + 400), [words, windowPosition.offset]);
   useEffect(() => {
-    if (wordPane.current && highlightedWord.current) revealTranscriptWord(wordPane.current, highlightedWord.current);
-  }, [windowPosition.active, windowPosition.offset]);
+    if (wordPane.current && highlightedWord.current) {
+      revealTranscriptWord(wordPane.current, highlightedWord.current);
+      const lineHeight = highlightedWord.current.offsetHeight + (parseFloat(getComputedStyle(wordPane.current).rowGap) || 0);
+      if (lineHeight) wordPane.current.scrollTop = Math.round(wordPane.current.scrollTop / lineHeight) * lineHeight;
+    }
+  }, [windowPosition.active, windowPosition.offset, transcriptExpanded]);
 
   // Native timeupdate remains a fallback; sample playback at 12.5 Hz for words.
   useEffect(() => {
@@ -139,50 +132,14 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
     return () => cancelAnimationFrame(frame);
   }, [isPlaying]);
 
-  useEffect(() => {
-    setAudioUrl(audioSrc);
-  }, [audioSrc]);
-
-  // Clean up only locally-created object URLs. The review source is an app URL.
-  useEffect(() => {
-    return () => {
-      if (audioUrl?.startsWith('blob:')) URL.revokeObjectURL(audioUrl);
-    };
-  }, [audioUrl]);
-
-  // Handle user uploading local audiobook MP3
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (audioUrl?.startsWith('blob:')) URL.revokeObjectURL(audioUrl);
-      const url = URL.createObjectURL(file);
-      setAudioFile(file);
-      setAudioUrl(url);
-
-      if (activeTrack) {
-        setTimeout(() => {
-          if (audioRef.current) {
-            audioRef.current.currentTime = activeTrack.seconds;
-            audioRef.current.play().catch(() => {});
-          }
-        }, 150);
-      }
-    }
-  };
-
   // Synchronize playback when activeTrack or isPlaying changes
   useEffect(() => {
-    if (!activeTrack) {
-      if (isPlaying) onStop();
-      return;
-    }
-
     if (audioUrl && audioRef.current) {
       const audio = audioRef.current;
       audio.volume = isMuted ? 0 : volume;
 
-      const trackKey = `${activeTrack.id}:${activeTrack.seconds}:${activeTrack.seekRevision ?? 0}`;
-      if (lastTrack.current !== trackKey) {
+      const trackKey = activeTrack ? `${activeTrack.id}:${activeTrack.seconds}:${activeTrack.seekRevision ?? 0}` : '';
+      if (activeTrack && lastTrack.current !== trackKey) {
         audio.currentTime = activeTrack.seconds;
         setCurrentTime(activeTrack.seconds);
         lastTrack.current = trackKey;
@@ -204,6 +161,10 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   // Audio element events
   const handleTimeUpdate = () => {
     if (audioRef.current) {
+      if (isPlaying && activeTrack?.stopSeconds !== undefined && audioRef.current.currentTime >= activeTrack.stopSeconds) {
+        audioRef.current.pause();
+        onPause();
+      }
       setCurrentTime(audioRef.current.currentTime);
       onPlaybackTime?.(audioRef.current.currentTime);
     }
@@ -220,13 +181,16 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
   };
 
   // Nudge playback -5s or +5s
+  const [waveformSeekRevision, setWaveformSeekRevision] = useState(0);
   const seekTo = (seconds: number) => {
     const nextTime = Math.min(duration, Math.max(0, seconds));
     setCurrentTime(nextTime);
+    setWaveformSeekRevision(revision => revision + 1);
     if (audioRef.current && audioUrl) audioRef.current.currentTime = nextTime;
     onSeek?.(nextTime);
   };
   const captureTimestamp = () => onSetTimestamp?.(audioRef.current?.currentTime ?? currentTime);
+  const addChapterHere = () => onAddChapter?.(audioRef.current?.currentTime ?? currentTime);
   const handleSeekOffset = (offset: number) => {
     seekTo(currentTime + offset);
   };
@@ -252,36 +216,6 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
     }
   };
 
-  if (!activeTrack) {
-    return (
-      <div className="bg-stone-50 border border-stone-200/80 rounded-xl p-3 text-stone-500 text-xs flex flex-wrap items-center justify-between gap-3 shadow-2xs">
-        <div className="flex items-center space-x-2">
-          <Radio className="w-4 h-4 text-stone-400" />
-          <span>
-            Preview audio: use <strong className="text-stone-700">Listen ▶</strong> beside a chapter, then click a transcript word to place that chapter start precisely.
-          </span>
-        </div>
-        <div className="flex items-center space-x-2">
-          <input
-            type="file"
-            ref={fileInputRef}
-            accept="audio/*"
-            onChange={handleFileChange}
-            className="hidden"
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-white border border-stone-300 text-stone-700 hover:bg-stone-100 text-[11px] font-medium shadow-2xs cursor-pointer"
-            title="Choose a local audio file to preview while editing chapters"
-          >
-            <Upload className="w-3.5 h-3.5 text-stone-500" />
-            <span>Load Local MP3 for Real Audio</span>
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="bg-white text-stone-900 rounded-xl p-4 shadow-md border border-stone-200 space-y-3">
       {/* Hidden Audio Element for actual files */}
@@ -295,98 +229,30 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
         />
       )}
 
-      {/* Track Header & Mode Badges */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-100 pb-2.5 text-xs">
-        <div className="flex items-center space-x-3">
-          <div
-            className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-              isPlaying
-                ? 'bg-amber-500 text-stone-950 animate-pulse'
-                : 'bg-stone-100 text-stone-700'
-            }`}
-          >
-            <Volume2 className="w-4 h-4" />
-          </div>
-
-          <div>
-            <div className="flex items-center space-x-2">
-              <span className="font-bold text-stone-900 text-sm tracking-tight">
-                {activeTrack.title}
-              </span>
-              <span className="font-mono bg-stone-100 text-stone-700 px-1.5 py-0.5 rounded text-[11px] font-semibold border border-stone-200">
-                {activeTrack.start}
-              </span>
-            </div>
-            <p className="text-[11px] text-stone-500 mt-0.5">
-              {activeTrack.sourceType === 'candidate' ? 'Detected Candidate Mark' : 'Active Chapter Track'}
-            </p>
-          </div>
-        </div>
-
-        {/* Playback Mode Controls */}
-        <div className="flex items-center space-x-2 text-xs">
-          {audioFile ? (
-            <div className="flex items-center space-x-1.5 bg-emerald-50 text-emerald-800 px-2.5 py-1 rounded border border-emerald-200 text-[11px]">
-              <FileAudio className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate max-w-[140px]" title={audioFile.name}>
-                {audioFile.name}
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-center space-x-1.5 bg-emerald-50 text-emerald-900 px-2.5 py-1 rounded border border-emerald-200 text-[11px]">
-              <FileAudio className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span>Actual merged audiobook audio</span>
-            </div>
-          )}
-
-          <input
-            type="file"
-            ref={fileInputRef}
-            accept="audio/*"
-            onChange={handleFileChange}
-            className="hidden"
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center space-x-1 px-2 py-1 rounded bg-stone-100 hover:bg-stone-200 text-stone-700 text-[11px] border border-stone-200 cursor-pointer"
-            title="Upload actual audiobook MP3 to listen directly to the narrator"
-          >
-            <Upload className="w-3 h-3 text-stone-500" />
-            <span>{audioFile ? 'Change MP3' : 'Use MP3 File'}</span>
-          </button>
-        </div>
-      </div>
-
-      <AudioWaveform url={audioUrl === audioSrc ? waveformSrc : undefined}
-        duration={duration} currentTime={currentTime} playing={isPlaying} audioRef={audioRef}
-        markers={chapterMarkers} selectedId={activeTrack.sourceType === 'chapter' ? activeTrack.id : undefined}
-        onSeek={seekTo} onMarker={onChapterMarker} />
-
+      <div className="min-w-0 space-y-2">
       {/* Interactive Transcribe / Word Alignment Section (Click any word to update timestamp) */}
-      <div className="bg-stone-50 rounded-lg p-3 border border-stone-200 text-xs space-y-2">
-        <div className="flex items-center justify-between text-[11px] text-stone-500 border-b border-stone-200 pb-1.5">
-          <div className="flex items-center space-x-1.5 text-stone-900 font-semibold">
-            <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-            <span>Interactive Transcription Window</span>
+      <DesktopWindow id="interactive-transcription" title="Interactive Transcription Window" homeWindow="chapter-player" variant="compact" minimumWidth={160}>
+      <section className="interactive-transcription" data-expanded={transcriptExpanded}>
+        <header className="workspace-panel-header interactive-transcription-header">
+          <div className="flex min-w-0 items-center gap-1">
+            <Sparkles className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <h3 className="workspace-panel-title" title="Click a word to move the selected chapter start to that exact moment">Interactive Transcription Window</h3>
           </div>
-
-          <div className="flex items-center space-x-2">
-            {lastClickedWord && (
-              <span className="text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center space-x-1 text-[10px] animate-fadeIn">
-                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                <span>
-                  Snapped to <strong>"{lastClickedWord.word}"</strong> ({lastClickedWord.timestamp})
-                </span>
-              </span>
-            )}
-            <span className="text-stone-500 text-[10px] hidden sm:inline">
-              Click a word to move the active chapter start to that exact moment
-            </span>
+          <div role="toolbar" aria-label="Interactive transcription tools" className="interactive-transcription-tools">
+            {lastClickedWord && <span role="status" title={`Snapped to "${lastClickedWord.word}" (${lastClickedWord.timestamp})`}>
+              <CheckCircle2 className="h-3 w-3 text-emerald-700" aria-hidden="true" />
+              <span className="sr-only">Snapped to "{lastClickedWord.word}" ({lastClickedWord.timestamp})</span>
+            </span>}
+            <button type="button" className="workspace-header-toggle interactive-transcription-toggle" aria-expanded={transcriptExpanded} aria-controls="interactive-transcription-words"
+              aria-label={transcriptExpanded ? 'Show one line of transcription' : 'Show ten lines of transcription'}
+              title={transcriptExpanded ? 'Collapse to one line' : 'Expand to ten lines'}
+              onClick={() => setTranscriptExpanded(expanded => !expanded)}>
+              {transcriptExpanded ? <ChevronsUp aria-hidden="true" /> : <ChevronsDown aria-hidden="true" />}
+            </button>
           </div>
-        </div>
+        </header>
 
-        {/* Word Chips Flow */}
-        <div ref={wordPane} className="flex flex-wrap gap-1 leading-relaxed max-h-40 overflow-y-auto pr-1 py-1">
+        <div id="interactive-transcription-words" ref={wordPane} className="interactive-transcription-words" aria-label="Interactive transcription words">
           {visibleWords.length > 0 ? (
             visibleWords.map((w, idx) => {
               const isSelectedWord = windowPosition.active === windowPosition.offset + idx;
@@ -398,9 +264,9 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
                   aria-current={isSelectedWord ? 'true' : undefined}
                   type="button"
                   onClick={() => handleWordClicked(w)}
-                  className={`group relative inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-sans transition-all cursor-pointer ${
+                  className={`interactive-transcription-word group relative inline-flex items-center font-sans cursor-pointer ${
                     isSelectedWord
-                      ? 'transcript-word-active font-bold ring-2 scale-105 shadow-xs'
+                      ? 'transcript-word-active font-bold'
                       : 'bg-white text-stone-700 hover:bg-stone-200 hover:text-stone-900 border border-stone-200'
                   }`}
                   title={`Click to set timestamp to ${w.start}`}
@@ -416,108 +282,58 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
               );
             })
           ) : (
-            <div className="text-stone-500 text-[11px] italic">
-              {activeTrack.snippetText || 'No transcription segment available.'}
+            <div className="interactive-transcription-empty text-stone-500 text-[11px] italic">
+              {activeTrack?.snippetText || 'No transcription segment available.'}
             </div>
           )}
         </div>
+      </section>
+      </DesktopWindow>
+
+      <AudioWaveform url={audioUrl === audioSrc ? waveformSrc : undefined}
+        seekRevision={waveformSeekRevision} duration={duration} currentTime={currentTime} playing={isPlaying} audioRef={audioRef}
+        markers={chapterMarkers} selectedId={selectedChapterId}
+        onSeek={seekTo} onMarker={onChapterMarker} />
+        <MiniPlayerSeek position={currentTime} duration={duration} onSeek={seekTo} label="Playback position"
+          disabled={!audioUrl} formatTime={seconds => formatTimestampMs(seconds * 1000)}
+          chapters={chapterMarkers.map(marker => ({ title: marker.title, startSeconds: marker.seconds }))} />
       </div>
 
       {/* Main Transport & Timeline Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+      <div role="toolbar" aria-label="Audio player controls" className="mini-player-controls flex flex-wrap items-center justify-between gap-2 pt-1">
         {/* Play / Pause / Seek Buttons */}
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            id="btn-player-seek-back"
-            onClick={() => handleSeekOffset(-5)}
-            className="p-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 cursor-pointer transition-colors"
-            title="Rewind 5 seconds"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
-
-          <button
-            id="btn-player-toggle-play"
-            onClick={() => {
-              if (isPlaying) onPause();
-              else onPlay(activeTrack);
-            }}
-            className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold flex items-center space-x-1.5 shadow-sm transition-transform active:scale-95 cursor-pointer"
-            title={isPlaying ? 'Pause Chapter Preview' : 'Play Chapter Preview'}
-          >
-            {isPlaying ? (
-              <>
-                <Pause className="w-4 h-4 fill-stone-950" />
-                <span className="text-xs">Pause</span>
-              </>
-            ) : (
-              <>
-                <Play className="w-4 h-4 fill-stone-950" />
-                <span className="text-xs">Play</span>
-              </>
-            )}
-          </button>
-
-          <button
-            id="btn-player-seek-fwd"
-            onClick={() => handleSeekOffset(5)}
-            className="p-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 cursor-pointer transition-colors"
-            title="Forward 5 seconds"
-          >
-            <RotateCw className="w-4 h-4" />
-          </button>
-
-          <button
-            id="btn-player-stop"
-            onClick={onStop}
-            className="p-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-500 hover:text-red-600 cursor-pointer transition-colors"
-            title="Stop & Dismiss Player"
-          >
-            <Square className="w-4 h-4" />
-          </button>
+        <div className="mini-player-controls flex flex-wrap items-center gap-2">
+          <MiniPlayerControls playing={isPlaying} label="chapter preview" showSkipControls onSkip={handleSeekOffset}
+            disabled={!audioUrl} playDisabled={!audioUrl}
+            onTogglePlay={() => { if (isPlaying) onPause(); else onPlay(activeTrack || { id: 'project-audio', title: 'Audiobook audio', start: formatTimestampMs(currentTime * 1000), seconds: currentTime, sourceType: 'transcript' }); }}
+            onStop={() => { seekTo(0); onStop(); }}
+            onPrevious={chapterMarkers.length ? () => { const previous = [...chapterMarkers].reverse().find(marker => marker.seconds < currentTime - .5) || chapterMarkers[0]; onChapterMarker(previous.id); } : undefined}
+            onNext={chapterMarkers.some(marker => marker.seconds > currentTime + .5) ? () => { const next = chapterMarkers.find(marker => marker.seconds > currentTime + .5); if (next) onChapterMarker(next.id); } : undefined} />
           {timestampTarget && onSetTimestamp && (
             <div className="flex items-center gap-2 border-l border-stone-200 pl-2">
               <button type="button" onClick={captureTimestamp}
-                className="rounded-lg bg-amber-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-amber-500 cursor-pointer"
+                className="quick-player-control inline-flex items-center justify-center rounded border border-stone-300 text-stone-800 hover:bg-stone-50"
+                aria-label="Set Chapter Start"
                 title={`Set ${timestampTarget} start to the player's current position`}>
-                Set Timestamp
+                <MapPin aria-hidden="true" />
               </button>
-              <button type="button" onClick={onCancelTimestamp} className="text-xs text-stone-500 hover:text-stone-800 cursor-pointer" title="Cancel timestamp selection">Cancel</button>
             </div>
           )}
+          {onAddChapter && <button type="button" onClick={addChapterHere}
+            className="quick-player-control inline-flex items-center justify-center rounded border border-stone-300 text-stone-800 hover:bg-stone-50"
+            aria-label="Add Chapter Here"
+            title="Add a chapter at the player's current position"><Plus aria-hidden="true" /></button>}
         </div>
 
-        {/* Timestamp Scrubber & Display */}
-        <div className="flex-1 flex items-center space-x-3 px-2">
-          <span className="font-mono text-xs text-amber-700 font-semibold">
-            {formatTimestampMs(currentTime * 1000)}
-          </span>
 
-          <div className="flex-1 relative flex items-center">
-            <input
-              type="range"
-              min={0}
-              max={duration}
-              step="0.001"
-              value={currentTime}
-              onChange={(e) => {
-                seekTo(parseFloat(e.target.value));
-              }}
-              className="w-full h-1.5 bg-stone-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
-            />
-          </div>
 
-          <span className="font-mono text-xs text-stone-500">
-            {formatTimestampMs(duration * 1000)}
-          </span>
-        </div>
-        {timestampTarget && <span className="text-xs text-amber-800">Set {timestampTarget} to the current position</span>}
 
         {/* Volume Controls */}
         <div className="flex items-center space-x-2">
           <button
             onClick={() => setIsMuted(!isMuted)}
-            className="p-1 text-stone-500 hover:text-stone-800 cursor-pointer"
+            className="quick-player-control inline-flex items-center justify-center rounded border border-stone-300 text-stone-800 hover:bg-stone-50"
+            aria-label={isMuted ? 'Unmute' : 'Mute'}
             title={isMuted ? 'Unmute' : 'Mute'}
           >
             {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
@@ -535,7 +351,7 @@ export const ChapterAudioPlayer: React.FC<ChapterAudioPlayerProps> = ({
               if (audioRef.current) audioRef.current.volume = val;
             }}
             className="w-16 h-1.5 bg-stone-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
-            title="Volume"
+            aria-label="Volume" title="Volume"
           />
         </div>
       </div>

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>Mouse-tail paintbrush</title>
+  <defs>
+    <linearGradient id="tail" x1="26" y1="39" x2="49" y2="8" gradientUnits="userSpaceOnUse"><stop stop-color="#bd7866"/><stop offset="1" stop-color="#e6ad95"/></linearGradient>
+    <linearGradient id="paint" x1="13" y1="42" x2="25" y2="57" gradientUnits="userSpaceOnUse"><stop stop-color="#f3d16b"/><stop offset="1" stop-color="#dca230"/></linearGradient>
+  </defs>
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <path d="M29 36C34 28 49 26 51 17C53 8 42 6 39 12C35 20 45 24 53 20" stroke="#fff3d9" stroke-width="12"/>
+    <path d="M29 36C34 28 49 26 51 17C53 8 42 6 39 12C35 20 45 24 53 20" stroke="#403a32" stroke-width="7"/>
+    <path d="M29 36C34 28 49 26 51 17C53 8 42 6 39 12C35 20 45 24 53 20" stroke="url(#tail)" stroke-width="4"/>
+    <path d="M28 31L37 40L29 48L20 39Z" fill="#ddd1b2" stroke="#fff3d9" stroke-width="7"/>
+    <path d="M28 31L37 40L29 48L20 39Z" fill="#ddd1b2" stroke="#403a32" stroke-width="2.5"/>
+    <path d="M23 37L31 45M26 34L34 42" stroke="#8c8069" stroke-width="1.5"/>
+    <path d="M21 40C12 41 17 51 8 56C19 60 29 55 29 48Z" fill="url(#paint)" stroke="#fff3d9" stroke-width="7"/>
+    <path d="M21 40C12 41 17 51 8 56C19 60 29 55 29 48Z" fill="url(#paint)" stroke="#403a32" stroke-width="2.5"/>
+    <path d="M20 46C20 51 16 54 13 55M24 47C24 51 21 54 18 55" stroke="#9c712e" stroke-width="1.5" opacity=".7"/>
+    <path d="M31 31L33 29M35 27L37 26M47 10L49 12" stroke="#fff2df" stroke-width="1.3" opacity=".8"/>
+  </g>
+</svg>

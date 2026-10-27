@@ -38,6 +38,21 @@ function writeTheme(root: string, folder: string, manifest: object, css = ':root
   fs.writeFileSync(path.join(directory, 'theme.css'), css);
 }
 
+test('cover frames accept theme colors and bounded dimensions', () => {
+  const root = fixture();
+  try {
+    writeTheme(root, 'framed', { name: 'Framed', id: 'framed', version: '1', extends: 'cheese', css: 'theme.css' }, ':root { --sm-cover-frame-bg: #eee; --sm-cover-frame-border: #765; --sm-cover-mat: #fff; --sm-cover-frame-shadow: #0006; --sm-cover-frame-padding: 12px; --sm-cover-frame-radius: 0px; }');
+    for (const [index, value] of ['-1px', '100px', 'url(example)', '2rem'].entries()) {
+      const id = `bad-frame-${index}`;
+      writeTheme(root, id, { name: id, id, version: '1', extends: 'light', css: 'theme.css' }, `:root { --sm-cover-frame-padding: ${value}; }`);
+    }
+    const result = discoverCustomThemes(root);
+    assert.deepEqual(result.themes.map(theme => theme.id), ['framed']);
+    assert.equal(result.themes[0].tokens['--sm-cover-frame-padding'], '12px');
+    assert.equal(result.warnings.length, 4);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('invalid colors cannot poison a theme and valid color formats work', () => {
   const root = fixture();
   try {
@@ -107,4 +122,14 @@ test('accepts local raster assets and rejects missing CSS files', () => {
     assert.match(result.themes[0].tokens['--sm-app-background-image'], /^url\("\/api\/themes\/assets\/asset-theme\/paper\.webp\?v=\d+"\)$/);
     assert.match(result.warnings[0], /missing CSS file/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('loading motion tokens accept bounded tuning and reject invalid dimensions', () => {
+  const root=fixture();
+  try {
+    writeTheme(root,'loading',{name:'Loading',id:'loading',version:'1',extends:'cheese',css:'theme.css'},':root { --sm-loading-lift: 8px; --sm-loading-scale: 1.4; --sm-loading-duration: 250ms; --sm-loading-spin-duration: 900ms; --sm-loading-shadow: #302e2966; }');
+    for(const [index,value] of ['0','3','url(bad)'].entries()) writeTheme(root,`invalid-loading-${index}`,{name:'Invalid',id:`invalid-loading-${index}`,version:'1',extends:'light',css:'theme.css'},`:root { --sm-loading-scale: ${value}; }`);
+    const result=discoverCustomThemes(root);
+    assert.deepEqual(result.themes.map(theme=>theme.id),['loading']); assert.equal(result.warnings.length,3);
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
 });

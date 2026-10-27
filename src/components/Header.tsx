@@ -1,33 +1,54 @@
+import lilTimmyDonate from '../assets/lil-timmy-donate.svg';
+import { HeaderDockSurface, HEADER_PANEL_ID } from './HeaderDockSurface';
+import { DesktopWindow, useDesktopWorkspace } from './DesktopWorkspace';
+import { ToolbarPanel } from './ToolbarPanel';
+import { ToolbarPopover } from './ToolbarPopover';
+import { RefreshDocumentIcon } from './RefreshDocumentIcon';
+import { ProjectAudioTools } from './ProjectAudioTools';
+import { IdlePlayer } from './IdlePlayer';
 import React, { useState, useEffect } from 'react';
 import { AudiobookJob } from '../types';
-import { Plus, Settings, Trash2, BookOpen, Terminal, Wrench, MoreHorizontal, ChevronDown } from 'lucide-react';
-import swissMouseLogo from '../assets/swissmouse-logo-concept.png';
+import { Activity, Plus, Settings, Trash2, Terminal, Wrench, Eye, EyeOff } from 'lucide-react';
+import { BookSelector } from './BookSelector';
+import swissMouseLogo from '../assets/swissmouse-logo.svg';
 import appPackage from '../../package.json';
 
 interface HeaderProps {
-  jobs: AudiobookJob[];
+  busy?: boolean;
+  onRecheckAudio?: () => Promise<string>;
+  onShowLogs?: () => void;
+  libraryPlayerJob?: AudiobookJob | null;
+  playRequest?: number;
   currentJob: AudiobookJob | null;
-  onSelectJob: (jobId: string) => void;
   onCloseProject: () => void;
   onOpenNewJob: () => void;
   onOpenSettings: () => void;
+  onResetPageLayout?: () => void;
   onOpenPurge: () => void;
   onOpenRequirements: () => void;
   onToggleLogs: () => void;
   showLogs: boolean;
+  onToggleActivity?: () => void;
+  showActivity?: boolean;
+  onRatingChange?: (bookId: string, rating: number | null) => Promise<void>;
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  jobs,
+  busy, onRecheckAudio, onShowLogs,
+  libraryPlayerJob,
+  playRequest,
   currentJob,
-  onSelectJob,
   onCloseProject,
   onOpenNewJob,
   onOpenSettings,
+  onResetPageLayout,
   onOpenPurge,
   onOpenRequirements,
   onToggleLogs,
   showLogs,
+  onToggleActivity,
+  showActivity,
+  onRatingChange,
 }) => {
   const [statusColor, setStatusColor] = useState<'red' | 'yellow' | 'green'>('red');
 
@@ -47,61 +68,72 @@ export const Header: React.FC<HeaderProps> = ({
     checkRequirementsHealth();
     window.addEventListener('requirements-changed', checkRequirementsHealth);
     window.addEventListener('focus', checkRequirementsHealth);
-    return () => {
+  return () => {
       isMounted = false;
       window.removeEventListener('requirements-changed', checkRequirementsHealth);
       window.removeEventListener('focus', checkRequirementsHealth);
     };
   }, []);
+  const desktop = useDesktopWorkspace();
+  const cornerHandlesVisible = desktop ? [...desktop.windows.keys()].some(id => !(desktop.state.panels[id]?.cornerHandleHidden ?? desktop.state.cornerHandlesHidden ?? true)) : false;
+  const toggleCornerHandles = () => desktop?.commit(state => ({
+    ...state, cornerHandlesHidden: cornerHandlesVisible,
+    panels: Object.fromEntries(Object.entries(state.panels).map(([id, panel]) => {
+      const { cornerHandleHidden: _hidden, ...preferences } = panel;
+      return [id, preferences];
+    })),
+  }));
+  const playerJob = currentJob || libraryPlayerJob;
   return (
-    <header className="app-header sticky top-0 z-30 border-b border-stone-200/80 bg-white/95 text-stone-900 shadow-sm backdrop-blur-xl">
-      <div className={`mx-auto flex min-h-16 items-center gap-3 px-3 py-2 sm:px-5 lg:px-7 ${currentJob ? 'max-w-[1480px]' : 'max-w-none'}`}>
-        <button type="button" onClick={onCloseProject} className="flex min-w-0 items-center gap-2.5 rounded-xl p-1 text-left transition hover:bg-stone-100" title="Go to your books">
-          <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-stone-950 shadow-sm ring-1 ring-stone-200">
+    <HeaderDockSurface corner={<a className="header-patreon" href="https://www.patreon.com/c/Bageena" target="_blank" rel="noopener noreferrer" aria-label="Support SwissMouse on Patreon" title="Support SwissMouse on Patreon"><img src={lilTimmyDonate} alt="Lil Timmy holding a donate sign" /></a>} brand={
+        <button type="button" onClick={onCloseProject} className={`flex min-h-16 min-w-0 flex-1 items-center justify-center gap-2.5 rounded-xl px-1 py-3 text-center transition hover:bg-stone-100 sm:w-72 sm:flex-none lg:my-2 lg:self-stretch`} title="Go to your books">
+          <div className="h-16 w-16 shrink-0 sm:h-[72px] sm:w-[72px]">
             <img
               src={swissMouseLogo}
               alt="SwissMouse logo"
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
             />
           </div>
-          <span className="font-mono text-[10px] font-medium text-stone-600 sm:hidden">v{appPackage.version}</span>
-          <div className="hidden min-w-0 sm:block">
-            <span className="flex items-center gap-2 text-base font-bold tracking-tight text-stone-950">SwissMouse <span className="rounded-md bg-stone-100 px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-normal text-stone-600">v{appPackage.version}</span></span>
-            <span className="block text-[11px] font-medium text-stone-500">The Open Source Audiobook Workbench</span>
+          <span className="font-mono text-xs font-medium text-stone-600 sm:hidden">v{appPackage.version}</span>
+          <div className="hidden min-w-0 sm:block text-center">
+            <span className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xl font-bold leading-tight tracking-tight text-stone-950">SwissMouse <span className="rounded-md bg-stone-100 px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-normal text-stone-600">v{appPackage.version}</span></span>
+            <span className="mt-1 block text-[11px] font-medium leading-relaxed text-stone-500">The Open Source Audiobook Workbench</span>
           </div>
         </button>
-
-        <div className="min-w-0 flex-1 sm:ml-2">
-          {currentJob ? (
-            <div className="flex min-w-0 items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 sm:max-w-md">
-              <BookOpen className="h-4 w-4 shrink-0 text-amber-700" />
-              <div className="min-w-0">
-                <span className="block truncate text-sm font-semibold text-stone-900">{currentJob.name}</span>
-                <button onClick={onCloseProject} className="block text-[11px] font-medium text-stone-500 hover:text-amber-800">Switch book</button>
-              </div>
-            </div>
+    } player={
+      <DesktopWindow id="header-media-player" title="Media Player" role="child" homeWindow={HEADER_PANEL_ID} minimumWidth={240}>
+        <div className="header-media-player">
+          <div data-container-heading className="media-player-heading"><span className="workspace-panel-title">Media Player</span></div>
+          {playerJob ? (
+            <BookSelector currentJob={playerJob} inShelf={!currentJob} playRequest={currentJob ? 0 : playRequest} onRatingChange={onRatingChange} />
           ) : (
-            <div className="text-sm font-medium text-stone-500">Library Manager</div>
+            <IdlePlayer />
           )}
         </div>
-
+      </DesktopWindow>
+    } tools={
+      <ToolbarPanel id="header-toolbar" title="Header Toolbar" homeWindow={HEADER_PANEL_ID} defaultHorizontal>
         <button
-          id="btn-new-job"
+          id="btn-new-job" aria-label="Import Book"
           onClick={onOpenNewJob}
-          className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl bg-amber-700 px-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-800 active:translate-y-px"
-          title="Create a new audiobook project"
+          className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl px-3.5 text-sm font-semibold shadow-sm transition active:translate-y-px ${playerJob ? 'border border-stone-300 text-stone-700 hover:bg-stone-100' : 'bg-amber-700 text-white hover:bg-amber-800'}`}
+          title="Import a book"
         >
           <Plus className="h-4 w-4" />
-          <span className="hidden sm:inline">Add book</span>
+          <span className="sr-only">Import Book</span>
         </button>
 
-        <details className="tools-menu relative shrink-0">
-          <summary className="inline-flex min-h-10 cursor-pointer list-none items-center gap-1.5 rounded-xl border border-stone-200 bg-white px-3 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
-            <MoreHorizontal className="h-4 w-4" />
-            <span className="hidden md:inline">More</span>
-            <ChevronDown className="hidden h-3.5 w-3.5 md:block" />
-          </summary>
-          <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-64 overflow-hidden rounded-2xl border border-stone-200 bg-white p-2 shadow-xl">
+        {onToggleActivity && <button type="button" aria-label="Activity" title="Activity" aria-expanded={!!showActivity} onClick={onToggleActivity} className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl border border-stone-200 px-3 text-xs font-semibold text-stone-700"><Activity className="h-4 w-4" /><span className="sr-only">Activity</span></button>}
+        {currentJob && onRecheckAudio && <ProjectAudioTools compact key={currentJob.id} job={currentJob} onRecheckAudio={onRecheckAudio} onShowLogs={onShowLogs || onToggleLogs} busy={busy} />}
+        {desktop && <button type="button" aria-label={cornerHandlesVisible ? 'Hide panel layout controls' : 'Show panel layout controls'}
+          title={cornerHandlesVisible ? 'Hide all move control tabs and corner icons on this page' : 'Show all move control tabs and corner icons on this page'} aria-pressed={cornerHandlesVisible}
+          onClick={toggleCornerHandles} className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl border border-stone-200 px-3 text-xs font-semibold text-stone-700">
+          {cornerHandlesVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+        </button>}
+        {onResetPageLayout && <button type="button" id="btn-reset-page-layout" aria-label="Reset page layout" onClick={onResetPageLayout} title="Restore this page’s default panel positions and sizes" className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl border border-stone-200 px-3 text-xs font-semibold text-stone-700"><RefreshDocumentIcon kind="page" /><span className="sr-only">Reset page layout</span></button>}
+      </ToolbarPanel>
+    } fixedTools={
+        <ToolbarPopover label="Tools and settings" icon={<Settings className="h-5 w-5" />}>
             <p className="px-2 pb-1.5 pt-1 text-[10px] font-bold uppercase tracking-[0.14em] text-stone-400">Tools & settings</p>
           <button
             id="btn-open-requirements"
@@ -143,9 +175,7 @@ export const Header: React.FC<HeaderProps> = ({
             <Terminal className="h-4 w-4" />
             <span><span className="block font-semibold">Technical logs</span><span className={`block text-[11px] ${showLogs ? 'text-stone-300' : 'text-stone-500'}`}>{showLogs ? 'Currently visible' : 'Troubleshooting details'}</span></span>
           </button>
-          </div>
-        </details>
-      </div>
-    </header>
+        </ToolbarPopover>
+    } />
   );
 };

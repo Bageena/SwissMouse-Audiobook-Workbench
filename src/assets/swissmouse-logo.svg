@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="1080" viewBox="25 65 1200 1080" fill="none">
+  <title>SwissMouse — mouse wearing gold headphones</title>
+  <desc>Clean scalable vector recreation. Cream fur, coral ears, charcoal and golden headphones, playful eyes and buck tooth. Transparent background; all artwork consists of editable vector paths.</desc>
+  <defs>
+    <path id="silhouette" d="M270 350 C405 190 609 132 784 208 C850 105 931 123 989 147 C1121 202 1199 333 1170 475 C1161 523 1143 556 1116 583 C1158 636 1155 710 1126 759 L1162 794 L1137 812 L1168 875 L1091 840 C1060 898 1012 918 952 919 C916 965 875 980 827 992 L795 1024 L754 1038 C713 1073 686 1100 651 1093 C606 1087 583 1063 548 1051 L513 1050 L481 1027 L405 1007 L367 979 C304 996 269 979 235 955 L199 1002 L203 953 L161 944 L165 916 C115 875 102 809 111 748 C117 701 128 673 145 649 C81 619 54 548 78 474 C104 392 184 347 270 350Z"/>
+  </defs>
+  <!-- Warm sticker border. No bitmap or background rectangle. -->
+  <use xlink:href="#silhouette" fill="#fff5dd" stroke="#fff5dd" stroke-width="48" stroke-linejoin="round"/>
+  <g stroke="#252420" stroke-width="13" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Headband -->
+    <path d="M264 367 C402 197 605 134 795 214 L774 338 C603 275 450 338 351 430Z" fill="#252420"/>
+    <path d="M286 346 C421 210 609 151 786 218 L777 238 C591 174 424 230 306 358Z" fill="#efc467" stroke="none"/>
+    <path d="M314 350 C439 232 604 186 711 207 Q728 224 718 252 C558 224 440 273 346 348Z" fill="#41413d" stroke="none"/>
+    <!-- Ears -->
+    <path d="M742 405 C756 384 746 348 758 294 C775 197 842 126 919 140 C1046 144 1153 257 1167 388 C1180 480 1142 561 1100 585 L910 602Z" fill="#fff5dd"/>
+    <path d="M891 394 C854 304 863 214 920 185 C984 154 1058 206 1109 289 C1166 386 1161 512 1098 575 L963 500Z" fill="#df8269" stroke-width="9"/>
+    <path d="M891 394 C860 301 866 222 917 192 C952 173 982 180 1016 198 C936 179 908 251 912 336 Q951 339 976 401 L963 461Z" fill="#bc6753" stroke="none"/>
+    <path d="M144 648 C94 630 67 578 78 504 C90 417 155 354 235 360 C336 359 410 419 443 507 L418 643 L300 724Z" fill="#fff5dd"/>
+    <path d="M147 640 C96 611 88 537 113 479 C140 417 208 401 263 429 C310 451 345 493 365 546 L283 682Z" fill="#df8269" stroke-width="9"/>
+    <path d="M127 451 C171 400 222 411 263 433 Q315 458 342 508 L292 487 L256 490 Q202 431 127 451Z" fill="#bc6753" stroke="none"/>
+    <!-- Headphone supports -->
+    <path d="M236 576 L278 491 Q285 476 306 479 L321 501 L274 600Z" fill="#efc467" stroke-width="9"/>
+    <path d="M884 396 L911 374 Q920 366 929 379 L985 439 L962 465 L913 391 L889 409Z" fill="#efc467" stroke-width="9"/>
+    <!-- Right earcup -->
+    <path d="M1022 524 C1113 525 1155 620 1137 706 Q1127 749 1097 763 L1043 738Z" fill="#dfad4f"/>
+    <path d="M1041 529 C1101 550 1121 618 1111 689 Q1107 721 1095 747 L1069 732Z" fill="#333430" stroke-width="8"/>
+    <path d="M946 471 C1010 454 1080 536 1095 654 C1114 795 1057 897 971 904 L909 873 L877 605Z" fill="#292a27"/>
+    <path d="M973 491 C1031 538 1055 627 1056 710 C1057 788 1033 858 1000 883 L977 890 C1020 819 1027 750 1019 682 C1011 607 991 550 951 502Z" fill="#efc467" stroke="none"/>
+    <path d="M1040 674 Q1052 694 1063 687 C1064 773 1038 846 1000 883 L977 890 Q1027 801 1024 738Z" fill="#c9953e" stroke="none"/>
+    <path d="M951 504 C986 508 1019 590 1030 670 C1041 751 1021 769 997 739 C976 712 972 620 949 564 Q930 521 951 504Z" fill="#41423e" stroke="none"/>
+    <ellipse cx="984" cy="465" rx="29" ry="31" fill="#efc467" stroke-width="9" transform="rotate(-21 984 465)"/>
+    <path d="M977 444 C960 453 965 477 981 486" stroke="#ffe0a0" stroke-width="5"/>
+    <!-- Left earcup -->
+    <path d="M214 586 C280 530 346 539 375 606 C417 701 386 867 337 934 C315 966 275 969 243 949 L180 896Z" fill="#292a27"/>
+    <path d="M288 566 C328 546 358 568 371 609 C392 674 371 760 345 768 C324 768 335 683 314 625Z" fill="#41423e" stroke="none"/>
+    <path d="M164 642 C188 599 218 572 249 576 C297 582 317 687 310 785 C305 872 280 938 247 941 C201 947 157 873 146 787Z" fill="#efc467"/>
+    <path d="M259 620 Q281 658 296 650 C318 749 302 884 266 930 L244 937 L241 897 Q284 787 259 620Z" fill="#d9a54c" stroke="none"/>
+    <path d="M143 670 C169 615 202 598 226 604 C269 620 283 728 267 818 C259 875 240 922 218 927 C176 912 144 852 137 789Z" fill="#292a27"/>
+    <path d="M161 665 Q186 621 215 614 C250 636 264 699 240 730 C222 756 190 743 179 723Z" fill="#41423e" stroke="none"/>
+    <ellipse cx="145" cy="762" rx="34" ry="97" fill="#dfad4f" transform="rotate(-4 145 762)"/>
+    <ellipse cx="143" cy="763" rx="18" ry="59" fill="#efc467" stroke-width="5" transform="rotate(-4 143 763)"/>
+    <!-- Face and organic fur contour -->
+    <path d="M385 767 C390 728 382 701 405 641 L391 661 L418 585 L404 601 L444 525 L448 485 L457 501 Q480 467 514 446 L509 461 Q539 430 545 409 L549 428 Q593 348 642 348 Q607 371 594 408 Q643 370 693 378 L659 393 L708 398 Q672 411 660 432 Q694 424 728 430 L763 415 L753 432 Q782 430 807 440 L778 446 Q818 451 852 494 L831 486 Q867 514 892 559 L876 548 Q902 576 914 611 L900 598 L921 651 L906 639 L930 680 L916 678 L960 708 L940 709 L975 738 L952 735 L986 773 L966 766 L991 809 L973 797 C984 863 949 925 913 944 L920 924 Q887 967 841 976 L848 962 Q809 986 794 1012 L813 1010 Q771 1023 742 1059 C714 1074 692 1095 672 1098 C642 1091 617 1065 587 1050 L604 1067 Q570 1033 532 1033 L546 1023 L503 1023 L512 1011 C451 1008 409 988 390 960 L405 991 Q371 972 356 939 L359 920 Q336 898 333 866 L328 882 Q322 835 343 808 L326 816 Q343 786 385 767Z" fill="#fff5dd" stroke-width="10"/>
+    <!-- Restrained flat fur shading -->
+    <path d="M779 318 Q770 414 834 472 L873 512 Q897 479 887 435 L877 476 Q819 437 797 359 L798 394Z M366 460 Q399 488 403 530 L383 506 L386 545 L351 498 L375 518Z M443 544 L416 616 L434 602 L407 654 L415 621 L396 640Z M482 494 L536 458 L522 479 L565 446 Q543 481 482 494Z M700 429 L680 446 L713 453 L665 453 Q683 436 700 429Z" fill="#eed7b2" stroke="none"/>
+    <path d="M345 858 Q364 933 438 960 L403 931 Q450 983 534 1000 L515 982 Q588 1007 642 1040 L625 1012 L680 1050 L715 1021 L702 1046 Q818 965 870 944 L853 964 Q927 923 951 858 Q928 945 862 972 L836 978 Q789 1006 743 1052 Q694 1095 673 1094 Q641 1084 598 1054 L572 1037 Q513 1017 473 1007 Q382 990 352 929Z" fill="#eed7b2" stroke="none"/>
+    <!-- Brows -->
+    <path d="M438 650 C453 583 503 553 535 632 C494 587 467 608 438 650Z" fill="#252420" stroke="none"/>
+    <path d="M705 586 C677 547 734 479 779 493 Q811 496 828 528 C777 482 741 524 705 586Z" fill="#252420" stroke="none"/>
+    <!-- Eye crease accents -->
+    <path d="M461 686 Q508 646 555 689 Q509 665 461 686Z M722 657 Q714 588 779 569 Q732 597 722 657Z M763 601 Q797 562 832 590 Q797 575 763 601Z" fill="#d0b28b" stroke="none"/>
+    <!-- Eye whites -->
+    <path d="M431 749 C435 686 492 689 582 708 C602 735 602 767 579 779 C536 793 475 785 452 777Z" fill="#fff9e9" stroke="none"/>
+    <path d="M450 717 C438 738 443 759 452 777 Q516 795 579 779" stroke-width="5"/>
+    <path d="M732 712 C767 666 813 604 843 612 C872 621 878 667 866 701 C839 738 788 764 753 749Z" fill="#fff9e9" stroke="none"/>
+    <path d="M732 712 Q735 738 753 749 Q809 765 866 701" stroke-width="5"/>
+    <!-- Pupils, clipped by the eyelid geometry -->
+    <path d="M517 708 L579 716 C599 758 587 780 556 784 C521 784 494 745 517 708Z" fill="#252420" stroke="none"/>
+    <path d="M770 672 Q805 629 829 620 C858 646 867 698 838 724 C806 746 769 717 770 672Z" fill="#252420" stroke="none"/>
+    <ellipse cx="565" cy="726" rx="10" ry="10" fill="#fff9e9" stroke="none"/>
+    <ellipse cx="821" cy="654" rx="12" ry="14" fill="#fff9e9" stroke="none" transform="rotate(-17 821 654)"/>
+    <!-- Heavy upper lids -->
+    <path d="M428 752 C415 696 453 679 513 698 L583 706 L571 677 L590 714 Q514 709 460 714 Q433 718 428 752Z M726 717 C757 663 806 593 842 604 Q868 610 876 670 Q855 618 837 624 C802 639 755 691 726 717Z" fill="#252420" stroke="none"/>
+    <!-- Nose bridge -->
+    <path d="M622 758 Q670 708 716 745 Q675 728 622 758Z M649 728 Q676 712 699 727 Q674 719 649 728Z" fill="#eed7b2" stroke="none"/>
+    <!-- Buck tooth and smile -->
+    <path d="M634 884 L719 876 L714 919 Q681 934 651 930Z" fill="#fff9e9" stroke-width="7"/>
+    <path d="M677 886 L684 916 L686 884Z" fill="#252420" stroke="none"/>
+    <path d="M530 859 C584 908 638 900 680 864 C731 890 785 878 821 819" stroke-width="8"/>
+    <path d="M680 864 L676 829" stroke-width="7"/>
+    <path d="M508 881 Q506 850 549 855 Q521 858 508 881Z M803 820 Q829 800 844 827 Q826 817 803 820Z" fill="#252420" stroke="none"/>
+    <!-- Coral nose -->
+    <path d="M619 779 C644 755 699 748 719 765 C740 782 709 805 683 827 Q675 836 662 826 L621 808 Q603 799 619 779Z" fill="#df8269" stroke-width="7"/>
+    <path d="M627 794 Q663 811 678 819 Q709 790 722 782 Q715 806 683 827 Q676 835 662 826 L621 808Z" fill="#bc6753" stroke="none"/>
+    <path d="M633 780 Q668 761 702 767 Q675 779 643 782Z" fill="#f5b599" stroke="none"/>
+    <path d="M632 813 Q628 795 646 807 L652 818 M694 816 Q692 798 709 791" stroke-width="5"/>
+  </g>
+  <!-- Whiskers with a cream separation stroke for legibility over headphones. -->
+  <g stroke="#fff5dd" stroke-width="11" stroke-linecap="round">
+    <path id="whisker-left-top" d="M567 820 C423 784 233 839 164 942"/>
+    <path id="whisker-left-bottom" d="M559 832 C403 835 275 913 204 1002"/>
+    <path id="whisker-right-top" d="M778 789 C908 715 1073 726 1161 799"/>
+    <path id="whisker-right-bottom" d="M785 802 C936 750 1083 812 1164 875"/>
+  </g>
+  <g stroke="#252420" stroke-width="5" stroke-linecap="round">
+    <use stroke="#252420" stroke-width="5" xlink:href="#whisker-left-top"/><use stroke="#252420" stroke-width="5" xlink:href="#whisker-left-bottom"/>
+    <use stroke="#252420" stroke-width="5" xlink:href="#whisker-right-top"/><use stroke="#252420" stroke-width="5" xlink:href="#whisker-right-bottom"/>
+  </g>
+</svg>

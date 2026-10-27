@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { PcmAnalysis, ensureAnalysis, readManifest, waveformSlice } from './audio-analysis';
+import { PcmAnalysis, ensureAnalysis, readManifest, waveformSlice, retainWaveform } from './audio-analysis';
 import { makePreview } from './audio-engine';
 import { clampViewport, followViewport, waveformTime, waveformZooms } from '../src/utils/waveform';
 
@@ -13,6 +13,23 @@ function fixture(t: any) {
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   return directory;
 }
+
+test('preview-only audio omits waveforms and acoustic-only caches upgrade on explicit request', async t => {
+  const directory=fixture(t), source=path.join(directory,'source.wav'), preview=path.join(directory,'preview.wav');
+  const ffmpeg=process.env.TEST_FFMPEG||'ffmpeg';
+  execFileSync(ffmpeg,['-v','error','-f','lavfi','-i','sine=duration=0.3',source],{windowsHide:true});
+  await makePreview(ffmpeg,source,preview,undefined,()=>{},false,false);
+  assert.ok(fs.existsSync(preview));
+  assert.equal(readManifest(preview),null,'decoding for transcription does not imply waveform analysis');
+  const acoustic=await ensureAnalysis(preview,false);
+  assert.deepEqual(acoustic.levels,[]);
+  assert.equal(fs.readdirSync(acoustic.directory).filter(file=>file.startsWith('level-')).length,0);
+  const before=fs.readFileSync(preview);
+  const waveform=await ensureAnalysis(preview,true);
+  assert.ok(waveform.levels.length);
+  assert.deepEqual(fs.readFileSync(preview),before,'upgrading analysis never changes or decodes the source audio');
+  assert.ok((await waveformSlice(preview,0,0.3,100)).peaks.length);
+});
 test('streaming analysis handles split samples, silence, RMS changes and partial final windows', async t => {
   const directory = fixture(t), audio = path.join(directory, 'preview.wav');
   fs.writeFileSync(audio, 'signature fixture');
@@ -101,4 +118,17 @@ test('viewport transforms preserve seek and marker positions with zoom, boundari
   assert.equal(followViewport(280, 0, 300, 10000), 220);
   assert.equal(followViewport(30, 100, 300, 10000), 0);
   assert.equal(clampViewport(300, 10000, 10000), 0);
+});
+
+test('retained waveform remains usable after disposable PCM removal and rejects replaced audio', async t => {
+  const directory=fixture(t),audio=path.join(directory,'analysis.wav');fs.writeFileSync(audio,'signature fixture');
+  const collector=new PcmAnalysis(audio);collector.push(Buffer.alloc(3200));await collector.finish();
+  const before=await waveformSlice(audio,0,.1,100);
+  assert.equal(retainWaveform(audio),true);
+  fs.unlinkSync(audio);
+  assert.equal(readManifest(audio),null);
+  assert.ok(readManifest(audio,true));
+  assert.deepEqual(await waveformSlice(audio,0,.1,100,true),before);
+  fs.writeFileSync(audio,'changed');
+  assert.equal(readManifest(audio,true),null,'retention cannot hide a replacement PCM generation');
 });

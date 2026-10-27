@@ -8,6 +8,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { DependencyStatusProvider } from '../src/dependency-status';
 import { Step1MergeDetect } from '../src/components/Step1MergeDetect';
+import { AddFiles } from '../src/components/AddFiles';
 import { LibriVoxCatalog, normalizeBook, plainText, safeFetch, searchParams, trustedUrl } from './librivox-catalog';
 import { downloadLibriVox, importedMetadata, mergeImportMetadata, mountLibriVox } from './librivox-import';
 import { inspect, makePreview } from './audio-engine';
@@ -30,16 +31,21 @@ const mock = (fn: (url: string, init?: RequestInit) => Response | Promise<Respon
 
 test('LibriVox tab renders alongside folder and YouTube without external service availability', () => {
   for (const inputMethod of ['folder', 'youtube', 'librivox'] as const) {
-    const job = { id: 'render', name: 'Test', inputMethod, parts: [], chapters: [], candidates: [], logs: [] } as unknown as AudiobookJob;
-    const markup = renderToStaticMarkup(React.createElement(DependencyStatusProvider, null, React.createElement(Step1MergeDetect, {
-      job, config: { faster_transcription: true, whisper_profile: 'turbo', lead_in_seconds: 1.5, m4b_settings: { bitrate_stereo: '96k', bitrate_mono: '64k', sample_rate: 44100 } } as any,
-      isRunning: false, onRunStep1: async () => {}, onRerunStep: async () => {}, onNextStep: () => {},
+    const job = { id: 'render', name: 'Test', inputMethod, importPending: true, parts: [], chapters: [], candidates: [], logs: [] } as unknown as AudiobookJob;
+    const markup = renderToStaticMarkup(React.createElement(DependencyStatusProvider, null, React.createElement(AddFiles, {
+      job, onChanged: async () => {},
     })));
-    for (const name of ['Audio Folder', 'From YouTube', 'LibriVox']) assert.ok(markup.includes(name));
+    for (const name of ['Local Files', 'YouTube', 'LibriVox']) assert.ok(markup.includes(name));
     if (inputMethod === 'librivox') { assert.match(markup, /aria-label="LibriVox search"/); assert.match(markup, /<option value="title" selected="">Title/); }
-    if (inputMethod === 'folder') assert.match(markup, /btn-import-mp3-folder/);
+    if (inputMethod === 'folder') assert.match(markup, /Add Audiobook by Path/);
     if (inputMethod === 'youtube') assert.match(markup, /youtube-url-input/);
   }
+  const processMarkup = renderToStaticMarkup(React.createElement(DependencyStatusProvider, null, React.createElement(Step1MergeDetect, {
+    job: { id: 'render', name: 'Test', parts: [], chapters: [], candidates: [], logs: [] } as unknown as AudiobookJob,
+    config: { faster_transcription: true, whisper_profile: 'turbo', lead_in_seconds: 1.5, m4b_settings: { bitrate_stereo: '96k', bitrate_mono: '64k', sample_rate: 44100 } } as any,
+    isRunning: false, onRunStep1: async () => {}, onRerunStep: async () => {},
+  })));
+  assert.ok(!processMarkup.includes('Choose an audiobook or audio folder'), 'processing does not render source selection');
 });
 
 test('catalog normalizes Unicode, missing fields, ordered multi-reader sections and safe text/URLs', () => {

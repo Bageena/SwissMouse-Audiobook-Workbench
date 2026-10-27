@@ -1,25 +1,42 @@
 {
   "name": "audiobook-chapter-workbench",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "license": "AGPL-3.0-or-later",
   "description": "Web workbench to merge multi-part MP3 audiobooks, detect chapters with AI, review timestamps, and build chaptered M4B audiobooks.",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && npm run build:catalog",
     "start": "node dist/server.cjs",
     "lint": "tsc --noEmit",
+    "pretest:library": "npm run build",
+    "test:library": "node --import tsx --test --test-concurrency=1 tools/project-store.test.ts tools/project-transfer.test.ts tools/originals-archive.test.ts tools/finalization-workflow.test.ts tools/metadata-state.test.ts tools/media-cache.test.ts tools/book-groups.test.ts tools/library-filesystem.test.ts tools/library-safety.test.ts tools/library-transfer.test.ts tools/library-inbox.test.ts tools/library-refresh.test.ts tools/library-output-recovery.test.ts tools/library-embedded-cover.test.ts tools/library-manager.test.ts tools/library-matches-api.test.ts tools/library-matches.test.ts tools/library-matches-view.test.tsx tools/library-regrouping.test.ts tools/scan-work.test.ts tools/import-workflow.test.ts",
+    "pretest:book-files": "npm run build",
+    "test:book-files": "node --import tsx --test --test-concurrency=1 tools/book-files.test.tsx tools/chapter-groups.test.ts tools/book-files-audio.test.ts tools/book-source-browser.test.ts tools/quick-player.test.ts",
+    "test:workspace": "node --import tsx --test tools/adaptive-controls.test.tsx tools/adaptive-workspace.test.ts tools/desktop-layout.test.ts tools/container-layout.test.ts tools/window-connections.test.ts tools/container-components.test.tsx tools/panels.test.tsx tools/metadata-layout.test.tsx tools/workspace-panels.test.tsx tools/chapter-editor-layout.test.tsx tools/library-workspace.test.tsx tools/panel-motion.test.ts tools/module-registry.test.ts tools/directory-tree.test.ts",
     "test:cover": "node --import tsx --test tools/cover-generator.test.ts",
-    "test:audio": "node --import tsx --test tools/audio-engine.test.ts tools/audio-metadata-write.test.ts tools/audio-sample-rate.test.ts tools/audio-analysis.test.ts tools/transcription-engine.test.ts tools/transcription-performance.test.ts tools/transcription-api.test.mjs tools/requirements.test.ts tools/ffmpeg-distribution.test.ts tools/runtime-selection.test.ts tools/runtime-api.test.mjs tools/feature-dependencies.test.ts tools/backend-state.test.mjs tools/cleanup.test.mjs tools/status-cache.test.ts tools/package-status.test.ts tools/word-alignment.test.ts tools/chapters.test.ts tools/chapter-player.test.ts tools/chapter-titles.test.ts tools/music-transitions.test.ts tools/title-boundaries.test.ts tools/chapter-cache.test.ts tools/pipeline-rerun.test.ts tools/custom-themes.test.ts tools/librivox.test.ts tools/library-manager.test.ts tools/library-path.test.ts tools/metadata-quick-add.test.ts"
+    "test:audio": "node --import tsx --test tools/test-fixtures.test.mjs tools/audio-engine.test.ts tools/audio-as-is.test.ts tools/chapter-file.test.ts tools/existing-chapters.test.ts tools/audio-metadata-write.test.ts tools/audio-sample-rate.test.ts tools/audio-analysis.test.ts tools/transcription-engine.test.ts tools/transcription-performance.test.ts tools/transcription-api.test.mjs tools/requirements.test.ts tools/ffmpeg-distribution.test.ts tools/runtime-selection.test.ts tools/runtime-api.test.mjs tools/feature-dependencies.test.ts tools/backend-state.test.mjs tools/cleanup.test.mjs tools/status-cache.test.ts tools/package-status.test.ts tools/word-alignment.test.ts tools/chapters.test.ts tools/chapter-player.test.ts tools/chapter-titles.test.ts tools/chapter-review-draft.test.ts tools/music-transitions.test.ts tools/title-boundaries.test.ts tools/improved-chapter-detection.test.ts tools/chapter-suggestions.test.tsx tools/chapter-cache.test.ts tools/pipeline-rerun.test.ts tools/custom-themes.test.ts tools/librivox.test.ts tools/library-manager.test.ts tools/book-source-browser.test.ts tools/book-groups.test.ts tools/library-filesystem.test.ts tools/library-refresh.test.ts tools/library-output-recovery.test.ts tools/library-embedded-cover.test.ts tools/library-inbox.test.ts tools/library-transfer.test.ts tools/project-transfer.test.ts tools/originals-archive.test.ts tools/finalization-workflow.test.ts tools/final-check.test.ts tools/finish-actions.test.ts tools/import-workflow.test.ts tools/native-file-picker.test.ts tools/native-folder-opener.test.ts tools/library-path.test.ts tools/metadata-quick-add.test.ts tools/library-matches.test.ts tools/library-matches-api.test.ts",
+    "pretest:player": "npm run build",
+    "test:player": "node --import tsx --test --test-concurrency=1 tools/book-selector.test.tsx tools/personal-rating.test.ts tools/book-playback.test.ts tools/quick-player.test.ts tools/listening-store.test.ts tools/quick-player-api.test.ts",
+    "build:catalog": "esbuild tools/catalog-worker.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/catalog-worker.cjs",
+    "predev": "npm run build:catalog",
+    "test:catalog": "node --import tsx --test --test-concurrency=1 tools/catalog-store.test.ts tools/catalog-api.test.ts tools/catalog-incremental.test.ts tools/durable-project-store.test.ts tools/directory-index.test.ts",
+    "test:identity": "node --import tsx --test --test-concurrency=1 tools/relink-identity.test.ts tools/identity-upgrade.test.ts tools/library-safety.test.ts tools/library-transfer.test.ts tools/catalog-store.test.ts tools/durable-project-store.test.ts tools/project-transfer.test.ts",
+    "test:foundations": "node --import tsx --test --test-concurrency=1 tools/project-schema.test.ts tools/durable-project-store.test.ts tools/module-registry.test.ts tools/workflow-navigation.test.tsx tools/container-components.test.tsx tools/panels.test.tsx tools/panel-motion.test.ts tools/container-layout.test.ts tools/window-connections.test.ts tools/identity-upgrade.test.ts tools/library-transfer.test.ts tools/runtime-repair.test.mjs tools/runtime-api.test.mjs tools/backend-state.test.mjs tools/feature-dependencies.test.ts tools/requirements.test.ts",
+    "pretest:catalog": "npm run build"
   },
   "dependencies": {
     "adm-zip": "^0.6.1",
+    "buffer-crc32": "^1.0.0",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "lucide-react": "^1.16.0",
     "multer": "^2.3.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "saxes": "^6.0.0",
+    "yauzl": "^3.4.0",
+    "yazl": "^3.3.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.9",
@@ -39,5 +56,8 @@
   "allowScripts": {
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true
+  },
+  "engines": {
+    "node": "^22.13.0 || >=23.4.0"
   }
 }

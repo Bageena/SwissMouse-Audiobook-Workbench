@@ -1,0 +1,464 @@
+/* Built-in presentation layer. Legacy palettes and processing behavior are untouched. */
+:root[data-theme="cheese"] {
+  --sm-app-bg: #d9ccac;
+  --sm-app-bg-top: #e9ddbf;
+  --sm-surface: #faf4e6;
+  --sm-surface-elevated: #fff9ed;
+  --sm-surface-subtle: #f1e8d4;
+  --sm-input: #f6ecd1;
+  --sm-hover: #eddbac;
+  --sm-ink: #302e29;
+  --sm-text-secondary: #514b40;
+  --sm-muted: #706450;
+  --sm-border: #b6a582;
+  --sm-border-soft: #d5c5a0;
+  --sm-accent: #9a581b;
+  --sm-accent-hover: #774012;
+  --sm-accent-soft: #f3e3b5;
+  --sm-accent-text: #754215;
+  --sm-secondary-accent: #59693d;
+  --sm-strong: #3c3831;
+  --sm-strong-hover: #51483c;
+  --sm-on-strong: var(--sm-ink);
+  --sm-on-strong-muted: var(--sm-text-secondary);
+  --sm-on-accent: var(--sm-ink);
+  --sm-ring: #b4772b80;
+  --sm-overlay: #302e29a6;
+  --sm-waveform-baseline: #c8b990;
+  --sm-waveform: #82755b;
+  --sm-waveform-playhead: #9a581b;
+  --sm-chapter-marker: #706450;
+  --sm-chapter-marker-selected: #9a581b;
+  --sm-transcript-highlight: #f5d77d;
+  --sm-transcript-highlight-text: #302e29;
+  --sm-paper: url('./assets/textures/Cheese/cheese-paper-smooth-v1.png');
+  --sm-desk: url('./assets/textures/Cheese/cheese-old-oak-desk-v1.png');
+  --sm-child-panel-texture: radial-gradient(ellipse at center, #fffdf5b3 0%, #fff6e37a 55%, #f0dfbd80 100%), var(--sm-paper);
+  --sm-child-panel-texture-size: auto, 700px;
+  --sm-child-panel-radius: .8rem;
+  --sm-child-panel-shadow: inset 0 1px 0 #fffdf5, 0 2px 3px #302e2933, 2px 6px 8px -3px #51453240, 0 16px 26px -12px #302e2966;
+  --sm-child-header-bg: #e7dcc0;
+  --sm-child-header-texture: linear-gradient(#e9dcc578, #e9dcc578), var(--sm-paper);
+  --sm-child-header-texture-size: auto, 420px;
+  --sm-child-header-border: #bcaa84;
+  --sm-child-header-shadow: inset 0 1px 0 #fff9e8b3, inset 0 -1px 1px #51453233;
+  --sm-panel-header-bottom-shadow: 0 3px 5px #51453233;
+  --sm-child-header-bottom-shadow: 0 3px 5px #51453240;
+  --sm-panel-reveal-duration: 180;
+  --sm-child-title-align: center;
+  --sm-child-title-bg: #fff8e9;
+  --sm-child-title-texture: linear-gradient(#fff9ec70, #fff9ec80), var(--sm-paper);
+  --sm-child-title-shadow: inset 0 1px 0 #fffdf5, 0 1px 1px #51453240, 1px 4px 5px -2px #302e2966;
+  --sm-paper-button: var(--sm-paper);
+  --sm-handwriting: 'Segoe Print', 'Bradley Hand', 'Chalkboard SE', cursive;
+}
+
+:root[data-theme="cheese"] body,
+:root[data-theme="cheese"] .app-shell {
+  font-family: var(--sm-handwriting);
+}
+
+:root[data-theme="cheese"] .app-shell {
+  position: relative;
+  isolation: isolate;
+  background-image: radial-gradient(ellipse at 12% 0%, #fff5d840, transparent 68%),
+    linear-gradient(#e9ddbf45, #e9ddbf45), var(--sm-desk);
+  background-size: cover, cover, cover;
+  background-position: center, center, center;
+  background-repeat: no-repeat, no-repeat, no-repeat;
+  background-attachment: fixed, fixed, fixed;
+  background-blend-mode: normal, normal, normal;
+}
+
+/* The desk trial replaces the literary overlay; retain its assets for later use. */
+:root[data-theme="cheese"] .theme-background { display: none; }
+
+.theme-background { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+/* Anchor every decorative plane to the viewport, independent of content height. */
+.theme-background-plane { position: absolute; inset: 0; background-repeat: repeat; background-size: var(--sm-desk-tile-width, 1024px) auto; background-position: center top; }
+.desk-doodles { opacity: .07; background-image: url('./assets/textures/Cheese/literary-desk-v5/01-long-doodles.svg'); }
+.desk-art { opacity: var(--sm-desk-art-opacity, .35); background-image: url('./assets/textures/Cheese/literary-desk-v5/02-long-art.svg'); }
+.desk-far { opacity: .12; background-image: url('./assets/textures/Cheese/literary-desk-v5/03-long-obstacles-far.svg'); }
+.desk-near { opacity: .18; background-image: url('./assets/textures/Cheese/literary-desk-v5/05-long-obstacles-near.svg'); }
+.desk-thoughts { opacity: var(--sm-desk-thoughts-opacity, .42); background-image: url('./assets/textures/Cheese/literary-desk-v5/09-margin-thoughts.svg'); }
+
+:root[data-theme="cheese"] h1 {
+  font-family: 'Segoe Script', 'Ink Free', 'Bradley Hand', cursive;
+  font-weight: 700;
+  text-shadow: .3px .4px 0 #302e2930;
+  letter-spacing: .01em;
+}
+
+/* Translucent adhesive tape with clouded fibers and permanent-marker lettering. */
+:root[data-theme="cheese"] h1.page-title-label {
+  position: relative;
+  isolation: isolate;
+  padding: 8px 24px;
+  color: var(--sm-ink);
+  font-family: 'Segoe Print', 'Bradley Hand', 'Ink Free', cursive;
+  font-style: normal;
+  font-weight: 900;
+  letter-spacing: -.025em;
+  -webkit-text-stroke: .25px currentColor;
+  text-shadow: .3px .2px 0 currentColor;
+}
+:root[data-theme="cheese"] h1.page-title-label::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  transform: rotate(-.8deg);
+  background-image: linear-gradient(175deg, #fffdf54d, #fffdf522 28%, #fff9e845 66%, #fffdf52e),
+    repeating-linear-gradient(97deg, #fffef312 0 1px, transparent 1px 4px);
+  backdrop-filter: blur(.4px);
+  border-top: 1px solid #fffef55c;
+  border-bottom: 1px solid #8b79522b;
+  box-shadow: inset 0 1px 2px #fffef54d, inset 0 -1px 2px #73604412;
+  clip-path: polygon(1% 0, 99% 2%, 98% 10%, 100% 18%, 98% 29%, 100% 40%, 98.5% 52%, 100% 65%, 98% 78%, 99.5% 90%, 98.5% 100%, 0 97%, 1.5% 87%, 0 74%, 1.5% 62%, 0 49%, 1.5% 36%, 0 23%, 1.5% 11%);
+}
+
+:root[data-theme="cheese"] :is(h2, h3, strong, b, .font-bold, .font-semibold) {
+  text-shadow: .2px .2px 0 currentColor;
+}
+
+/* Leave timestamps, code, and technical logs in their existing precise typefaces. */
+:root[data-theme="cheese"] :is(.font-mono, pre, code, .tabular-nums) {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  text-shadow: none;
+}
+
+:root[data-theme="cheese"] .app-header {
+  background-color: var(--sm-surface);
+  background-image: linear-gradient(100deg, #ffe6a357, #fff8e2a6), var(--sm-paper);
+  background-size: auto, 800px;
+  background-blend-mode: multiply;
+  border-bottom: 1px solid var(--sm-border);
+  box-shadow: 0 3px 5px #302e2920, 0 12px 24px -18px #302e2966;
+  backdrop-filter: none;
+}
+
+:root[data-theme="cheese"] :is(.bg-white, .workspace-overview, .file-dialog, .bg-stone-50) {
+  background-image: linear-gradient(#fff9ed66, #fff9ed66), var(--sm-paper);
+  background-size: auto, 700px;
+  background-blend-mode: normal;
+}
+
+/* Inner sheets use the same smooth stock with a softly shaded warm wash. */
+:root[data-theme="cheese"] main :is(.bg-stone-50, .bg-white .bg-white, fieldset) {
+  background-color: var(--sm-surface-subtle);
+  background-image: linear-gradient(#c8b38c38, #c8b38c48), var(--sm-paper);
+  background-size: auto, 700px;
+  background-blend-mode: normal;
+}
+
+:root[data-theme="cheese"] :is(.shadow-sm, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl) {
+  box-shadow: 1px 2px 3px #302e2926, 3px 7px 14px -7px #302e2959;
+}
+
+/* A close contact shadow plus a diffuse pigment wash lifts each paper card.
+   The shared texture is painted only beneath the edge, never over its content. */
+:root[data-theme="cheese"] :is(.library-media-card,
+  :is(div, section, article, fieldset, details).border:is(.rounded-lg, .rounded-xl, .rounded-2xl)) {
+  box-shadow: 0 2px 3px -1px #302e2940,
+    2px 7px 10px -5px #302e2959,
+    -3px 5px 12px -7px #51493c40;
+}
+
+:root[data-theme="cheese"] :is(div, section, article, fieldset, details).border:is(.rounded-lg, .rounded-xl, .rounded-2xl):not(.absolute):not(.fixed):not(.sticky) {
+  position: relative;
+}
+
+:root[data-theme="cheese"] :is(.library-media-card,
+  :is(div, section, article, fieldset, details).border:is(.rounded-lg, .rounded-xl, .rounded-2xl))::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  top: calc(100% - 1px);
+  left: 3%;
+  width: 94%;
+  height: 12px;
+  background: url('./assets/textures/Cheese/cheese-watercolor-shadow.jpg') center / 100% 100% no-repeat;
+  mix-blend-mode: multiply;
+  opacity: .36;
+  filter: blur(2px);
+  border-radius: 35% 45% 50% 40%;
+}
+
+:root[data-theme="cheese"] :is(button, summary):is([class*="rounded"], .file-command) {
+  background-image: linear-gradient(#c8b38c30, #c8b38c40), var(--sm-paper-button);
+  background-size: auto, 700px;
+  background-blend-mode: normal;
+  box-shadow: inset 0 1px 0 #fff9e8a6, 0 1px 2px #302e2930;
+  transition: box-shadow 120ms ease, background-color 120ms ease;
+}
+
+/* Shared paper controls: keep text links, covers, and rating gestures unframed. */
+:root[data-theme="cheese"] .desktop-window-tab {
+  background-color: #ece0c7;
+  background-image: linear-gradient(#c8b38c38, #c8b38c48), var(--sm-paper);
+  background-size: auto, 700px;
+  background-blend-mode: normal;
+  box-shadow: inset 0 1px 0 #fffdf3b3, 0 3px 8px -4px #302e2966;
+}
+:root[data-theme="cheese"] .desktop-window-tab button {
+  background-color: transparent;
+  background-image: none;
+}
+:root[data-theme="cheese"] .desktop-window-tab button:hover:not(:disabled) {
+  background-color: #51453214;
+}
+
+:root[data-theme="cheese"] :is(button, summary):is([class*="rounded"], .file-command):not(.rounded-full) {
+  border-radius: 8px 10px 7px 9px / 9px 7px 10px 8px;
+}
+:root[data-theme="cheese"] :is(button, summary):where([class*="rounded"], .file-command):hover:not(:disabled) {
+  box-shadow: inset 0 1px 0 #fff9e8b3, 1px 3px 4px #302e2933;
+}
+:root[data-theme="cheese"] button:disabled { cursor: not-allowed; }
+:root[data-theme="cheese"] button:disabled .lucide { opacity: .55; }
+
+:root[data-theme="cheese"] button.paper-action-dark {
+  background-color: #f4e9ce;
+  background-image: linear-gradient(#fff4d78c, #f5e5be73), var(--sm-paper);
+  background-size: auto, 700px;
+  background-blend-mode: normal;
+  color: var(--sm-ink);
+  border: 1px solid var(--sm-border);
+}
+:root[data-theme="cheese"] button.paper-action-dark:hover:not(:disabled) {
+  background-color: var(--sm-hover);
+}
+:root[data-theme="cheese"] .app-shell button.paper-action-dark {
+  color: var(--sm-ink);
+}
+
+/* Main actions use the same raised paper as adjacent controls. */
+:root[data-theme="cheese"] .workflow-navigation .workflow-nav-item[aria-current] {
+  background-color: var(--sm-accent-soft);
+  background-image: linear-gradient(#f5e5be73, #eddbac80), var(--sm-paper);
+  background-size: auto, 420px;
+  background-blend-mode: multiply;
+  color: var(--sm-on-strong);
+}
+:root[data-theme="cheese"] .processing-workspace label:has(input:is([type="checkbox"], [type="radio"]):checked):is(.bg-amber-50, .bg-sky-50, .bg-emerald-50) {
+  background-image: linear-gradient(#fff9e84d, #fff9e84d), var(--sm-paper);
+  background-size: auto, 620px;
+  background-blend-mode: multiply;
+}
+:root[data-theme="cheese"] .processing-workspace :is([class~="bg-amber-50/60"], [class~="bg-amber-50/70"]) {
+  background-image: linear-gradient(#fef3c670, #fffbeb80), var(--sm-paper);
+  background-size: auto, 620px;
+}
+:root[data-theme="cheese"] .library-navigation button[aria-current="page"]:not(.workflow-nav-item) {
+  background-image: linear-gradient(#fef3c670, #fffbeb80), var(--sm-paper);
+  background-size: auto, 620px;
+}
+
+:root[data-theme="cheese"] :is(#btn-new-job, #btn-save-metadata, #btn-save-metadata-bottom, [data-paper-action]) {
+  background-color: var(--sm-surface);
+  color: var(--sm-ink);
+  border: 1px solid var(--sm-border);
+}
+:root[data-theme="cheese"] :is(#btn-new-job, #btn-save-metadata, #btn-save-metadata-bottom, [data-paper-action]):hover:not(:disabled) {
+  background-color: var(--sm-accent-soft);
+}
+
+:root[data-theme="cheese"] :is(button, summary):active:not(:disabled),
+:root[data-theme="cheese"] :is(button[aria-pressed="true"], .tools-menu[open] > summary) {
+  box-shadow: inset 2px 3px 5px #302e2966, inset -1px -1px 2px #fff7dfd9;
+  background-image: linear-gradient(#51453226, #5145320d), var(--sm-paper-button);
+}
+
+:root[data-theme="cheese"] :is(summary, button[aria-expanded], button.workspace-header-toggle, .workspace-panel-header button),
+:root[data-theme="cheese"] :is(summary, button[aria-expanded], button.workspace-header-toggle, .workspace-panel-header button):is(:hover, :active, :focus, [aria-pressed="true"]):not(:disabled) {
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  transition: none;
+}
+
+:root[data-theme="cheese"] :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select) {
+  box-shadow: inset 1px 2px 3px #302e2926, 0 1px 0 #fff9e88c;
+}
+
+/* A light wash leaves just enough fiber visible behind editable text. */
+:root[data-theme="cheese"] {
+  --sm-input-texture: linear-gradient(#fff9ebd9, #fff9ebd9), var(--sm-paper);
+}
+:root[data-theme="cheese"] :is(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="hidden"]),
+  textarea, select
+) {
+  background-image: var(--sm-input-texture);
+  background-size: auto, 420px;
+  background-repeat: repeat;
+}
+
+/* Keep the gold/blue selection cues, with pigment washed into paper fibers. */
+:root[data-theme="cheese"] .metadata-category-target[data-active="true"] {
+  background-image: radial-gradient(ellipse at 12% 20%, var(--sm-category-pigment), transparent 70%),
+    linear-gradient(110deg, var(--sm-category-wash), var(--sm-category-wash-light)), var(--sm-paper);
+  background-size: auto, auto, 620px;
+  background-blend-mode: normal;
+}
+:root[data-theme="cheese"] .metadata-category-target[data-category="genres"] {
+  --sm-category-pigment: #fbbf2426;
+  --sm-category-wash: #fef3c670;
+  --sm-category-wash-light: #fffbeb80;
+}
+:root[data-theme="cheese"] .metadata-category-target[data-category="tags"] {
+  --sm-category-pigment: #38bdf826;
+  --sm-category-wash: #e0f2fe70;
+  --sm-category-wash-light: #f0f9ff80;
+}
+
+/* The selected target is a lifted paper label, with the wash showing through. */
+:root[data-theme="cheese"] .metadata-category-target .metadata-quick-add-target[aria-pressed="true"] {
+  background-color: transparent;
+  background-image: none;
+  border: 1px solid #fff9e880;
+  border-radius: 3px 5px 4px 3px;
+  padding: 2px 6px;
+  box-shadow: inset 0 1px 0 #fffdf380, 0 2px 2px -1px #302e2959, 1px 3px 5px -2px #302e2940;
+  transform: translateY(-1px);
+}
+
+:root[data-theme="cheese"] .quick-player {
+  border-top-style: dashed;
+}
+:root[data-theme="cheese"] .quick-player [role="slider"] {
+  box-shadow: inset 1px 2px 3px #302e294d;
+}
+
+/* Soft rounded stickers for the chapter and audio choices. */
+:root[data-theme="cheese"] .chapter-option-notes {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 260px));
+  align-items: stretch; gap: 12px;
+}
+:root[data-theme="cheese"] .chapter-option-note {
+  --note-paper: #e8dfbb;
+  position: relative; min-width: 0; padding: 12px 13px;
+  border: 1px solid #a99a7759; border-radius: 18px;
+  background: linear-gradient(145deg, #fffdf355, transparent 80%), var(--note-paper);
+  background-color: var(--note-paper) !important;
+  box-shadow: 0 2px 3px -2px #463b3555, inset 0 0 0 3px #fffdf344;
+  justify-content: flex-start; transition: box-shadow .15s, border-color .15s;
+}
+:root[data-theme="cheese"] .chapter-option-note:nth-child(2) { --note-paper: #dce0cb; }
+:root[data-theme="cheese"] .chapter-option-note:nth-child(3) { --note-paper: #e6d5c8; }
+:root[data-theme="cheese"] .chapter-option-note:has(input:checked) {
+  border-color: #98692e; box-shadow: 0 0 0 1px #98692e66, 0 2px 4px -2px #463b3555, inset 0 0 0 3px #fffdf344;
+}
+:root[data-theme="cheese"] .chapter-option-note:has(input:focus-visible) { outline: 2px solid var(--sm-ring); outline-offset: 3px; }
+:root[data-theme="cheese"] .chapter-option-note:has(input[type="radio"]:disabled) { opacity: .6; }
+:root[data-theme="cheese"] .chapter-option-note input[type="radio"] { position: absolute; top: 14px; left: 13px; margin: 0; width: 14px; height: 14px; }
+:root[data-theme="cheese"] .chapter-option-note .justify-between { flex-direction: column; align-items: flex-start; gap: 4px; }
+:root[data-theme="cheese"] .chapter-option-note .justify-between > div:first-child,
+:root[data-theme="cheese"] .chapter-option-note > span:first-child { padding-left: 22px; }
+:root[data-theme="cheese"] .chapter-option-note .space-x-2 > :not([hidden]) ~ :not([hidden]) { margin-left: 0; }
+:root[data-theme="cheese"] .chapter-option-note .pl-6 { padding-left: 0; }
+:root[data-theme="cheese"] .chapter-option-note p { font-size: 12px; line-height: 1.4; }
+:root[data-theme="cheese"] .chapter-option-note .font-bold { font-size: 13px; line-height: 1.35; }
+
+/* Theme-specific decorative artwork retains the original accessible controls. */
+:root[data-theme="cheese"] :is(.disclosure-chevron, button[aria-expanded] .lucide-chevron-down,
+  button[aria-expanded] .lucide-chevron-right, .lucide-play, .lucide-library) {
+  background: var(--sm-icon) center / contain no-repeat;
+}
+:root[data-theme="cheese"] :is(.disclosure-chevron, button[aria-expanded] .lucide-chevron-down,
+  button[aria-expanded] .lucide-chevron-right) { --sm-icon: url('./assets/Icons/cheese/carrot.svg'); }
+:root[data-theme="cheese"] button[aria-expanded="false"] .lucide-chevron-right { transform: rotate(-90deg); }
+:root[data-theme="cheese"] .lucide-play { --sm-icon: url('./assets/Icons/cheese/play.svg'); }
+
+:root[data-theme="cheese"] :is(.disclosure-chevron, button[aria-expanded] .lucide-chevron-down,
+  button[aria-expanded] .lucide-chevron-right, .lucide-play, .lucide-library) > * { visibility: hidden; }
+
+.theme-swatch-cheese { background: #dbcba3 var(--sm-paper, url('./assets/textures/Cheese/cheese-paper-base.jpg')) center / 80px; }
+.theme-swatch-cheese span { background: #e7b64d; }
+
+/* Native scrolling with a rubbed-charcoal thumb on a paper track. */
+:root[data-theme="cheese"],
+:root[data-theme="cheese"] * {
+  scrollbar-color: #625a4d transparent;
+  scrollbar-width: thin;
+}
+
+@supports selector(::-webkit-scrollbar) {
+  :root[data-theme="cheese"],
+  :root[data-theme="cheese"] * { scrollbar-color: auto; scrollbar-width: auto; }
+  :root[data-theme="cheese"]::-webkit-scrollbar-button,
+  :root[data-theme="cheese"] *::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+
+  :root[data-theme="cheese"]::-webkit-scrollbar,
+  :root[data-theme="cheese"] *::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+  }
+
+  :root[data-theme="cheese"]::-webkit-scrollbar-track,
+  :root[data-theme="cheese"] *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  :root[data-theme="cheese"]::-webkit-scrollbar-thumb,
+  :root[data-theme="cheese"] *::-webkit-scrollbar-thumb {
+    min-height: 36px;
+    min-width: 36px;
+    border: 2px solid transparent;
+    border-radius: 8px;
+    background-color: #625a4d;
+    background-image: none;
+    background-clip: padding-box;
+    box-shadow: none;
+  }
+
+  :root[data-theme="cheese"]::-webkit-scrollbar-thumb:hover,
+  :root[data-theme="cheese"] *::-webkit-scrollbar-thumb:hover { background-color: #494338; }
+
+  :root[data-theme="cheese"]::-webkit-scrollbar-thumb:active,
+  :root[data-theme="cheese"] *::-webkit-scrollbar-thumb:active { background-color: #302e29; }
+
+  :root[data-theme="cheese"]::-webkit-scrollbar-corner,
+  :root[data-theme="cheese"] *::-webkit-scrollbar-corner { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="cheese"] :is(button, summary, .disclosure-chevron) { transition: none; }
+}
+@media (forced-colors: active) {
+  :root[data-theme="cheese"],
+  :root[data-theme="cheese"] * { scrollbar-color: auto; }
+  :root[data-theme="cheese"]::-webkit-scrollbar-thumb,
+  :root[data-theme="cheese"] *::-webkit-scrollbar-thumb {
+    background: ButtonText;
+    border-color: Canvas;
+    box-shadow: none;
+  }
+  :root[data-theme="cheese"] :is(.disclosure-chevron, button[aria-expanded] .lucide-chevron-down,
+    button[aria-expanded] .lucide-chevron-right, .lucide-play, .lucide-library) > * { visibility: visible; }
+}
+
+:root[data-theme="cheese"] .processing-model-card:has(input[name="selectedModel"]:checked) {
+  background: var(--sm-paper); background-color: var(--sm-surface) !important; background-size: 700px;
+}
+
+/* Match the chapter-choice paper without inheriting its radio positioning. */
+:root[data-theme="cheese"] .processing-models :is(.processing-model-card, .processing-tuning-card) {
+  --note-paper: #e8dfbb;
+  border: 1px solid #a99a7759; border-radius: 18px;
+  background: linear-gradient(145deg, #fffdf355, transparent 80%), var(--note-paper) !important;
+  box-shadow: 0 2px 3px -2px #463b3555, inset 0 0 0 3px #fffdf344;
+}
+:root[data-theme="cheese"] .processing-models :is(.processing-model-card, .processing-tuning-card):nth-child(2) { --note-paper: #dce0cb; }
+:root[data-theme="cheese"] .processing-models .processing-model-card:nth-child(3) { --note-paper: #e6d5c8; }
+:root[data-theme="cheese"] .processing-models .processing-model-card:has(input[name="selectedModel"]:checked) {
+  background: var(--sm-paper) var(--sm-surface) !important; background-size: 700px !important;
+  border-color: #98692e; box-shadow: 0 0 0 1px #98692e66, 0 2px 4px -2px #463b3555, inset 0 0 0 3px #fffdf344;
+}
+
+/* Cheese uses dark ink throughout its paper surfaces, including primary actions. */
+:root[data-theme="cheese"] :is(button, summary, [role="button"]) { color: var(--sm-ink); }
+:root[data-theme="cheese"] :is(.text-white, .text-stone-50, .text-stone-100, .text-gray-50, .text-gray-100, .text-slate-50, .text-slate-100, .text-neutral-50, .text-neutral-100, .text-amber-50, .text-stone-200, .text-amber-100) { color: var(--sm-ink); }
+
+:root[data-theme="cheese"] :is(.bg-stone-800, .bg-stone-900, .bg-stone-950) { background-color: var(--sm-surface-subtle); }

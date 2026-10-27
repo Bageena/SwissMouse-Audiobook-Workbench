@@ -1,23 +1,10 @@
 import React, { useState } from 'react';
+import { AdaptiveButton } from './AdaptiveButton';
 import { PipelineStepState, RerunnablePipelineStep, Step1ProcessState } from '../types';
-import {
-  RefreshCw,
-  XCircle,
-  CheckCircle2,
-  AlertCircle,
-  FileAudio,
-  Radio,
-  Sparkles,
-  Terminal,
-  Clock,
-  Check,
-  ChevronDown,
-  ChevronUp,
-  RotateCcw,
-  Play,
-} from 'lucide-react';
+import { RefreshCw, XCircle, CheckCircle2, AlertCircle, Terminal, Clock, Check, RotateCcw, Play } from 'lucide-react';
 
 interface Step1ProgressPanelProps {
+  ready?: boolean;
   progress: Step1ProcessState;
   onCancel: () => void;
   onDismissSummary?: () => void;
@@ -27,7 +14,13 @@ interface Step1ProgressPanelProps {
   processingAction?: React.ReactNode;
 }
 
+export function hasProcessingDetails(progress: Step1ProcessState, pipelineSteps?: Partial<Record<RerunnablePipelineStep, PipelineStepState>>) {
+  return progress.isActive || progress.stage !== 'idle' || Boolean(progress.error || progress.summary || progress.logs?.length)
+    || Object.entries(pipelineSteps || {}).some(([key, step]) => key !== 'metadata_processing' && Boolean(step?.hasOutput || step?.status));
+}
+
 export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
+  ready,
   progress,
   onCancel,
   onDismissSummary,
@@ -41,6 +34,7 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
   // The server supplies this list with the job. This avoids a second, easily
   // divergent mapping between pipeline stages and the display.
   const stages = progress.stages;
+  const showDetails = hasProcessingDetails(progress, pipelineSteps);
 
   const getStageStatus = (stageIndex: number) => {
     const step = stages[stageIndex]?.key as RerunnablePipelineStep;
@@ -70,11 +64,12 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
   return (
     <div
       id="step1-progress-feedback-panel"
-      className="bg-white rounded-xl border border-amber-300 shadow-md p-5 space-y-4 transition-all animate-in fade-in slide-in-from-top-2"
+      data-collapsed={!showDetails}
+      className="workspace-panel processing-panel processing-progress bg-white rounded-xl border border-amber-300 shadow-md"
     >
       {/* Top Title & Status Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-stone-100">
-        <div className="flex items-center space-x-3">
+      <header className={`workspace-panel-header workspace-toolbar flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 ${showDetails ? 'border-b border-stone-200' : 'workspace-panel-header-collapsed'}`}>
+        <div className="processing-progress-status flex items-center space-x-3">
           <div className={`p-2 rounded-lg ${
             progress.stage === 'error'
               ? 'bg-red-100 text-red-700'
@@ -92,8 +87,10 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h3 className="text-sm font-bold text-stone-900">
-                {progress.stage === 'completed'
+              <h3 className="workspace-panel-title inline-block text-sm font-bold text-stone-900">
+                {!progress.isActive && progress.stage === 'idle' && ready !== undefined
+                  ? ready ? 'Ready for Processing' : 'Not Ready'
+                  : progress.stage === 'completed'
                   ? 'Step 1 Processing Complete'
                   : progress.stage === 'error'
                   ? 'Step 1 Processing Error'
@@ -112,7 +109,7 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
         </div>
 
         {/* Action button & timer */}
-        <div className="flex items-center space-x-3 self-end sm:self-auto">
+        <div className="processing-actions adaptive-actions flex items-center space-x-3 self-end sm:self-auto">
           {processingAction}
           {progress.isActive && progress.elapsedSeconds > 0 && (
             <div className="flex items-center space-x-1 text-xs text-stone-500 font-mono">
@@ -122,15 +119,13 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
           )}
 
           {progress.canCancel && !progress.isCancelling && (
-            <button
+            <AdaptiveButton
               id="btn-step1-cancel"
               onClick={onCancel}
+              icon={<XCircle />} label="Cancel Processing" compactLabel="Cancel" tone="danger"
               className="px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
               title="Cancel processing and preserve project state"
-            >
-              <XCircle className="w-3.5 h-3.5" />
-              <span>Cancel Processing</span>
-            </button>
+            />
           )}
 
           {progress.isCancelling && (
@@ -140,26 +135,27 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
           )}
 
           {progress.stage === 'completed' && onDismissSummary && (
-            <button
+            <AdaptiveButton
               onClick={onDismissSummary}
+              icon={<Check />} label="Dismiss processing summary" compactLabel="Dismiss"
               className="px-3 py-1 text-xs font-medium text-stone-500 hover:text-stone-800 hover:bg-stone-100 rounded cursor-pointer"
-            >
-              Dismiss
-            </button>
+            />
           )}
         </div>
-      </div>
+      </header>
+      {showDetails && <div className="space-y-4 p-5">
 
       {/* Step Sequence Indicators */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1">
+      <div className="processing-stage-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1">
         {stages.map((stg, idx) => {
           const status = getStageStatus(idx);
-          const hasOutput = pipelineSteps?.[stg.key as RerunnablePipelineStep]?.hasOutput ?? status === 'done';
+          const hasOutput = pipelineSteps?.[stg.key as RerunnablePipelineStep]?.hasOutput === true;
           const action = hasOutput ? 'Rerun' : 'Run';
           return (
             <div
               key={stg.key}
-              className={`relative min-h-28 p-2 pb-9 rounded-lg border text-left space-y-1 transition-all ${
+              title={`${stg.label}: ${stg.desc}`}
+              className={`processing-stage-card relative min-h-28 p-2 pb-9 rounded-lg border text-left space-y-1 ${
                 status === 'done'
                   ? 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
                   : status === 'active'
@@ -244,14 +240,12 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
       {/* Live Log Stream Toggle */}
       {progress.logs && progress.logs.length > 0 && (
         <div className="space-y-1.5 pt-1">
-          <button
+          <AdaptiveButton
             onClick={() => setShowLogs(!showLogs)}
+            icon={<Terminal />} label={showLogs ? 'Hide live terminal log' : `Show live log stream (${progress.logs.length} entries)`}
+            compactLabel={showLogs ? 'Hide logs' : 'Show logs'} aria-expanded={showLogs}
             className="flex items-center space-x-1.5 text-xs text-stone-600 hover:text-stone-900 font-medium cursor-pointer"
-          >
-            <Terminal className="w-3.5 h-3.5 text-stone-500" />
-            <span>{showLogs ? 'Hide live terminal log' : `Show live log stream (${progress.logs.length} entries)`}</span>
-            {showLogs ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </button>
+          />
 
           {showLogs && (
             <div className="bg-stone-100 text-stone-800 p-3 rounded-lg font-mono text-[11px] max-h-36 overflow-y-auto space-y-0.5 border border-stone-200 shadow-inner">
@@ -264,6 +258,7 @@ export const Step1ProgressPanel: React.FC<Step1ProgressPanelProps> = ({
           )}
         </div>
       )}
+      </div>}
     </div>
   );
 };

@@ -4,6 +4,8 @@ import { validateNormalizedTranscription } from './transcription-engine';
 import { detectChapterHeadings } from './chapter-detection';
 import type { NormalizedSegment } from './transcription-engine';
 import vm from 'node:vm';
+import { createTestFixture } from './test-fixtures.mjs';
+import { cloneProject } from './project-store';
 
 function chapterSegment(text: string, start = 10): NormalizedSegment {
   return { id: 0, start, end: start + 4, text, words: [] };
@@ -87,13 +89,57 @@ for (const [type, titles] of [
 }
 
 test('structural headings accept digits, words and Roman numerals', () => {
-  for (const prefix of ['Part', 'Book', 'Section']) {
+  for (const prefix of ['Part', 'Book', 'Section', 'Side']) {
     for (const number of ['1', 'One', 'I']) {
       const [heading] = detectChapterHeadings([chapterSegment(`${prefix} ${number}`)]);
       assert.equal(heading.headingType, 'section_divider');
       assert.equal(heading.chapterNumber, 1);
     }
   }
+});
+
+test('spoken side announcements use saved word starts, including split segments and unpunctuated pauses', () => {
+  const segments: NormalizedSegment[] = [
+    { id: 0, start: 3500, end: 3588.77, text: 'Some more. Side', words: [
+      { word: 'Some', start: 3571.21, end: 3571.53 }, { word: 'more.', start: 3571.53, end: 3572.05 },
+      { word: 'Side', start: 3588.13, end: 3588.77 },
+    ] },
+    { id: 1, start: 3588.77, end: 3593.04, text: 'two. After the', words: [
+      { word: 'two.', start: 3588.77, end: 3589.05 }, { word: 'After', start: 3592.28, end: 3592.84 },
+      { word: 'the', start: 3592.84, end: 3593.04 },
+    ] },
+    { id: 2, start: 7200, end: 7205, text: 'Side 3 Dawn came', words: [
+      { word: 'Side', start: 7200.125, end: 7200.6 }, { word: '3', start: 7200.6, end: 7201 },
+      { word: 'Dawn', start: 7204, end: 7204.5 }, { word: 'came', start: 7204.5, end: 7205 },
+    ] },
+  ];
+  assert.deepEqual(detectChapterHeadings(segments), [
+    { text: 'Side two', start: 3588.13, end: 3589.05, headingType: 'section_divider', chapterNumber: 2, transcriptWordIndex: 2 },
+    { text: 'Side 3', start: 7200.125, end: 7201, headingType: 'section_divider', chapterNumber: 3, transcriptWordIndex: 6 },
+  ]);
+});
+
+test('ordinary side references and a following sentence number are not side announcements', () => {
+  for (const text of ['On the other side two people waited.', 'Side two of the page was blank.',
+    'Side two people waited.', 'Side. Three people waited.', 'Side, two people waited.']) {
+    assert.deepEqual(detectChapterHeadings([chapterSegment(text)]), [], text);
+  }
+  const words = ['On', 'the', 'other', 'side', 'two.', 'People', 'waited.']
+    .map((word, i) => ({ word, start: 10 + i * 0.2, end: 10.2 + i * 0.2 }));
+  assert.deepEqual(detectChapterHeadings([
+    { id: 0, start: 10, end: 10.6, text: 'On the other', words: words.slice(0, 3) },
+    { id: 1, start: 10.6, end: 11.4, text: 'side two. People waited.', words: words.slice(3) },
+  ]), []);
+});
+
+test('side announcements absent from saved words are not invented from segment text or numbering gaps', () => {
+  assert.deepEqual(detectChapterHeadings([{ id: 0, start: 10, end: 20,
+    text: 'Side three. Dawn came.', words: [
+      { word: 'Dawn', start: 18, end: 19 }, { word: 'came.', start: 19, end: 20 },
+    ],
+  }]), []);
+  assert.deepEqual(detectChapterHeadings([chapterSegment('Side two.', 100), chapterSegment('Side four.', 200)])
+    .map(heading => heading.chapterNumber), [2, 4]);
 });
 
 test('keeps Part Two followed shortly by Chapter Twelve', () => {
@@ -301,8 +347,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { transcriptionEngines } from './transcription-engine';
+import { initialDetectedChapters } from '../src/utils/chapterSuggestions';
 
-test('draft chapter finalization retains every candidate even when source chapters exist', () => {
+test('draft chapter finalization retains spoken candidates and excludes unaccepted experimental suggestions', () => {
   // Exercise the server's actual finalization block without starting transcription
   // or a server; existing source chapters remain available for manual selection.
   const server = fs.readFileSync(path.resolve('server.ts'), 'utf8');
@@ -312,10 +359,11 @@ test('draft chapter finalization retains every candidate even when source chapte
   const generatedCandidates = [
     { candidate_start: '00:00:10.000', proposed_title: 'Chapter Twelve', confidence: '0', status: 'review' },
     { candidate_start: '00:00:12.000', proposed_title: 'Chapter Twenty Three', confidence: '0', status: 'review', headingType: 'numbered_chapter', chapterNumber: 23, recovered: true, transcriptWordIndex: 42 },
+    { candidate_start: '00:00:20.000', proposed_title: 'Section 1', confidence: '', status: 'review', suggestionOnly: true },
   ];
   const existingChapters = [{ start: '00:00:00.000', title: 'Source chapter' }];
   const job = { candidates: [], chapters: [], existingChapters };
-  vm.runInNewContext(server.slice(start, end), { job, generatedCandidates, setStep1Stage() {} });
+  vm.runInNewContext(server.slice(start, end), { job, generatedCandidates, initialDetectedChapters, cloneProject, setStep1Stage() {} });
   assert.equal(job.candidates, generatedCandidates);
   assert.equal(job.chapters.length, 3);
   assert.equal(job.chapters[0].title, 'Prologue');
@@ -329,8 +377,10 @@ test('draft chapter finalization retains every candidate even when source chapte
 });
 
 const python = path.resolve('runtime/venv/Scripts/python.exe');
-test('Python execution routes each engine and cache independently', { skip: !fs.existsSync(python) }, async () => {
-  const root = fs.mkdtempSync(path.resolve('.cache/transcription-routing-'));
+test('Python execution routes each engine and cache independently', { skip: !fs.existsSync(python) }, async t => {
+  const fixture = createTestFixture(path.resolve('.cache/transcription-routing-'));
+  const { root } = fixture;
+  t.after(() => fixture.cleanup());
   // Test-only modules record the actual arguments delivered to each Python backend.
   fs.writeFileSync(path.join(root, 'faster_whisper.py'), `
 from types import SimpleNamespace
@@ -368,8 +418,10 @@ def load_model(name, device, download_root):
 
 const snapshots = path.resolve('models/whisperx/models--Systran--faster-whisper-tiny/snapshots');
 const snapshot = fs.existsSync(snapshots) ? fs.readdirSync(snapshots).map(name => path.join(snapshots, name)).find(dir => fs.existsSync(path.join(dir, 'model.bin'))) : undefined;
-test('installed Faster Whisper performs real offline CPU inference', { skip: !fs.existsSync(python) || !snapshot, timeout: 60000 }, async () => {
-  const root = fs.mkdtempSync(path.resolve('.cache/transcription-live-'));
+test('installed Faster Whisper performs real offline CPU inference', { skip: !fs.existsSync(python) || !snapshot, timeout: 60000 }, async t => {
+  const fixture = createTestFixture(path.resolve('.cache/transcription-live-'));
+  const { root } = fixture;
+  t.after(() => fixture.cleanup());
   const audio = path.join(root, 'silence.wav');
   execFileSync(python, ['-c', 'import wave,sys; w=wave.open(sys.argv[1],"wb"); w.setparams((1,2,16000,0,"NONE","not compressed")); w.writeframes(bytes(32000)); w.close()', audio], {windowsHide:true});
   const result = await transcriptionEngines['faster-whisper'].transcribe({

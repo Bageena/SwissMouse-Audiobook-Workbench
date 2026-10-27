@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BookOpen, Download, Loader2, Search } from 'lucide-react';
 import type { AudiobookJob } from '../types';
 import type { LibriVoxBook, LibriVoxProgress, LibriVoxSearchField, LibriVoxSearchResult } from '../librivox';

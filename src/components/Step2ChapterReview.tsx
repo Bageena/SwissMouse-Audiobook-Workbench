@@ -1,36 +1,31 @@
+import { ChapterResetDialog } from './ChapterResetDialog';
+import { ChapterSuggestions } from './ChapterSuggestions';
+import { candidateChapter } from '../utils/chapterSuggestions';
+import { PreviewPanel } from './PreviewPanel';
+import { chapterActivity, defaultReviewChapters } from '../utils/chapterReviewActivity';
+import { createPortal } from 'react-dom';
+import { ToolbarPopover } from './ToolbarPopover';
+import { readStored, writeStored } from '../utils/libraryWorkspace';
+import { ResizableColumns } from './ResizableColumns';
+import { DesktopWindow } from './DesktopWorkspace';
+import { X } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlignedWord, AudiobookJob, ChapterCandidate, ChapterEntry } from '../types';
 import { ChapterAudioPlayer, ActiveAudioTrack } from './ChapterAudioPlayer';
+import { BulkChapterEditor } from './BulkChapterEditor';
 import { cleanChapterTitles, undoChapterTitleCleanup, type TitleCleanupUndo } from '../utils/chapterTitles';
-import { buildAlignedWords, findClosestTranscriptWordIndex, findTranscriptWordIndex, getTranscriptWordsNear, parseTimestampToMs, revealTranscriptWord, transcriptPageOffset } from '../utils/wordAlignment';
-import { applyChapterNumberFormat, applyDefaultChapterEnds, formatChapterTitle, formatTimestampMs, getSessionChapterNumberFormat, isIncompleteChapter, parseCsvRow, prepareChapters, validateChapterEntries, type ChapterNumberFormat } from '../utils/chapters';
-import {
-  Check,
-  Plus,
-  Trash2,
-  Download,
-  Upload,
-  AlertTriangle,
-  CheckCircle2,
-  Clock,
-  Sparkles,
-  ArrowRight,
-  ChevronDown,
-  FileText,
-  Volume2,
-  Sliders,
-  Play,
-  Pause,
-  Info,
-  Scissors,
-  ArrowUp,
-  ArrowDown,
-  GripVertical
-} from 'lucide-react';
+import { planChapterExport } from '../utils/chapterExport';
+import { buildAlignedWords, buildTranscriptSearchIndex, searchTranscriptWords, findClosestTranscriptWordIndex, findTranscriptWordIndex, getTranscriptWordsNear, parseTimestampToMs, revealTranscriptWord, transcriptPageOffset } from '../utils/wordAlignment';
+import { TranscriptTimingWarning } from './TranscriptTimingWarning';
+import { applyChapterNumberFormat, applyDefaultChapterEnds, formatChapterTitle, formatTimestampMs, getSessionChapterNumberFormat, isIncompleteChapter, prepareChapters, validateChapterEntries, type ChapterNumberFormat } from '../utils/chapters';
+import { Save, Loader2, Check, Plus, Trash2, AlertTriangle, CheckCircle2, Sparkles, ArrowRight, FileText, Play, Pause, Info, ArrowUp, ArrowDown, GripVertical, Pencil, RotateCcw } from 'lucide-react';
 
 interface Step2Props {
+  actionHost?: HTMLElement | null;
   job: AudiobookJob;
   onSaveChapters: (chapters: ChapterEntry[]) => Promise<void>;
+  draftChapters?: ChapterEntry[];
+  onDraftChange: (jobId: string, chapters: ChapterEntry[], hasEdits: boolean) => void;
   onNextStep: () => void;
 }
 
@@ -46,19 +41,22 @@ export const moveChapter = (list: ChapterEntry[], fromIndex: number, toIndex: nu
 };
 
 export const Step2ChapterReview: React.FC<Step2Props> = ({
+  actionHost,
   job,
   onSaveChapters,
+  draftChapters,
+  onDraftChange,
   onNextStep,
 }) => {
   const transcriptWords = job.transcriptWords || [];
-  const sourceChapters = job.chapters.length > 0
-    ? [...job.chapters]
+  const sourceChapters = (draftChapters || job.chapters).length > 0
+    ? [...(draftChapters || job.chapters)]
     : [{ id: 'c1', start: '00:00:00.000', title: 'Chapter 1', headingType: 'numbered_chapter' as const, chapterNumber: 1 }];
   const [chapterNumberFormat, setChapterNumberFormat] = useState<ChapterNumberFormat>(() => getSessionChapterNumberFormat(job.id));
   const [chapters, setChapters] = useState<ChapterEntry[]>(() =>
     applyChapterNumberFormat(prepareChapters(sourceChapters, job.totalDurationSeconds, chapterNumberFormat), chapterNumberFormat).map(chapter => ({
       ...chapter,
-      transcriptWordIndex: chapter.transcriptWordIndex ?? findClosestTranscriptWordIndex(
+      transcriptWordIndex: chapter.timingSource === 'recheck' || chapter.timingSource === 'source' ? undefined : chapter.transcriptWordIndex ?? findClosestTranscriptWordIndex(
         transcriptWords,
         Math.max(0, parseTimestampToMs(chapter.start)) / 1000,
       ),
@@ -67,37 +65,70 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
 
   const [candidates, setCandidates] = useState<ChapterCandidate[]>(job.candidates.map(candidate => ({
     ...candidate,
-    transcriptWordIndex: candidate.transcriptWordIndex ?? findClosestTranscriptWordIndex(
+    transcriptWordIndex: candidate.timingSource === 'recheck' || candidate.timingSource === 'source' ? undefined : candidate.transcriptWordIndex ?? findClosestTranscriptWordIndex(
       transcriptWords,
       Math.max(0, parseTimestampToMs(candidate.candidate_start)) / 1000,
     ),
   })));
+  const baseline = useMemo(() => defaultReviewChapters(job), [job]);
+  const [savedNumberFormat, setSavedNumberFormat] = useState(chapterNumberFormat);
+  const savedDisplayChapters = useMemo(() => {
+    const source = job.chapters.length ? job.chapters : [{ id: 'c1', start: '00:00:00.000', title: 'Chapter 1', headingType: 'numbered_chapter' as const, chapterNumber: 1 }];
+    return applyChapterNumberFormat(prepareChapters(source, job.totalDurationSeconds, savedNumberFormat), savedNumberFormat);
+  }, [job.chapters, job.totalDurationSeconds, savedNumberFormat]);
+  // The note is a live list of pending edits, not a history of already saved work.
+  const activity = useMemo(() => chapterActivity(savedDisplayChapters, chapters), [savedDisplayChapters, chapters]);
+  const [resetRequested, setResetRequested] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [titleCleanupUndo, setTitleCleanupUndo] = useState<TitleCleanupUndo>([]);
+  const [bulkEditUndo, setBulkEditUndo] = useState<TitleCleanupUndo>([]);
+  const [showBulkEditor, setShowBulkEditor] = useState(false);
+  const [editorPosition] = useState(() => readStored<{ chapterId?: string; search?: string; offset?: number; transcriptScroll?: number; chapterScroll?: number; selectedIds?: string[] }>(`swissmouse-chapter-position-${job.id}`, {}, true) || {});
+  const [selectedChapterIds, setSelectedChapterIds] = useState<Set<string>>(() => new Set(Array.isArray(editorPosition.selectedIds) ? editorPosition.selectedIds.filter(id => chapters.some(chapter => chapter.id === id)) : []));
+  const currentSelection = useMemo(() => new Set(chapters.filter(chapter => selectedChapterIds.has(chapter.id)).map(chapter => chapter.id)), [chapters, selectedChapterIds]);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [importCsvText, setImportCsvText] = useState('');
+  const hasUnsavedChanges = activity.length > 0;
+  useEffect(() => { onDraftChange(job.id, chapters, hasUnsavedChanges); }, [job.id, chapters, hasUnsavedChanges, onDraftChange]);
   const [draggedChapterId, setDraggedChapterId] = useState<string | null>(null);
 
   // Audio preview playback state
   const [activeTrack, setActiveTrack] = useState<ActiveAudioTrack | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [selectedMissingChapterId, setSelectedMissingChapterId] = useState<string | null>(null);
+
+  const [editingChapterId, setEditingChapterId] = useState<string | null>(typeof editorPosition.chapterId === 'string' && chapters.some(chapter => chapter.id === editorPosition.chapterId) ? editorPosition.chapterId : null);
+  const editingChapterIndex = chapters.findIndex(chapter => chapter.id === editingChapterId);
+  const editingChapter = chapters[editingChapterIndex];
   const [wordUpdateNotification, setWordUpdateNotification] = useState<string | null>(null);
-  const [transcriptSearch, setTranscriptSearch] = useState('');
-  const [transcriptOffset, setTranscriptOffset] = useState(0);
+  const [transcriptSearch, setTranscriptSearch] = useState(typeof editorPosition.search === 'string' ? editorPosition.search : '');
+  const [transcriptOffset, setTranscriptOffset] = useState(Number.isInteger(editorPosition.offset) && editorPosition.offset! >= 0 ? editorPosition.offset! : 0);
   const [transcriptSelection, setTranscriptSelection] = useState<{ wordIndex: number; requestId: number } | null>(null);
   const selectedTranscriptWordIndex = transcriptSelection?.wordIndex ?? null;
   const transcriptWordRefs = useRef(new Map<number, HTMLButtonElement>());
   const transcriptPane = useRef<HTMLDivElement>(null);
+  const chapterPane = useRef<HTMLDivElement>(null);
+  const positionRef = useRef(editorPosition);
+  useEffect(() => {
+    positionRef.current = { ...positionRef.current, chapterId: editingChapterId || undefined, search: transcriptSearch, offset: transcriptOffset, selectedIds: [...selectedChapterIds] };
+    writeStored(`swissmouse-chapter-position-${job.id}`, positionRef.current, true);
+  }, [job.id, editingChapterId, transcriptSearch, transcriptOffset, selectedChapterIds]);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (transcriptPane.current) transcriptPane.current.scrollTop = Math.max(0, Number(editorPosition.transcriptScroll) || 0);
+      if (chapterPane.current) chapterPane.current.scrollTop = Math.max(0, Number(editorPosition.chapterScroll) || 0);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [job.id]);
+  const rememberPane = (pane: 'transcriptScroll' | 'chapterScroll', value: number) => {
+    positionRef.current = { ...positionRef.current, [pane]: value };
+    writeStored(`swissmouse-chapter-position-${job.id}`, positionRef.current, true);
+  };
   const seekRevision = useRef(0);
+  const selectedTimelineTime = useRef<number | null>(null);
   const transcriptPageSize = 1200;
-  const matchingTranscriptWords = useMemo(() => {
-    const query = transcriptSearch.trim().toLowerCase();
-    const indexed = transcriptWords.map((word, transcriptWordIndex) => ({ word, transcriptWordIndex }));
-    return query ? indexed.filter(item => item.word.word.toLowerCase().includes(query)) : indexed;
-  }, [transcriptWords, transcriptSearch]);
+  const transcriptSearchIndex = useMemo(() => buildTranscriptSearchIndex(transcriptWords), [transcriptWords]);
+  const matchingTranscriptWords = useMemo(() => searchTranscriptWords(transcriptSearchIndex, transcriptSearch), [transcriptSearchIndex, transcriptSearch]);
+  useEffect(() => { const maxOffset = Math.max(0, Math.floor((matchingTranscriptWords.length - 1) / transcriptPageSize) * transcriptPageSize); if (transcriptOffset > maxOffset) setTranscriptOffset(maxOffset); }, [matchingTranscriptWords.length, transcriptOffset]);
   const visibleTranscriptWords = matchingTranscriptWords.slice(transcriptOffset, transcriptOffset + transcriptPageSize);
   const headingWordIndexes = useMemo(() => {
     const indexes = new Set<number>();
@@ -110,7 +141,6 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
   }, [transcriptWords, candidates]);
 
   useEffect(() => {
-    setTranscriptOffset(0);
     setTranscriptSelection(null);
   }, [job.id]);
 
@@ -125,12 +155,17 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
 
   const validateChaptersList = (list: ChapterEntry[]): string | null => validateChapterEntries(list, job.totalDurationSeconds);
 
-  const navigateToTranscriptWord = (transcriptWordIndex: number) => {
+  const navigateToTranscriptWord = (transcriptWordIndex: number, preserveSearch = false) => {
     if (transcriptWordIndex < 0 || transcriptWordIndex >= transcriptWords.length) return;
     // Chapter navigation uses the complete persisted transcript. A search filter
     // may exclude the target, so clear it before rendering the destination page.
-    setTranscriptSearch('');
-    setTranscriptOffset(transcriptPageOffset(transcriptWordIndex, transcriptPageSize));
+    if (preserveSearch && transcriptSearch.trim()) {
+      const matchIndex = matchingTranscriptWords.findIndex(entry => entry.transcriptWordIndex === transcriptWordIndex);
+      if (matchIndex >= 0) setTranscriptOffset(transcriptPageOffset(matchIndex, transcriptPageSize));
+    } else {
+      setTranscriptSearch('');
+      setTranscriptOffset(transcriptPageOffset(transcriptWordIndex, transcriptPageSize));
+    }
     setTranscriptSelection(previous => previous?.wordIndex === transcriptWordIndex ? previous : ({
       wordIndex: transcriptWordIndex,
       requestId: (previous?.requestId ?? 0) + 1,
@@ -142,7 +177,8 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     return findClosestTranscriptWordIndex(transcriptWords, seconds);
   };
 
-  const syncPlayerToChapter = (chapter: ChapterEntry, index: number, timestamp = chapter.start) => {
+  const syncPlayerToChapter = (chapter: ChapterEntry, index: number, timestamp = chapter.start, preserveSearch = false) => {
+    setEditingChapterId(chapter.id);
     const ms = parseMs(timestamp);
     if (ms === -1) return;
     const seconds = ms / 1000;
@@ -154,7 +190,8 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
       seconds,
       timestamp === chapter.start ? chapter.transcriptWordIndex ?? exactCandidate?.transcriptWordIndex : undefined,
     );
-    navigateToTranscriptWord(transcriptWordIndex);
+    navigateToTranscriptWord(transcriptWordIndex, preserveSearch);
+    selectedTimelineTime.current = seconds;
     const nearbyWords = getTranscriptWordsNear(transcriptWords, seconds);
 
     setActiveTrack({
@@ -176,7 +213,8 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
   };
 
   // Update a single chapter field
-  const handleUpdateChapter = (index: number, field: 'start' | 'end' | 'title', val: string, selectedWordIndex?: number) => {
+  const handleUpdateChapter = (index: number, field: 'start' | 'end' | 'title', val: string, selectedWordIndex?: number, preserveSearch = false) => {
+    if (!chapters[index]) return;
     const updated = [...chapters];
     const timestampMs = field === 'start' ? parseMs(val) : -1;
     updated[index] = {
@@ -191,10 +229,9 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     };
     const recalculated = field === 'start' && timestampMs >= 0 ? applyDefaultChapterEnds(updated, job.totalDurationSeconds) : updated;
     setChapters(recalculated);
-    if (field === 'start' && timestampMs >= 0 && updated[index].id === selectedMissingChapterId) setSelectedMissingChapterId(null);
-    if (field === 'start' && timestampMs >= 0) syncPlayerToChapter(recalculated[index], index);
+    if (field === 'start' && timestampMs >= 0) syncPlayerToChapter(recalculated[index], index, val, preserveSearch);
     else if (field === 'end' && parseMs(val) >= 0) syncPlayerToChapter(recalculated[index], index, val);
-    else if (field === 'title' && activeTrack?.chapterIndex === index) {
+    else if (field === 'title' && activeTrack?.id === updated[index].id) {
       setActiveTrack(prev => prev ? { ...prev, title: val } : null);
     }
     setSaveSuccess(false);
@@ -214,8 +251,33 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     setValidationError(validateChaptersList(result.chapters));
   };
 
+  const handleBulkApply = (updated: ChapterEntry[], changes: TitleCleanupUndo) => {
+    if (!changes.length) return;
+    setChapters(updated);
+    setBulkEditUndo(changes);
+    setShowBulkEditor(false);
+    setSaveSuccess(false);
+    setActiveTrack(current => {
+      const chapter = updated.find(item => item.id === current?.id);
+      return current && chapter ? { ...current, title: chapter.title } : current;
+    });
+    setValidationError(validateChaptersList(updated));
+  };
+
+  const handleUndoBulkEdit = () => {
+    const updated = undoChapterTitleCleanup(chapters, bulkEditUndo);
+    setChapters(updated);
+    setBulkEditUndo([]);
+    setSaveSuccess(false);
+    setActiveTrack(current => {
+      const chapter = updated.find(item => item.id === current?.id);
+      return current && chapter ? { ...current, title: chapter.title } : current;
+    });
+    setValidationError(validateChaptersList(updated));
+  };
+
   const selectMissingChapter = (chapter: ChapterEntry, index: number) => {
-    setSelectedMissingChapterId(chapter.id);
+    setEditingChapterId(chapter.id);
     if (activeTrack) return; // Keep a position the user has already located.
     let before = index - 1, after = index + 1;
     while (before >= 0 && parseMs(chapters[before].start) < 0) before--;
@@ -228,25 +290,43 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     setIsPlaying(false);
   };
 
-  // Add a new blank chapter
-  const handleAddChapter = () => {
+  const selectChapterForEditing = (chapter: ChapterEntry, index: number) => {
+    if (isIncompleteChapter(chapter)) selectMissingChapter(chapter, index);
+    else if (!activeTrack) syncPlayerToChapter(chapter, index);
+    else setEditingChapterId(chapter.id);
+  };
+
+  // Explicit player captures use the actual media position, including playback.
+  const handleAddChapter = (seconds?: number) => {
+    if (seconds !== undefined && !Number.isFinite(seconds)) return;
     const last = chapters[chapters.length - 1];
     let nextStart = '00:10:00.000';
-    if (last) {
+    if (seconds !== undefined) {
+      nextStart = formatTimestampMs(seconds * 1000);
+    } else if (selectedTimelineTime.current !== null) {
+      nextStart = formatTimestampMs(Math.round(selectedTimelineTime.current * 1000));
+    } else if (last) {
       const lastMs = parseMs(last.start);
-      nextStart = formatTs((lastMs + 600000) / 1000);
+      nextStart = formatTimestampMs(Math.min(Math.max(0, lastMs + 600000), Math.round(job.totalDurationSeconds * 1000) - 1));
     }
+    const newStartMs = parseMs(nextStart);
+    if (chapters.some(chapter => parseMs(chapter.start) === newStartMs)) {
+      setValidationError('A chapter already starts at the selected timeline position. Choose another position.');
+      return;
+    }
+    const insertAt = chapters.findIndex(chapter => parseMs(chapter.start) > newStartMs);
+    const index = insertAt < 0 ? chapters.length : insertAt;
     const newChapter = {
       id: `c-${Date.now()}`,
       start: nextStart,
-      title: formatChapterTitle(chapters.length + 1, chapterNumberFormat),
-      chapterNumber: chapters.length + 1,
+      title: formatChapterTitle(index + 1, chapterNumberFormat),
+      chapterNumber: index + 1,
       manuallyInserted: true,
       transcriptWordIndex: resolveTranscriptWordIndex(parseMs(nextStart) / 1000),
     };
-    const updated = applyDefaultChapterEnds([...chapters, newChapter], job.totalDurationSeconds);
+    const updated = applyDefaultChapterEnds([...chapters.slice(0, index), newChapter, ...chapters.slice(index)], job.totalDurationSeconds);
     setChapters(updated);
-    syncPlayerToChapter(newChapter, updated.length - 1);
+    syncPlayerToChapter(newChapter, index);
     setSaveSuccess(false);
     setValidationError(validateChaptersList(updated));
   };
@@ -258,6 +338,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
       return;
     }
     const updated = applyDefaultChapterEnds(chapters.filter((_, i) => i !== index), job.totalDurationSeconds);
+    if (chapters[index].id === editingChapterId) setEditingChapterId(null);
     setChapters(updated);
     setSaveSuccess(false);
     setValidationError(validateChaptersList(updated));
@@ -303,16 +384,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
       return;
     }
 
-    const newChapter: ChapterEntry = {
-      id: `c-${Date.now()}`,
-      start: candidate.candidate_start,
-      title: candidate.proposed_title,
-      notes: candidate.notes,
-      headingType: candidate.headingType,
-      chapterNumber: candidate.chapterNumber,
-      recovered: candidate.recovered,
-      transcriptWordIndex: candidate.transcriptWordIndex,
-    };
+    const newChapter = { ...candidateChapter(candidate, `c-${Date.now()}-${candidate.candidate_id}`), manuallyInserted: true };
 
     // Insert sorted
     const combined = prepareChapters(
@@ -332,6 +404,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
 
   // Toggle audio preview for a chapter entry
   const handleToggleChapterPlay = (chapter: ChapterEntry, index: number) => {
+    setEditingChapterId(chapter.id);
     const trackId = chapter.id || `chap-${index}`;
     if (activeTrack?.id === trackId && isPlaying) {
       setIsPlaying(false);
@@ -358,7 +431,8 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
         seekRevision: ++seekRevision.current,
         title: candidate.proposed_title,
         start: candidate.candidate_start,
-        seconds,
+        seconds: candidate.suggestionOnly ? Math.max(0, seconds - 3) : seconds,
+        stopSeconds: candidate.suggestionOnly ? Math.min(job.totalDurationSeconds, Math.max(seconds + 8, parseMs(candidate.candidate_end) / 1000 + 4)) : undefined,
         snippetText: snippet,
         contextBefore: candidate.context_before,
         matchedText: candidate.matched_text,
@@ -371,56 +445,27 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
   };
 
   // Update chapter timestamp when user clicks any word in the player/transcribe view
-  const handleWordTimestampSelect = (timestamp: string, word: string, seconds: number) => {
-    const transcriptWordIndex = resolveTranscriptWordIndex(seconds);
-    navigateToTranscriptWord(transcriptWordIndex);
-    let targetIdx = selectedMissingChapterId ? chapters.findIndex(chapter => chapter.id === selectedMissingChapterId) : activeTrack?.chapterIndex;
-
-    // If active track is candidate, look for chapter matching either candidate start or candidate title
-    if ((targetIdx === undefined || targetIdx < 0) && activeTrack) {
-      targetIdx = chapters.findIndex(
-        c => c.start === activeTrack.start || c.title.toLowerCase() === activeTrack.title.toLowerCase()
-      );
+  const handleWordTimestampSelect = (timestamp: string, word: string, seconds: number, wordIndex?: number) => {
+    const transcriptWordIndex = resolveTranscriptWordIndex(seconds, wordIndex);
+    navigateToTranscriptWord(transcriptWordIndex, true);
+    selectedTimelineTime.current = seconds;
+    // A stable editor selection is the only mutation target. Playback position,
+    // bulk checkboxes, duplicate titles and stale row indexes cannot choose it.
+    const targetIdx = chapters.findIndex(chapter => chapter.id === editingChapterId);
+    if (targetIdx >= 0) {
+      handleUpdateChapter(targetIdx, 'start', timestamp, transcriptWordIndex, true);
+      setWordUpdateNotification(`✓ Set ${chapters[targetIdx].title} start to ${timestamp} from "${word}"`);
+    } else {
+      setActiveTrack({ id: 'transcript-preview', title: 'Transcript preview', start: timestamp, seconds,
+        seekRevision: ++seekRevision.current, sourceType: 'transcript' });
+      setWordUpdateNotification('Previewing this word. Select a chapter in the editor to change its start.');
     }
-
-    if (targetIdx !== undefined && targetIdx >= 0) {
-      handleUpdateChapter(targetIdx, 'start', timestamp, transcriptWordIndex);
-      const chapterTitle = chapters[targetIdx].title;
-      setWordUpdateNotification(
-        `✓ Snapped ${chapterTitle} start timestamp to ${timestamp} from clicked word "${word}"`
-      );
-      setTimeout(() => setWordUpdateNotification(null), 4000);
-
-    } else if (activeTrack?.sourceType === 'candidate') {
-      // Update candidate start timestamp so when clicked "+ Add" it carries the clicked word boundary
-      setCandidates(prev =>
-        prev.map(c =>
-          `cand-${c.candidate_id}` === activeTrack.id
-            ? { ...c, candidate_start: timestamp, transcriptWordIndex }
-            : c
-        )
-      );
-      setWordUpdateNotification(
-        `✓ Snapped candidate start to ${timestamp} from clicked word "${word}"`
-      );
-      setTimeout(() => setWordUpdateNotification(null), 4000);
-      setActiveTrack(prev => (prev ? { ...prev, start: timestamp, seconds } : null));
-    }
+    setIsPlaying(true);
+    setTimeout(() => setWordUpdateNotification(null), 4000);
   };
 
   const handleTranscriptWordSelect = (word: AlignedWord, transcriptWordIndex: number) => {
-    navigateToTranscriptWord(transcriptWordIndex);
-    let targetIdx = selectedMissingChapterId ? chapters.findIndex(chapter => chapter.id === selectedMissingChapterId) : -1;
-    if (targetIdx < 0) {
-      targetIdx = 0;
-      chapters.forEach((chapter, index) => {
-        if (parseMs(chapter.start) / 1000 <= word.startSeconds) targetIdx = index;
-      });
-    }
-    handleUpdateChapter(targetIdx, 'start', word.start, transcriptWordIndex);
-    setIsPlaying(true);
-    setWordUpdateNotification(`✓ Snapped ${chapters[targetIdx]?.title || 'chapter'} to ${word.start} from actual transcript word "${word.word}"`);
-    setTimeout(() => setWordUpdateNotification(null), 4000);
+    handleWordTimestampSelect(word.start, word.word, word.startSeconds, transcriptWordIndex);
   };
 
   // Save changes
@@ -428,155 +473,69 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
     const err = validateChaptersList(chapters);
     if (err) {
       setValidationError(err);
-      return;
+      return false;
     }
     setValidationError(null);
     setIsSaving(true);
     try {
       await onSaveChapters(chapters);
+      setSavedNumberFormat(chapterNumberFormat);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
+      return true;
     } catch (e: any) {
       setValidationError(e.message || 'Failed to save chapters');
+      return false;
     } finally {
       setIsSaving(false);
     }
   };
 
-  // Import CSV text handler
-  const handleImportSubmit = () => {
-    try {
-      const lines = importCsvText.split(/\r?\n/).filter(l => l.trim().length > 0);
-      if (lines.length < 2) {
-        alert('CSV must contain a header and at least one entry.');
-        return;
-      }
-      const imported: ChapterEntry[] = [];
-      const headers = parseCsvRow(lines[0]).map(value => value.toLowerCase());
-      const startIndex = headers.indexOf('start');
-      const endIndex = headers.indexOf('end');
-      const titleIndex = headers.indexOf('title');
-      if (startIndex < 0 || titleIndex < 0) {
-        alert('CSV headers must include start and title. End is optional.');
-        return;
-      }
-      for (let i = 1; i < lines.length; i++) {
-        const values = parseCsvRow(lines[i]);
-        const start = values[startIndex]?.trim() || '';
-        const title = values[titleIndex]?.trim() || '';
-        const end = endIndex >= 0 ? values[endIndex]?.trim() || '' : undefined;
-        imported.push({
-          id: `imp-${i}-${Date.now()}`,
-          start,
-          ...(end !== undefined ? { end, endManuallyEdited: !!end } : {}),
-          manuallyInserted: true,
-          title,
-          transcriptWordIndex: resolveTranscriptWordIndex(Math.max(0, parseMs(start)) / 1000),
-        });
-      }
-
-      if (imported.length === 0) {
-        alert('No valid chapter lines found.');
-        return;
-      }
-
-      // If first chapter start is negative or invalid, default to 00:00:00.000
-      if (parseMs(imported[0].start) < 0) {
-        imported[0].start = '00:00:00.000';
-      }
-
-      const prepared = applyChapterNumberFormat(prepareChapters(imported, job.totalDurationSeconds, chapterNumberFormat), chapterNumberFormat);
-      setChapters(prepared);
-      setShowImportModal(false);
-      setImportCsvText('');
-      setValidationError(validateChaptersList(prepared));
-      setSaveSuccess(false);
-    } catch (e: any) {
-      alert('Error parsing CSV: ' + e.message);
-    }
-  };
-
   const currentError = validationError || validateChaptersList(chapters);
-  const selectedMissingChapter = chapters.find(chapter => chapter.id === selectedMissingChapterId && isIncompleteChapter(chapter));
-  const handleSetMissingTimestamp = (seconds: number) => {
-    if (!selectedMissingChapter || !Number.isFinite(seconds)) return;
-    const index = chapters.findIndex(chapter => chapter.id === selectedMissingChapter.id);
+  const cutPlan = useMemo(() => {
+    try { return planChapterExport(chapters, job.totalDurationSeconds); }
+    catch { return null; } // Invalid chapter ranges are explained by the editor validation.
+  }, [chapters, job.totalDurationSeconds]);
+  const cuts = cutPlan?.cuts || [];
+  const leadingCut = cuts.find(cut => cut.afterIndex === -1);
+  const handleSetChapterTimestamp = (seconds: number) => {
+    if (!Number.isFinite(seconds)) return;
+    const index = chapters.findIndex(chapter => chapter.id === editingChapterId);
     if (index < 0) return;
-    handleUpdateChapter(index, 'start', formatTimestampMs(seconds * 1000));
-    setSelectedMissingChapterId(null);
+    handleUpdateChapter(index, 'start', formatTimestampMs(seconds * 1000), undefined, true);
   };
 
-  return (
-    <div className="space-y-6">
-      {!!job.existingChapters?.length && <details className="border rounded-lg p-4 bg-white">
-        <summary>View chapters already in the source file ({job.existingChapters.length})</summary>
-        <p className="text-sm">Only the chapter list you review and save below will be exported.</p>
-        {job.existingChapters.map(c => <p className="text-sm" key={c.id}>{c.start} — {c.title}</p>)}
-        <button className="underline text-sm" title="Replace the current review list with chapters read from the source file" onClick={() => setChapters(applyChapterNumberFormat(prepareChapters(job.existingChapters!.map(c => ({
-          ...c,
-          transcriptWordIndex: resolveTranscriptWordIndex(Math.max(0, parseMs(c.start)) / 1000, c.transcriptWordIndex),
-        })), job.totalDurationSeconds, chapterNumberFormat), chapterNumberFormat))}>Use these chapters as my starting point</button>
-      </details>}
-      {/* Step Header Banner */}
-      <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center space-x-2">
-              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold">
-                2
-              </span>
-              <h2 className="text-lg font-bold text-stone-900">
-                Review chapter starts and names
-              </h2>
-            </div>
-            <p className="text-sm text-stone-600 mt-1 max-w-3xl">
-              Check chapter starts, ends, and names before exporting. Click a transcript word to set a precise start time. Gaps between chapter ranges are removed from exported audio; your source stays unchanged.
-            </p>
-          </div>
+  const handleResetChapters = () => {
+    if (!resetRequested || !baseline?.length || isSaving) return;
+    setResetRequested(false);
+    const restored = applyChapterNumberFormat(prepareChapters(baseline.map(chapter => ({ ...chapter })), job.totalDurationSeconds, chapterNumberFormat), chapterNumberFormat);
+    setChapters(restored);
+    setIsPlaying(false); setActiveTrack(null); setEditingChapterId(null);
+    setSelectedChapterIds(new Set()); setTitleCleanupUndo([]); setBulkEditUndo([]);
+    setShowBulkEditor(false); setSaveSuccess(false); setValidationError(validateChaptersList(restored));
+  };
 
-          <div className="flex items-center space-x-3">
-            <button
-              id="btn-save-chapters"
-              onClick={handleSave}
-              disabled={isSaving}
-              className={`flex items-center space-x-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold text-white shadow-sm transition-all cursor-pointer ${
-                saveSuccess
-                  ? 'bg-emerald-600'
-                  : 'bg-amber-600 hover:bg-amber-500 active:scale-98'
-              }`}
-            >
-              {isSaving ? (
-                <span>Saving...</span>
-              ) : saveSuccess ? (
-                <>
-                  <Check className="w-4 h-4" />
-                  <span>Chapters saved</span>
-                </>
-              ) : (
-                <>
-                  <Check className="w-4 h-4" />
-                  <span>Save chapter list</span>
-                </>
-              )}
-            </button>
-
-            <button
+  const nextAction = <div className="flex flex-wrap items-center justify-end gap-3">
+            <button type="button"
               id="btn-next-build"
-              onClick={() => {
+              onClick={async () => {
                 if (currentError) {
                   alert(currentError);
                   return;
                 }
-                handleSave().then(() => onNextStep());
+                if (await handleSave()) onNextStep();
               }}
               disabled={!!currentError}
-              className="flex items-center space-x-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold bg-stone-900 hover:bg-stone-800 text-stone-100 disabled:opacity-40 transition-colors cursor-pointer"
-            >
-              <span>Save and add book details</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
+              className="paper-action-dark inline-flex items-center gap-2 rounded-lg bg-amber-800 px-3 py-2 text-xs font-semibold text-white shadow-sm disabled:opacity-40"
+            >Continue to Review Metadata<ArrowRight className="h-4 w-4" aria-hidden="true" /></button>
+  </div>;
+
+  return (
+    <div className="processing-stage space-y-4">
+      {resetRequested && <ChapterResetDialog onConfirm={handleResetChapters} onClose={() => setResetRequested(false)} />}
+      {actionHost && createPortal(nextAction, actionHost)}
+      {(!actionHost || currentError) && <div>
+        {!actionHost && nextAction}
 
         {/* Validation Alert if errors exist */}
         {currentError && (
@@ -585,7 +544,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
             <span>Fix this before continuing: {currentError}</span>
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Word Snapping Notification Toast/Banner */}
       {wordUpdateNotification && (
@@ -596,15 +555,25 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
           </div>
           <button
             onClick={() => setWordUpdateNotification(null)}
+            aria-label="Dismiss chapter update"
             className="text-emerald-700 hover:text-emerald-950 font-bold px-1.5 cursor-pointer"
-          >
-            ✕
-          </button>
+          ><X className="h-4 w-4" aria-hidden="true" /></button>
         </div>
       )}
 
+      <PreviewPanel id="chapter-review-workflow" title="Workflow">
+        <p className="mb-2 text-xs font-semibold" aria-live="polite">{chapters.length} {chapters.length === 1 ? 'chapter' : 'chapters'}</p>
+        <ol aria-label="Chapter edit activity" className="max-h-48 overflow-y-auto space-y-1 text-xs">
+          {activity.length ? activity.slice(-12).reverse().map((event, index) => <li key={`${event.at}:${index}`}>{event.message}</li>) : <li className="text-stone-600">No unsaved chapter edits.</li>}
+        </ol>
+        <div className="mt-3 border-t border-stone-300/60 pt-2 space-y-1 text-xs" aria-live="polite">
+          <p>{isSaving ? 'Saving changes…' : hasUnsavedChanges ? 'Unsaved changes' : 'All changes saved'}</p>
+          <p className="font-semibold">Editing: {editingChapter?.title || 'No chapter selected'}</p>
+        </div>
+      </PreviewPanel>
+
       {/* Interactive Chapter Audio Audition Player */}
-      <ChapterAudioPlayer
+      <DesktopWindow id="chapter-player" title="Interactive Audio Player"><ChapterAudioPlayer
         activeTrack={activeTrack}
         transcriptWords={transcriptWords}
         isPlaying={isPlaying}
@@ -616,39 +585,46 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
         onStop={() => {
           setIsPlaying(false);
           setActiveTrack(null);
-          setSelectedMissingChapterId(null);
         }}
-        timestampTarget={selectedMissingChapter?.title}
-        onSetTimestamp={handleSetMissingTimestamp}
-        onCancelTimestamp={() => setSelectedMissingChapterId(null)}
+        timestampTarget={editingChapter ? editingChapter.title || 'Selected chapter' : undefined}
+        selectedChapterId={editingChapter?.id}
+        onSetTimestamp={handleSetChapterTimestamp}
+        onAddChapter={handleAddChapter}
         onWordClick={handleWordTimestampSelect}
         totalDurationSeconds={job.totalDurationSeconds}
         audioSrc={`/api/jobs/${job.id}/audio-preview`}
-        waveformSrc={`/api/jobs/${job.id}/waveform`}
+        waveformSrc={(job.previewPath || job.retainedWaveform) && job.generateWaveform && job.waveformReady ? `/api/jobs/${job.id}/waveform` : undefined}
         chapterMarkers={chapters.map((chapter, index) => ({ id: chapter.id || `chap-${index}`, title: chapter.title, seconds: parseMs(chapter.start) / 1000 })).filter(marker => marker.seconds >= 0)}
         onChapterMarker={id => {
           const index = chapters.findIndex((chapter, i) => (chapter.id || `chap-${i}`) === id);
-          if (index >= 0) handleToggleChapterPlay(chapters[index], index);
+          if (index >= 0) {
+            selectedTimelineTime.current = parseMs(chapters[index].start) / 1000;
+            handleToggleChapterPlay(chapters[index], index);
+          }
         }}
-        onSeek={seconds => navigateToTranscriptWord(resolveTranscriptWordIndex(seconds))}
-        onPlaybackTime={seconds => { if (!transcriptSearch) navigateToTranscriptWord(resolveTranscriptWordIndex(seconds)); }}
-      />
+        onSeek={seconds => { selectedTimelineTime.current = seconds; navigateToTranscriptWord(resolveTranscriptWordIndex(seconds), true); }}
+        onPlaybackTime={seconds => { selectedTimelineTime.current = seconds; if (!transcriptSearch) navigateToTranscriptWord(resolveTranscriptWordIndex(seconds)); }}
+      /></DesktopWindow>
 
       {/* Main Split Workbench: Left transcript, Right Chapters Editor */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <ResizableColumns storageKey="chapters" initialRatio={42} label="Resize transcript and chapter editor">
         {/* Left Col (5 cols): complete persisted WhisperX transcript */}
-        <div className="lg:col-span-5 space-y-4">
+        <DesktopWindow id="transcript" title="Transcript"><div className="processing-panel processing-transcript desktop-fill min-w-0 space-y-4">
+          <TranscriptTimingWarning segments={job.transcriptSegments} />
+          <ChapterSuggestions candidates={candidates} chapters={chapters}
+            playingId={isPlaying && activeTrack?.id.startsWith('cand-') ? Number(activeTrack.id.slice(5)) : undefined}
+            onPlay={handleToggleCandidatePlay} onAccept={handleAcceptCandidate} />
           <div className="bg-white rounded-xl border border-stone-200/80 shadow-xs overflow-hidden flex flex-col h-[750px]">
-            <div className="p-4 border-b border-stone-200 bg-stone-50/70 flex items-center justify-between">
+            <div className="workspace-panel-header p-4 pr-11 border-b border-stone-200 bg-stone-50/70 flex flex-wrap gap-3 items-center justify-between">
               <div>
                 <div className="flex items-center space-x-2">
                   <Sparkles className="w-4 h-4 text-amber-600" />
-                  <h3 className="font-semibold text-sm text-stone-900">
+                  <h3 className="workspace-panel-title font-semibold text-sm text-stone-900">
                     Transcript ({matchingTranscriptWords.length.toLocaleString()} words)
                   </h3>
                 </div>
                 <p className="text-xs text-stone-500 mt-0.5 font-mono">
-                  Click a word to preview that moment and set the nearest chapter start
+                  {editingChapter ? `Editing ${editingChapter.title}: click a word to set its start` : 'Select a chapter to edit its start. Word clicks preview audio until then.'}
                 </p>
               </div>
 
@@ -658,12 +634,13 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                   setTranscriptSearch(event.target.value);
                   setTranscriptOffset(0);
                 }}
-                placeholder="Find a word…"
-                className="w-36 px-2 py-1 text-xs rounded border border-stone-300 bg-white"
+                placeholder="Find words or a phrase…"
+                aria-label="Search transcript"
+                className="w-44 px-2 py-1 text-xs rounded border border-stone-300 bg-white"
               />
             </div>
 
-            <div ref={transcriptPane} className="flex flex-wrap content-start gap-1 overflow-y-auto flex-1 p-3 text-xs leading-relaxed">
+            <div ref={transcriptPane} onScroll={event => rememberPane('transcriptScroll', event.currentTarget.scrollTop)} className="flex flex-wrap content-start gap-1 overflow-y-auto flex-1 p-3 text-xs leading-relaxed">
               {visibleTranscriptWords.map(({ word, transcriptWordIndex }) => {
                 const isHeading = headingWordIndexes.has(transcriptWordIndex);
                 const isActive = selectedTranscriptWordIndex === transcriptWordIndex;
@@ -677,7 +654,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                     }}
                     type="button"
                     onClick={() => handleTranscriptWordSelect(word, transcriptWordIndex)}
-                    title={`Listen from ${word.start}; use it to place a chapter start`}
+                    title={editingChapter ? `Set ${editingChapter.title} start to ${word.start}` : `Listen from ${word.start}`}
                     aria-current={isActive ? 'true' : undefined}
                     className={`px-1 py-0.5 rounded cursor-pointer transition-colors ${isActive ? 'transcript-word-active font-bold' : isHeading ? 'transcript-word-heading font-semibold ring-1' : 'text-stone-700 hover:bg-stone-200'}`}
                   >
@@ -685,7 +662,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                   </button>
                 );
               })}
-              {visibleTranscriptWords.length === 0 && <p className="p-6 text-stone-500">No saved word-level transcript is available yet. Complete Step 1 once to create it.</p>}
+              {visibleTranscriptWords.length === 0 && <p className="p-6 text-stone-500">{transcriptWords.length ? 'No words or phrases match your search.' : job.transcription ? 'No timed words were returned. Expand the missing timestamps notice above to review the saved segment text.' : 'No saved word-level transcript is available yet. Complete Step 1 once to create it.'}</p>}
             </div>
             {matchingTranscriptWords.length > transcriptPageSize && (
               <div className="px-3 py-2 border-t border-stone-200 bg-stone-50 flex items-center justify-between text-[11px] text-stone-600">
@@ -847,38 +824,64 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
 
               {candidates.length === 0 && (
                 <div className="p-8 text-center text-stone-400 text-xs">
-                  No candidates generated yet. Run Step 1 to detect chapter markers.
+                  {job.chapterSource === 'whisperx' ? 'No candidates generated yet. Run chapter detection to suggest markers.' : 'Automatic chapter detection is off for this workflow. Edit your chapter list directly; generating a transcript does not replace it.'}
                 </div>
               )}
             </div>}
           </div>
-        </div>
+        </div></DesktopWindow>
 
         {/* Right Col (7 cols): Active Editable Chapters Table */}
-        <div className="lg:col-span-7 space-y-4">
+        <DesktopWindow id="chapter-editor" title="Chapter Editor"><div className="processing-panel processing-chapter-editor desktop-fill min-w-0 space-y-4">
           <div className="bg-white rounded-xl border border-stone-200/80 shadow-xs overflow-hidden flex flex-col h-[750px]">
             {/* Table Action Bar */}
-            <div className="p-4 border-b border-stone-200 bg-stone-50/70 flex flex-wrap items-center justify-between gap-3">
+            <div className="workspace-panel-header p-4 pr-11 border-b border-stone-200 bg-stone-50/70 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="flex items-center space-x-2">
                   <FileText className="w-4 h-4 text-stone-800" />
-                  <h3 className="font-semibold text-sm text-stone-900">
-                    Chapters to export ({chapters.length})
+                  <h3 className="workspace-panel-title font-semibold text-sm text-stone-900">
+                    Chapter Editor
                   </h3>
                 </div>
-                <p className="text-xs text-stone-500 mt-0.5 font-mono">
-                  {job.name}-chapters.csv
-                </p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <button id="btn-clean-chapter-titles" onClick={() => handleCleanTitles()} disabled={isSaving || !chapters.length}
-                  className="px-2.5 py-1 text-xs rounded border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 shadow-2xs font-medium cursor-pointer disabled:opacity-50"
-                  title="Removes unnecessary whitespace and applies MLA style capitalization to chapter titles.">Clean Chapter Titles</button>
-                {titleCleanupUndo.length > 0 && <button onClick={() => handleCleanTitles(true)} disabled={isSaving}
-                  className="text-xs text-stone-600 underline cursor-pointer" title="Restore cleaned titles without undoing later chapter edits. Save the chapter list to keep your changes.">Undo title cleanup</button>}
+              <div className="chapter-editor-tools flex flex-wrap items-center gap-2" role="toolbar" aria-label="Chapter tools">
+                <button id="btn-save-chapters" type="button" aria-label={isSaving ? 'Saving chapter list' : saveSuccess ? 'Chapters saved' : 'Save chapter list'}
+                  title={isSaving ? 'Saving chapter list...' : saveSuccess ? 'Chapters saved' : 'Save chapter list'} disabled={isSaving} onClick={handleSave}>
+                  {isSaving ? <Loader2 className="animate-spin" aria-hidden="true" /> : saveSuccess ? <Check aria-hidden="true" /> : <Save aria-hidden="true" />}
+                </button>
+                <button type="button" aria-label="Reset to default chapters" title={baseline?.length ? 'Reset to the original detected or source chapters' : 'No original chapter list is available. Run chapter creation to establish one.'}
+                  disabled={isSaving || !baseline?.length} onClick={() => setResetRequested(true)}><RotateCcw aria-hidden="true" /></button>
+                <button id="btn-add-chapter-row" type="button" aria-label="Add Chapter" title="Add Chapter" onClick={() => handleAddChapter()}><Plus aria-hidden="true" /></button>
+                <button type="button" aria-label="Remove selected chapter" title={editingChapter ? `Remove ${editingChapter.title}` : 'Select a chapter to remove'}
+                  disabled={isSaving || !editingChapter || chapters.length <= 1} onClick={() => handleRemoveChapter(editingChapterIndex)}><Trash2 aria-hidden="true" /></button>
+                <button type="button" aria-label="Nudge selected chapter one second earlier" title="Nudge selected chapter 1 second earlier"
+                  disabled={!editingChapter || parseMs(editingChapter.start) <= 0} onClick={() => handleNudgeTimestamp(editingChapterIndex, -1)}><span aria-hidden="true">-1s</span></button>
+                <button type="button" aria-label="Nudge selected chapter one second later" title="Nudge selected chapter 1 second later"
+                  disabled={!editingChapter || isIncompleteChapter(editingChapter)} onClick={() => handleNudgeTimestamp(editingChapterIndex, 1)}><span aria-hidden="true">+1s</span></button>
+                <button type="button" aria-label="Move selected chapter up" title="Move selected chapter up"
+                  disabled={!editingChapter || editingChapterIndex === 0} onClick={() => handleMoveChapter(editingChapterIndex, editingChapterIndex - 1)}><ArrowUp aria-hidden="true" /></button>
+                <button type="button" aria-label="Move selected chapter down" title="Move selected chapter down"
+                  disabled={!editingChapter || editingChapterIndex === chapters.length - 1} onClick={() => handleMoveChapter(editingChapterIndex, editingChapterIndex + 1)}><ArrowDown aria-hidden="true" /></button>
+                {!!job.existingChapters?.length && <ToolbarPopover label="Original chapters" icon={<FileText className="h-4 w-4" />}>
+                  <p className="font-semibold">Original chapters ({job.existingChapters.length})</p>
+                  <p className="mt-2 text-xs">Only the chapter list you review and save will be exported.</p>
+                  <div className="my-3 max-h-64 overflow-y-auto space-y-1">
+                    {job.existingChapters.map(c => <p className="text-xs" key={c.id}>{c.start} — {c.title}</p>)}
+                  </div>
+                  <button type="button" disabled={isSaving} className="text-xs underline" title="Replace the current review list with chapters read from the source file"
+                    onClick={() => setChapters(applyChapterNumberFormat(prepareChapters(job.existingChapters!.map(c => ({
+          ...c,
+          transcriptWordIndex: resolveTranscriptWordIndex(Math.max(0, parseMs(c.start)) / 1000, c.transcriptWordIndex),
+        })), job.totalDurationSeconds, chapterNumberFormat), chapterNumberFormat))}>Use these chapters as my starting point</button>
+                </ToolbarPopover>}
+                <button type="button" id="btn-clean-chapter-titles" aria-label="Auto Clean Titles" onClick={() => handleCleanTitles()} disabled={isSaving || !chapters.length}
+                  title="Auto Clean Titles — Removes unnecessary whitespace and applies MLA style capitalization to chapter titles."><Sparkles aria-hidden="true" /></button>
+                {titleCleanupUndo.length > 0 && <button type="button" aria-label="Undo title cleanup" onClick={() => handleCleanTitles(true)} disabled={isSaving}
+                  title="Restore cleaned titles without undoing later chapter edits. Save the chapter list to keep your changes."><RotateCcw aria-hidden="true" /></button>}
+                <button type="button" aria-label="Bulk Edit" title="Bulk Edit" onClick={() => setShowBulkEditor(true)} disabled={isSaving || !chapters.length}><Pencil aria-hidden="true" /></button>
+                {bulkEditUndo.length > 0 && <button type="button" aria-label="Undo Last Bulk Edit" title="Undo Last Bulk Edit" onClick={handleUndoBulkEdit} disabled={isSaving}><RotateCcw aria-hidden="true" /></button>}
                 <label className="flex items-center gap-1 text-xs text-stone-600">
-                  Chapter numbers
                   <select
                     aria-label="Chapter number format"
                     value={chapterNumberFormat}
@@ -903,63 +906,30 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                     <option value="written">Written</option>
                   </select>
                 </label>
-                <button
-                  id="btn-import-csv"
-                  onClick={() => setShowImportModal(true)}
-                  className="flex items-center space-x-1 px-2.5 py-1 text-xs rounded border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 shadow-2xs font-medium cursor-pointer"
-                  title="Paste a chapter list from a CSV file"
-                >
-                  <Upload className="w-3.5 h-3.5 text-stone-500" />
-                  <span>Paste CSV</span>
-                </button>
-
-                <a
-                  href={`/api/jobs/${job.id}/export/chapters-csv`}
-                  download
-                  className="flex items-center space-x-1 px-2.5 py-1 text-xs rounded border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 shadow-2xs font-medium"
-                  title="Download this chapter list as a CSV file"
-                >
-                  <Download className="w-3.5 h-3.5 text-stone-500" />
-                  <span>Download CSV</span>
-                </a>
-
-                <button
-                  id="btn-add-chapter-row"
-                  onClick={handleAddChapter}
-                  className="flex items-center space-x-1 px-2.5 py-1 text-xs rounded bg-stone-900 hover:bg-stone-800 text-stone-100 font-semibold cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add chapter</span>
-                </button>
               </div>
             </div>
 
-            {/* Validation Rule Hints */}
-            <div className="px-4 py-2 bg-amber-50/60 border-b border-amber-100 text-[11px] text-amber-900 flex items-center justify-between">
-              <span>
-                Starts and ends use millisecond precision. Each end must be after its start and before the next chapter start.
-              </span>
-            </div>
+            {!!cuts.length && <div role="status" className="border-b border-sky-200 bg-sky-50 px-4 py-2 text-xs font-medium text-sky-900">
+              Export will remove {cutPlan!.removedSeconds.toFixed(3)} seconds of audio across {cuts.length} {cuts.length === 1 ? 'cut' : 'cuts'}. Blue chapter rows mark where audio is removed.
+            </div>}
 
             {/* Chapters Table */}
-            <div className="overflow-y-auto flex-1 p-3">
-              <table className="w-full text-left text-xs border-collapse">
+            <div ref={chapterPane} onScroll={event => rememberPane('chapterScroll', event.currentTarget.scrollTop)} className="overflow-auto min-h-0 flex-1 px-3 pb-3">
+              <table role="table" aria-label="Chapters to export" className="processing-chapter-table chapter-explorer-table w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="border-b border-stone-200 text-stone-500 uppercase tracking-wider font-semibold">
-                    <th className="py-2 px-1 w-8"><span className="sr-only">Reorder</span></th>
-                    <th className="py-2 px-2 w-8">#</th>
-                    <th className="py-2 px-1 w-14 text-center">Listen</th>
-                    <th className="py-2 px-2 w-36">Start (HH:MM:SS.mmm)</th>
-                    <th className="py-2 px-2 w-36">End (HH:MM:SS.mmm)</th>
-                    <th className="py-2 px-2">Chapter Title</th>
-                    <th className="py-2 px-2 w-28 text-right">Nudge</th>
-                    <th className="py-2 px-1 w-20 text-center">Move</th>
-                    <th className="py-2 px-1 w-10 text-center">Del</th>
+                    <th className="chapter-grip-column"><span className="sr-only">Reorder</span></th>
+                    <th className="chapter-play-column"><span className="sr-only">Play</span></th>
+                    <th className="chapter-number-column">#</th>
+                    <th className="chapter-time-column">Start time</th>
+                    <th className="chapter-time-column">End time</th>
+                    <th>Chapter name</th>
+                    <th className="chapter-select-column"><span className="sr-only">Bulk select</span></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-100">
+                  {leadingCut && <tr className="bg-sky-100 text-sky-900"><td colSpan={7} className="border-y border-sky-300 px-3 py-2 font-medium">Cut in export: {((leadingCut.endMs - leadingCut.startMs) / 1000).toFixed(3)} seconds before {chapters[0].title} ({formatTimestampMs(leadingCut.startMs)} to {formatTimestampMs(leadingCut.endMs)}).</td></tr>}
                   {chapters.map((chap, idx) => {
-                    const isFirst = idx === 0;
                     const chapMs = parseMs(chap.start);
                     const endMs = parseMs(chap.end || '');
                     const isValidTime = chapMs !== -1;
@@ -967,25 +937,40 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                     const nextValidStart = chapters.slice(idx + 1).map(item => parseMs(item.start)).find(value => value >= 0);
                     const isValidEnd = endMs > chapMs && (nextValidStart === undefined || endMs < nextValidStart) && endMs <= Math.round(job.totalDurationSeconds * 1000);
                     const isIncomplete = isIncompleteChapter(chap);
-                    const isThisTrack = activeTrack?.id === (chap.id || `chap-${idx}`);
-                    const isThisPlaying = isThisTrack && isPlaying;
+                    const isThisPlaying = activeTrack?.id === (chap.id || `chap-${idx}`) && isPlaying;
+                    const cutBefore = cuts.find(cut => cut.beforeIndex === idx);
+                    const cutAfter = cuts.find(cut => cut.afterIndex === idx);
+                    const isCutRow = !!cutBefore || !!cutAfter;
                     
                     return (
+                      <React.Fragment key={chap.id || idx}>
                       <tr
-                        key={chap.id || idx}
+                        aria-selected={editingChapterId === chap.id}
+                        tabIndex={0}
+                        onKeyDown={event => {
+                          if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                            event.preventDefault(); selectChapterForEditing(chap, idx);
+                          }
+                        }}
+                        onClick={event => {
+                          if (!(event.target as HTMLElement).closest('input, button')) selectChapterForEditing(chap, idx);
+                        }}
+                        onFocus={event => {
+                          if (!(event.target as HTMLElement).closest('input[type="checkbox"], button[draggable]')) setEditingChapterId(chap.id);
+                        }}
                         onDragOver={(event) => {
                           event.preventDefault();
                           event.dataTransfer.dropEffect = 'move';
                         }}
                         onDrop={(event) => handleChapterDrop(event, idx)}
-                        className={`hover:bg-stone-50 transition-colors ${draggedChapterId === chap.id ? 'opacity-50' : ''} ${
-                          isThisPlaying
-                            ? 'bg-amber-50/80 ring-1 ring-amber-300'
-                            : selectedMissingChapterId === chap.id
-                            ? 'bg-amber-50/80 ring-1 ring-amber-300'
-                            : isIncomplete || !isValidEnd
+                        className={`processing-chapter-row transition-colors ${draggedChapterId === chap.id ? 'opacity-50' : ''} ${editingChapterId === chap.id ? 'ring-2 ring-inset ring-amber-500' : ''} ${
+                          isIncomplete || !isValidEnd
                             ? 'bg-red-50/70'
-                            : ''
+                            : isCutRow
+                            ? 'bg-sky-50 hover:bg-sky-100 border-l-4 border-sky-400'
+                            : editingChapterId === chap.id
+                            ? 'bg-amber-50/80 ring-1 ring-amber-300'
+                            : 'hover:bg-stone-50'
                         }`}
                       >
                         <td className="py-2 px-1 text-center">
@@ -1001,37 +986,25 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                             <GripVertical className="h-4 w-4" aria-hidden="true" />
                           </button>
                         </td>
-                        <td className="py-2 px-2 font-mono text-stone-400 font-semibold">
-                          {idx + 1}
-                        </td>
-
                         <td className="py-2 px-1 text-center">
-                          <button
-                            id={`btn-play-chapter-${idx}`}
+                          <button type="button" id={`btn-play-chapter-${idx}`}
+                            aria-label={`${isIncomplete ? 'Locate' : isThisPlaying ? 'Pause' : 'Play'} ${chap.title || `chapter ${idx + 1}`}`}
+                            title={isIncomplete ? `Locate ${chap.title} using the player, then Set Chapter Start` : `${isThisPlaying ? 'Pause' : 'Play'} ${chap.title} at ${chap.start}`}
+                            aria-pressed={isThisPlaying}
                             onClick={() => isIncomplete ? selectMissingChapter(chap, idx) : handleToggleChapterPlay(chap, idx)}
-                            className={`w-7 h-7 rounded-md inline-flex items-center justify-center transition-all cursor-pointer ${
-                              isThisPlaying
-                                ? 'bg-amber-500 text-stone-950 font-bold shadow-xs animate-pulse ring-2 ring-amber-400'
-                                : isThisTrack
-                                ? 'bg-amber-100 text-amber-900 hover:bg-amber-200'
-                                : 'bg-stone-100 text-stone-700 hover:bg-amber-100 hover:text-amber-900 disabled:opacity-30'
-                            }`}
-                            title={isIncomplete ? `Locate ${chap.title} using the player, then Set Timestamp` :
-                              isThisPlaying
-                                ? `Pause preview of ${chap.title}`
-                                : `Listen to ${chap.title} at ${chap.start} to verify accuracy`
-                            }
-                          >
-                            {isIncomplete ? <Clock className="w-3.5 h-3.5" /> : isThisPlaying ? (
-                              <Pause className="w-3.5 h-3.5 fill-current" />
-                            ) : (
-                              <Play className="w-3.5 h-3.5 fill-current" />
-                            )}
+                            className={`inline-flex w-6 items-center justify-center rounded ${isThisPlaying ? 'bg-amber-500 text-stone-950' : 'text-stone-700 hover:bg-amber-100'}`}>
+                            {isThisPlaying ? <Pause className="h-3.5 w-3.5" aria-hidden="true" /> : <Play className="h-3.5 w-3.5" aria-hidden="true" />}
                           </button>
-                          {isIncomplete && <span className="block text-[10px] text-amber-800">Locate</span>}
+                        </td>
+                        <td className="py-2 px-2 font-mono text-stone-400 font-semibold">
+                          <button type="button" aria-label={`Edit ${chap.title || `chapter ${idx + 1}`}`}
+                            onClick={() => selectChapterForEditing(chap, idx)}
+                            aria-pressed={editingChapterId === chap.id} className="rounded px-1 py-1 hover:bg-amber-100">
+                            {idx + 1}
+                          </button>
                         </td>
 
-                        <td className="py-2 px-2">
+                        <td data-label="Start" className="py-2 px-2">
                           <div className="space-y-0.5">
                             <input
                               type="text"
@@ -1041,7 +1014,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                               onChange={(e) => handleUpdateChapter(idx, 'start', e.target.value)}
                               className={`w-full px-2 py-1 font-mono rounded text-xs border ${
                                 isNonNegative
-                                  ? 'bg-white border-stone-300 text-stone-900 focus:border-amber-500 focus:ring-1 focus:ring-amber-500'
+                                  ? cutBefore ? 'bg-sky-50 border-sky-400 text-sky-950 focus:border-sky-600 focus:ring-1 focus:ring-sky-600' : 'bg-white border-stone-300 text-stone-900 focus:border-amber-500 focus:ring-1 focus:ring-amber-500'
                                   : 'bg-red-50 border-red-300 text-red-700'
                               }`}
                               placeholder="00:00:00.000"
@@ -1051,7 +1024,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                           </div>
                         </td>
 
-                        <td className="py-2 px-2">
+                        <td data-label="End" className="py-2 px-2">
                           <input
                             type="text"
                             value={chap.end || ''}
@@ -1060,7 +1033,7 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                             onChange={(e) => handleUpdateChapter(idx, 'end', e.target.value)}
                             className={`w-full px-2 py-1 font-mono rounded text-xs border ${
                               isValidEnd
-                                ? 'bg-white border-stone-300 text-stone-900 focus:border-amber-500 focus:ring-1 focus:ring-amber-500'
+                                ? cutAfter ? 'bg-sky-50 border-sky-400 text-sky-950 focus:border-sky-600 focus:ring-1 focus:ring-sky-600' : 'bg-white border-stone-300 text-stone-900 focus:border-amber-500 focus:ring-1 focus:ring-amber-500'
                                 : 'bg-red-50 border-red-300 text-red-700'
                             }`}
                             placeholder={isIncomplete ? 'Assign start first' : '00:00:00.000'}
@@ -1069,10 +1042,11 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                           />
                         </td>
 
-                        <td className="py-2 px-2">
+                        <td data-label="Chapter title" className="py-2 px-2">
                           <input
                             type="text"
                             value={chap.title}
+                            aria-label={`Title of chapter ${idx + 1}`}
                             onChange={(e) => handleUpdateChapter(idx, 'title', e.target.value)}
                             className="w-full px-2 py-1 rounded text-xs border border-stone-300 bg-white text-stone-900 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
                             placeholder="Chapter title"
@@ -1080,59 +1054,14 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
                           {chap.headingType === 'music_transition' && <span className="block text-[10px] text-amber-800 mt-0.5" title={chap.notes}>Musical transition · Review suggested start</span>}
                         </td>
 
-                        <td className="py-2 px-2 text-right">
-                          <div className="flex items-center justify-end space-x-1">
-                            <button
-                              onClick={() => handleNudgeTimestamp(idx, -1)}
-                              disabled={chapMs <= 0}
-                              className="px-1.5 py-0.5 rounded bg-stone-100 hover:bg-stone-200 text-stone-700 font-mono text-[10px] disabled:opacity-30 cursor-pointer"
-                              title="Nudge 1 second earlier"
-                            >
-                              -1s
-                            </button>
-                            <button
-                              onClick={() => handleNudgeTimestamp(idx, 1)}
-                              className="px-1.5 py-0.5 rounded bg-stone-100 hover:bg-stone-200 text-stone-700 font-mono text-[10px] cursor-pointer"
-                              title="Nudge 1 second later"
-                            >
-                              +1s
-                            </button>
-                          </div>
-                        </td>
-
-                        <td className="py-2 px-1 text-center">
-                          <div className="flex items-center justify-center space-x-1">
-                            <button
-                              onClick={() => handleMoveChapter(idx, idx - 1)}
-                              disabled={isFirst}
-                              className="p-1 text-stone-400 hover:text-amber-700 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                              title="Move Up"
-                              aria-label={`Move ${chap.title || `chapter ${idx + 1}`} up`}
-                            >
-                              <ArrowUp className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleMoveChapter(idx, idx + 1)}
-                              disabled={idx === chapters.length - 1}
-                              className="p-1 text-stone-400 hover:text-amber-700 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                              title="Move Down"
-                              aria-label={`Move ${chap.title || `chapter ${idx + 1}`} down`}
-                            >
-                              <ArrowDown className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-
-                        <td className="py-2 px-1 text-center">
-                          <button
-                            onClick={() => handleRemoveChapter(idx)}
-                            className="p-1 text-stone-400 hover:text-red-600 rounded transition-colors cursor-pointer"
-                            title="Remove Chapter"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
+                        <td className="py-2 px-1 text-center"><input type="checkbox" checked={currentSelection.has(chap.id)}
+                          aria-label={`Select ${chap.title || `chapter ${idx + 1}`} for bulk editing`}
+                          onChange={event => { const checked = event.target.checked; setSelectedChapterIds(previous => { const next = new Set(previous); if (checked) next.add(chap.id); else next.delete(chap.id); return next; }); }} /></td>
                       </tr>
+                      {cutAfter && <tr className="bg-sky-100 text-sky-900"><td colSpan={7} className="border-y border-sky-300 px-3 py-2 font-medium">
+                        Cut in export: {((cutAfter.endMs - cutAfter.startMs) / 1000).toFixed(3)} seconds {cutAfter.beforeIndex < chapters.length ? `between ${chap.title} and ${chapters[cutAfter.beforeIndex].title}` : `after ${chap.title}`} will be removed ({formatTimestampMs(cutAfter.startMs)} to {formatTimestampMs(cutAfter.endMs)}).
+                      </td></tr>}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -1154,53 +1083,12 @@ export const Step2ChapterReview: React.FC<Step2Props> = ({
             </div>
           </div>
         </div>
-      </div>
+        </DesktopWindow>
+      </ResizableColumns>
 
-      {/* Import CSV Modal */}
-      {showImportModal && (
-        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl border border-stone-200 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-base text-stone-900">
-                Import Chapter CSV ({job.name}-chapters.csv)
-              </h3>
-              <button
-                onClick={() => setShowImportModal(false)}
-                className="text-stone-400 hover:text-stone-600 text-lg cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
+      {showBulkEditor && <BulkChapterEditor chapters={chapters} selectedIds={currentSelection}
+        onApply={handleBulkApply} onClose={() => setShowBulkEditor(false)} />}
 
-            <p className="text-xs text-stone-600">
-              Paste CSV content with <code>start</code> and <code>title</code> headers. An <code>end</code> column is optional.
-            </p>
-
-            <textarea
-              rows={8}
-              value={importCsvText}
-              onChange={(e) => setImportCsvText(e.target.value)}
-              placeholder={`start,title\n00:00:00.000,Chapter 1: The Beginning\n00:14:22.500,Chapter 2: The Departure\n00:43:10.200,Chapter 3: Across the Sea`}
-              className="w-full font-mono text-xs p-3 border border-stone-300 rounded-lg bg-stone-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
-            />
-
-            <div className="flex justify-end space-x-2">
-              <button
-                onClick={() => setShowImportModal(false)}
-                className="px-3 py-1.5 rounded text-xs border border-stone-300 text-stone-700 hover:bg-stone-50 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleImportSubmit}
-                className="px-3 py-1.5 rounded text-xs bg-amber-600 hover:bg-amber-500 text-white font-semibold cursor-pointer"
-              >
-                Apply CSV
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

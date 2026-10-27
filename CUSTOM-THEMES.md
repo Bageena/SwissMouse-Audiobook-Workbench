@@ -1,6 +1,6 @@
 # Custom Themes
 
-SwissMouse includes six built-in themes—Light, Parchment, Blue, Slate, Forest, and Dark—and supports small, local custom themes built on top of them. Custom themes can change approved colors and visual tokens, but cannot change the layout, application logic, audio processing, or other behavior.
+SwissMouse includes seven built-in themes—Light, Parchment, Blue, Slate, Forest, Dark, and Cheese · Paper & Ink—and supports small, local custom themes built on top of them. Custom themes can change approved colors and visual tokens, but cannot change the layout, application logic, audio processing, or other behavior.
 
 ## Quick start
 
@@ -59,7 +59,7 @@ Every theme requires a `theme.json` file:
 | `version` | Yes | Theme version shown to people sharing or maintaining the theme. |
 | `author` | No | Theme creator. |
 | `description` | No | Short explanation shown as theme help text. |
-| `extends` | Yes | Base theme: `light`, `parchment`, `blue`, `slate`, `forest`, or `dark`. |
+| `extends` | Yes | Base theme: `light`, `parchment`, `blue`, `slate`, `forest`, `dark`, or `cheese`. |
 | `css` | Yes | CSS-token file in the same folder, normally `theme.css`. |
 
 ## Inheritance
@@ -191,7 +191,7 @@ Common causes include:
 - `theme.json` is missing or contains invalid JSON.
 - The folder name and manifest `id` do not match.
 - The ID duplicates a built-in or another custom theme.
-- `extends` is not one of the six built-in themes.
+- `extends` is not one of the seven built-in themes.
 - The CSS file named by the manifest is missing.
 - `theme.css` contains selectors, layout rules, unknown variables, or multiple blocks instead of one `:root` block.
 - A background image is missing or uses an unsupported path or format.

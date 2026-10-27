@@ -58,6 +58,10 @@ export function inspect(probe: string, file: string) {
     const first = JSON.parse(execFileSync(probe, ['-v','error','-select_streams','a:0','-read_intervals','%+#1','-show_frames','-show_entries','frame=nb_samples','-of','json',file],{encoding:'utf8',windowsHide:true}));
     duration = Number(frames.streams[0].nb_read_frames) * Number(first.frames[0].nb_samples) / Number(audio.sample_rate);
   }
+  return mediaFromProbe(data, file, duration);
+}
+function mediaFromProbe(data: any, file: string, duration: number) {
+  const audio = data.streams?.find((stream: any) => stream.codec_type === 'audio');
   if (!audio || !Number.isFinite(duration) || duration <= 0) throw new Error('No readable audio stream with a measured duration');
   const tags = { ...audio.tags, ...data.format.tags };
   const chapters = (data.chapters || []).map((c: any, i: number) => ({ id: `existing-${i}`, start: timestamp(Number(c.start_time)), end: timestamp(Number(c.end_time)), title: c.tags?.title || `Chapter ${i + 1}` }));
@@ -73,10 +77,22 @@ export function inspect(probe: string, file: string) {
     bitrate: Math.round(Number(audio.bit_rate || data.format.bit_rate || 0) / 1000), durationSeconds: duration,
     format, rawFormatName: container, tags, chapters, artwork: data.streams.find((s: any) => s.disposition?.attached_pic === 1), data, isAudio: true };
 }
-export async function fingerprint(files: string[], settings: unknown) {
+export async function inspectAsync(probe: string, file: string) {
+  const execute = async (args: string[]) => JSON.parse((await run(probe, args, { windowsHide: true, timeout: 120000, maxBuffer: 16 * 1024 * 1024 })).stdout);
+  const data = await execute(['-v', 'error', '-show_format', '-show_streams', '-show_data_hash', 'sha256', '-show_chapters', '-of', 'json', file]);
+  const audio = data.streams?.find((stream: any) => stream.codec_type === 'audio');
+  let duration = Number(audio?.duration || data.format?.duration);
+  if (data.format?.format_name === 'aac' && audio) {
+    const frames = await execute(['-v', 'error', '-select_streams', 'a:0', '-count_frames', '-show_entries', 'stream=nb_read_frames', '-of', 'json', file]);
+    const first = await execute(['-v', 'error', '-select_streams', 'a:0', '-read_intervals', '%+#1', '-show_frames', '-show_entries', 'frame=nb_samples', '-of', 'json', file]);
+    duration = Number(frames.streams[0].nb_read_frames) * Number(first.frames[0].nb_samples) / Number(audio.sample_rate);
+  }
+  return mediaFromProbe(data, file, duration);
+}
+export async function fingerprint(files: string[], settings: unknown, logicalPaths: string[] = files) {
   const hash = createHash('sha256').update(JSON.stringify(settings));
-  for (const file of files) {
-    hash.update('\0' + path.resolve(file) + '\0');
+  for (const [index, file] of files.entries()) {
+    hash.update('\0' + path.resolve(logicalPaths[index]) + '\0');
     for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
   }
   return hash.digest('hex');
@@ -97,8 +113,12 @@ export function validateChapters(chapters: {start: string; end?: string; title: 
     previous = start;
   }
 }
-export async function makePreview(ffmpeg: string, source: string, output: string, signal?: AbortSignal, log: (message: string) => void = console.warn, requireWaveform = false) {
+export async function makePreview(ffmpeg: string, source: string, output: string, signal?: AbortSignal, log: (message: string) => void = console.warn, requireWaveform = false, generateWaveform = true) {
   if(path.resolve(source).toLowerCase()===path.resolve(output).toLowerCase()) throw new Error('Analysis audio must be separate from the source');
+  if (!generateWaveform) {
+    await run(ffmpeg,['-v','error','-y','-i',source,'-map','0:a:0','-map_metadata','-1','-map_chapters','-1','-ac','1','-ar','16000','-c:a','pcm_s16le','-rf64','auto',output],{windowsHide:true,signal});
+    return {waveformAvailable:false};
+  }
   let analysis: PcmAnalysis | undefined;
   let waveformError: Error | undefined;
   try { analysis = new PcmAnalysis(output); } catch (e: any) { waveformError = e; log(`Waveform analysis failed: ${e.message}`); }
@@ -149,7 +169,7 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   const o = options;
   if (!outputFormats.includes(o.format)) throw new Error('Unsupported output format');
   if (path.resolve(o.source).toLowerCase() === path.resolve(o.output).toLowerCase() || fs.existsSync(o.output)) throw new Error('Output already exists; choose a new output name');
-  const source = inspect(o.ffprobe, o.source);
+  const source = await inspectAsync(o.ffprobe, o.source);
   validateChapters(o.chapters, source.durationSeconds);
   const plan = planChapterExport(o.chapters, source.durationSeconds);
   const chapters = plan.chapters;
@@ -158,6 +178,8 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   const encoder = {m4b: 'aac', m4a: 'aac', mp3: 'libmp3lame', flac: 'flac', ogg: 'libvorbis', opus: 'libopus', wav: 'pcm_s16le'}[o.format];
   const targetRate = copy ? source.sampleRate : sampleRateFloor(ceiling, await encoderSampleRates(o.ffmpeg, encoder));
   const log = (message: string) => { console.log(`[Export ${o.format}] ${message}`); o.onLog?.(message); };
+  log(`Preparing ${o.format.toUpperCase()} from ${path.basename(o.source)}: ${chapters.length} chapters; ${copy ? 'copying compatible audio' : `converting with ${encoder}`}.`);
+  if (plan.trimmed) log(`Applying ${plan.ranges.length} included chapter ranges; removing ${plan.removedSeconds.toFixed(3)} seconds outside them.`);
   const rateMessage = `Sample rate: source/master ${source.sampleRate} Hz; input ceiling ${ceiling} Hz; ${copy ? 'stream copy' : 'encoder input'} ${targetRate} Hz (never rounded up).`;
   log(rateMessage);
   const encodingWarnings: string[] = [];
@@ -182,6 +204,7 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   let meta = ';FFMETADATA1\n' + Object.entries(tags).map(([k, v]) => `${escape(k)}=${escape(v)}\n`).join('');
   if (!tagged && o.format !== 'wav') chapters.forEach((c, i) => { meta += `[CHAPTER]\nTIMEBASE=1/1000\nSTART=${Math.round(seconds(c.start) * 1000)}\nEND=${Math.round((c.end ? seconds(c.end) : chapters[i + 1] ? seconds(chapters[i + 1].start) - 0.001 : plan.durationSeconds) * 1000)}\ntitle=${escape(c.title)}\n`; });
   const metaPath = o.output + '.ffmeta'; fs.writeFileSync(metaPath, meta);
+  log(`Chapter and book metadata prepared: ${chapters.length} chapter titles.`);
   const args = ['-v', 'error', '-n', '-i', o.source, '-i', metaPath];
   if (o.cover) args.push('-i', o.cover);
   const filterPath = o.output + '.filters';
@@ -205,18 +228,20 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
   if (['m4b', 'm4a'].includes(o.format)) args.push('-f', 'mp4');
   if (o.format === 'wav') args.push('-rf64', 'auto');
   args.push('-progress','pipe:1',o.output);
+  log(`Starting FFmpeg ${copy ? 'stream copy' : 'audio conversion'} to ${path.basename(o.output)}${copy ? '' : ` at ${targetRate} Hz${o.bitrate ? `, ${o.bitrate}` : ''}`}.`);
   o.onProgress?.(10);
   try { await new Promise<void>((resolve,reject)=>{
-    const process=spawn(o.ffmpeg,args,{windowsHide:true});let error='';let pending='';let last=10;
+    const process=spawn(o.ffmpeg,args,{windowsHide:true});let error='';let pending='';let last=10;let loggedDecile=0;
     process.stderr.on('data',chunk=>{error=(error+chunk).slice(-8000);});
-    process.stdout.on('data',chunk=>{pending+=chunk;const lines=pending.split('\n');pending=lines.pop()||'';for(const line of lines){const match=/^out_time_us=(\d+)/.exec(line);if(match){const n=Math.min(89,Math.max(10,Math.floor(Number(match[1])/1e6/plan.durationSeconds*89)));if(n>last){last=n;o.onProgress?.(n);}}}});
+    process.stdout.on('data',chunk=>{pending+=chunk;const lines=pending.split('\n');pending=lines.pop()||'';for(const line of lines){const match=/^out_time_us=(\d+)/.exec(line);if(match){const n=Math.min(89,Math.max(10,Math.floor(Number(match[1])/1e6/plan.durationSeconds*89)));if(n>last){last=n;o.onProgress?.(n);const decile=Math.floor(n/10);if(decile>loggedDecile){loggedDecile=decile;log(`FFmpeg ${copy ? 'copy' : 'conversion'} progress: ${n}%.`);}}}}});
     process.on('error',reject);process.on('close',code=>code===0?resolve():reject(new Error(error || 'FFmpeg export failed')));
   }); } finally { if (plan.trimmed) fs.rmSync(filterPath, { force: true }); }
+  log('FFmpeg finished. Verifying output duration, sample rate, chapters, and metadata.');
   if (['m4b','m4a'].includes(o.format)) preserveMp4Metadata(source.rawFormatName.includes('mov') ? o.source : undefined,o.output,tags,o.cover===null);
-  if (o.format === 'wav') wavCues(o.output, chapters, inspect(o.ffprobe, o.output).sampleRate);
+  if (o.format === 'wav') wavCues(o.output, chapters, (await inspectAsync(o.ffprobe, o.output)).sampleRate);
   if (o.format === 'wav') writeWavMetadata(o.output,tags);
   o.onProgress?.(90);
-  const result = inspect(o.ffprobe, o.output);
+  const result = await inspectAsync(o.ffprobe, o.output);
   verifyOutputSampleRate(result.sampleRate, targetRate, !copy && o.format === 'opus' ? opusInputSampleRate(o.output) : undefined);
   const sampleRateSummary = !copy && o.format === 'opus'
     ? `Sample rate: ${targetRate} Hz encoder input; ${result.sampleRate} Hz Opus playback clock (verified).`
@@ -230,6 +255,7 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
     return c.title !== expected.title || Math.abs(seconds(c.start) - seconds(expected.start)) > 0.025 || endMismatch;
   })) throw new Error('Chapter read-back verification failed');
   if (o.cue !== false) {
+    log('Writing companion CUE chapter list.');
     const clean = (s: string) => s.replace(/["\r\n]/g, ' ');
     fs.writeFileSync(o.output + '.cue', `FILE "${clean(path.basename(o.output))}" ${o.format === 'mp3' ? 'MP3' : 'WAVE'}\n` + chapters.map((c, i) => {
       const frames = Math.round(seconds(c.start) * 75);
@@ -237,6 +263,7 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
     }).join(''));
   }
   o.onProgress?.(100);
+  log(`Export verified: ${path.basename(o.output)}; ${result.chapters.length} chapters; ${result.durationSeconds.toFixed(3)} seconds.`);
   const warnings: string[] = !coverSupported && (source.artwork || o.cover) ? ['Artwork cannot be embedded by this exporter; original artwork remains in the project.'] : [];
   warnings.push(...encodingWarnings);
   if (plan.trimmed) warnings.push(`Removed ${plan.removedSeconds.toFixed(3)} seconds outside chapter ranges. Audio was re-encoded for precise cuts; source timestamps remain unchanged in the editor.`);
@@ -254,37 +281,50 @@ export async function exportAudio(options: {ffmpeg: string; ffprobe: string; sou
 
 // Update an existing export by remuxing its streams. Verify the encoded audio
 // before replacing the original file, so metadata edits cannot re-encode it.
-export async function writeAudioMetadata(options: { ffmpeg: string; ffprobe: string; file: string; format: ExportFormat; tags: Record<string, string> }) {
-  const { ffmpeg, ffprobe, file, format, tags } = options;
+export async function writeAudioMetadata(options: { ffmpeg: string; ffprobe: string; file: string; format: ExportFormat; tags: Record<string, string>; cover?: string | null }) {
+  const { ffmpeg, ffprobe, file, format, tags, cover } = options;
   if (!outputFormats.includes(format) || path.extname(file).slice(1).toLowerCase() !== format) throw new Error('Unsupported exported audio file.');
   if (!fs.statSync(file).isFile() || fs.lstatSync(file).isSymbolicLink()) throw new Error('Exported audio path is not a regular file.');
   const before = inspect(ffprobe, file);
+  const originalStat = fs.statSync(file);
   const packetHash = async (target: string) => (await run(ffmpeg, ['-v', 'error', '-i', target, '-map', '0:a:0', '-c:a', 'copy', '-f', 'streamhash', '-hash', 'SHA256', '-'], { windowsHide: true, maxBuffer: 1024 * 1024 })).stdout.trim();
   const beforeHash = await packetHash(file);
   const temporary = path.join(path.dirname(file), `.${path.basename(file, path.extname(file))}.metadata-${process.pid}-${Date.now()}.${format}`);
   try {
-    const args = ['-v', 'error', '-n', '-i', file, '-map', format === 'wav' ? '0:a:0' : '0', '-c', 'copy', '-map_metadata', format === 'wav' ? '-1' : '0', '-map_metadata:s:a', '-1', '-map_chapters', format === 'wav' ? '-1' : '0'];
+    const coverSupported = ['m4b', 'm4a', 'mp3', 'flac'].includes(format);
+    if (cover !== undefined && !coverSupported) throw new Error('This format cannot safely embed cover art.');
+    const args = ['-v', 'error', '-n', '-i', file];
+    if (typeof cover === 'string') args.push('-i', cover);
+    args.push('-map', format === 'wav' ? '0:a:0' : '0');
+    if (cover !== undefined && before.data.streams.some((stream: any) => stream.codec_type === 'video')) args.push('-map', '-0:v');
+    if (typeof cover === 'string') args.push('-map', '1:v:0', '-disposition:v:0', 'attached_pic');
+    args.push('-c', 'copy', '-map_metadata', format === 'wav' ? '-1' : '0', '-map_metadata:s:a', '-1', '-map_chapters', format === 'wav' ? '-1' : '0');
     for (const [key, value] of Object.entries(tags)) {
       if (/^chapter\d+/i.test(key) || ['major_brand', 'minor_version', 'compatible_brands', 'encoder', 'handler_name', 'vendor_id'].includes(key.toLowerCase())) continue;
       args.push('-metadata', `${key}=${value}`);
     }
     if (format === 'wav') args.push('-rf64', 'auto');
-    if (format === 'm4b' || format === 'm4a') args.push('-f', 'mp4');
+    if (format === 'm4b' || format === 'm4a') {
+      if (tags.language) args.push('-metadata:s:a:0', `language=${tags.language}`);
+      args.push('-f', 'mp4');
+    }
     args.push(temporary);
     await run(ffmpeg, args, { windowsHide: true, maxBuffer: 8 * 1024 * 1024 });
-    if (format === 'm4b' || format === 'm4a') preserveMp4Metadata(file, temporary, tags, false);
+    if (format === 'm4b' || format === 'm4a') preserveMp4Metadata(file, temporary, tags, cover === null);
     if (format === 'wav') {
       if (before.chapters.length) wavCues(temporary, before.chapters, before.sampleRate);
       writeWavMetadata(temporary, tags);
     }
     const after = inspect(ffprobe, temporary);
-    if (before.codec !== after.codec || before.sampleRate !== after.sampleRate || Boolean(before.artwork) !== Boolean(after.artwork) || Math.abs(before.durationSeconds - after.durationSeconds) > 0.025 ||
+    if (before.codec !== after.codec || before.sampleRate !== after.sampleRate || Boolean(after.artwork) !== (cover === undefined ? Boolean(before.artwork) : cover !== null) || Math.abs(before.durationSeconds - after.durationSeconds) > 0.025 ||
       before.chapters.length !== after.chapters.length || before.chapters.some((chapter, index) => chapter.title !== after.chapters[index].title || Math.abs(seconds(chapter.start) - seconds(after.chapters[index].start)) > 0.025) ||
       beforeHash !== await packetHash(temporary)) throw new Error('Audio or chapter read-back changed; original file was kept.');
     const readTags = Object.fromEntries(Object.entries(after.tags).map(([key, value]) => [key.toLowerCase(), String(value)]));
     for (const key of ['title', 'artist', 'composer', 'genre'] as const) {
       if (tags[key] && readTags[key] !== tags[key]) throw new Error(`Metadata read-back failed for ${key}: ${String(readTags[key])}; original file was kept.`);
     }
+    const currentStat = fs.statSync(file);
+    if (['dev', 'ino', 'size', 'mtimeMs', 'ctimeMs'].some(key => currentStat[key] !== originalStat[key])) throw new Error('Original file changed during metadata writing; current file was kept.');
     fs.renameSync(temporary, file);
     return { verifiedTags: after.tags, sizeBytes: fs.statSync(file).size };
   } finally {

@@ -1,14 +1,18 @@
 import test from 'node:test';
+import { createTestFixture, stopTestServer } from './test-fixtures.mjs';
+import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { buildSync } from 'esbuild';
 
-test('backend APIs isolate model files, cancellation, removal, defaults and requirements', { timeout: 60000 }, async () => {
-  const root = fs.mkdtempSync(path.resolve('.cache/backend-test-'));
-  const entry = path.join(root, 'server.cjs');
-  buildSync({ entryPoints: ['server.ts'], bundle: true, platform: 'node', format: 'cjs', packages: 'external', outfile: entry });
+test('backend APIs isolate model files, cancellation, removal, defaults and requirements', { timeout: 60000 }, async t => {
+  const fixture = createTestFixture('.cache/backend-test-');
+  const { root } = fixture;
+  t.after(() => fixture.cleanup());
+  const entry = process.env.TEST_PACKAGE_ROOT ? path.resolve(process.env.TEST_PACKAGE_ROOT, 'dist/server.cjs') : path.join(root, 'server.cjs');
+  if (!process.env.TEST_PACKAGE_ROOT) buildSync({ entryPoints: ['server.ts'], bundle: true, platform: 'node', format: 'cjs', packages: 'external', outfile: entry });
   // Test-only tracing: count actual subprocess/scan calls without production logging.
   const tracer = path.join(root, 'trace.cjs');
   fs.writeFileSync(tracer, `
@@ -64,7 +68,8 @@ test('backend APIs isolate model files, cancellation, removal, defaults and requ
     const draft = {...project.metadata,title:'Editable draft',description:'Survives restart'};
     await json('/api/jobs/' + project.id + '/metadata-draft', {metadata:draft});
     assert.deepEqual((await json('/api/jobs/' + project.id)).metadataDraft, draft);
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root,'jobs.json'),'utf8'))[0].metadataDraft, draft);
+    const projects = new DatabaseSync(path.join(root,'jobs.json.sqlite'), {readOnly:true});
+    try { assert.deepEqual(JSON.parse(projects.prepare('SELECT payload FROM project_state WHERE id=?').get(project.id).payload)[0].metadataDraft, draft); } finally { projects.close(); }
     await json('/api/jobs/' + project.id + '/metadata', {metadata:{...draft,title:'Saved title',author:'Edited author',narrator:'Edited narrator'}});
     const savedProject = await json('/api/jobs/' + project.id);
     assert.deepEqual([savedProject.name,savedProject.author,savedProject.narrator], ['Saved title','Edited author','Edited narrator']);
@@ -118,7 +123,6 @@ test('backend APIs isolate model files, cancellation, removal, defaults and requ
     assert.equal(blocked.status, 424);
     assert.deepEqual((await blocked.json()).missingRequirements, ['Python Runtime']);
   } finally {
-    server.kill();
-    await new Promise(resolve => server.once('exit', resolve));
+    await stopTestServer(server);
   }
 });

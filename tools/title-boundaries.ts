@@ -3,8 +3,9 @@ import { cleanChapterTitle } from '../src/utils/chapterTitles';
 import { formatTimestampMs, parseChapterTimestamp } from '../src/utils/chapters';
 import { pcmDataRange } from './audio-analysis';
 import { analyzeMusicGaps, type MusicEvidence } from './music-transitions';
+import { addGapAudioContext } from './chapter-audio-context';
 
-export const TITLE_DETECTOR_VERSION = 1;
+export const TITLE_DETECTOR_VERSION = 2;
 const MIN_SPACING = 120;
 const EDGE_MARGIN = 60;
 
@@ -42,7 +43,7 @@ const finiteVerbs = new Set(('am is are was were be been being have has had do d
   + 'seemed seems watched watches waited waits returned returns entered enters followed follows '
   + 'rose rises fell falls moved moves opened opens closed closes reached reaches crossed crosses passed passes held holds kept keeps').split(' '));
 
-function titleText(words: AlignedWord[]): string | undefined {
+export function titleText(words: AlignedWord[]): string | undefined {
   if (words.length < 2 || words.length > 14 || !words.every(lexical)) return;
   const text = words.map(word => word.word.trim()).join(' ').replace(/\s+/gu, ' ').trim();
   const tokens = text.toLowerCase().match(/[\p{L}]+(?:['’][\p{L}]+)*/gu) || [];
@@ -95,7 +96,7 @@ const distinct = (a: IsolatedTitle, b: IsolatedTitle) => a.title.toLowerCase() !
 
 export function scoreTitleBoundaries(features: TitleEvidence[], spokenStarts: number[], duration: number): TitleDecision[] {
   const plausible = (cue: TitleEvidence) => cue.acoustic.duration >= 5 && cue.acoustic.duration <= 60
-    && cue.acoustic.tonalFraction >= 0.8 && cue.acoustic.variation >= 0.008;
+    && !cue.acoustic.backgroundRejection && cue.acoustic.tonalFraction >= 0.8 && cue.acoustic.variation >= 0.008;
   const internal = features.filter(cue => cue.start >= EDGE_MARGIN && cue.start <= duration - EDGE_MARGIN && plausible(cue));
   const recurring = internal.filter(cue => internal.some(other => distinct(cue, other)));
   const result: TitleDecision[] = [];
@@ -125,7 +126,7 @@ export async function detectTitleBoundaries(audio: string, words: AlignedWord[],
     options.log?.('Named titles: no repeated isolated title structure; skipping acoustic analysis.');
     return spoken;
   }
-  const acoustic = await analyzeMusicGaps(audio, titles.map(title => ({ start: title.gapStart, end: title.start, wordIndex: title.wordIndex })), options);
+  const acoustic = await addGapAudioContext(audio, await analyzeMusicGaps(audio, titles.map(title => ({ start: title.gapStart, end: title.start, wordIndex: title.wordIndex })), options), options.signal);
   options.signal?.throwIfAborted();
   const features = titles.map((title, index) => ({ ...title, acoustic: acoustic[index] }));
   const spokenStarts = spoken.map(candidate => (parseChapterTimestamp(candidate.candidate_start) ?? 0) / 1000);
@@ -137,7 +138,8 @@ export async function detectTitleBoundaries(audio: string, words: AlignedWord[],
     proposed_title: cue.title, matched_text: words.slice(cue.wordIndex, cue.wordEndIndex + 1).map(word => word.word).join(' '),
     context_before: words.slice(Math.max(0, cue.wordIndex - 18), cue.wordIndex).map(word => word.word).join(' '),
     context_after: words.slice(cue.wordEndIndex + 1, cue.wordEndIndex + 27).map(word => word.word).join(' '),
-    transcriptWordIndex: cue.wordIndex, headingType: 'chapter_like', confidence: String(cue.confidence), status: 'review',
+    transcriptWordIndex: cue.wordIndex, headingType: 'chapter_like', confidence: String(cue.confidence), status: 'review', suggestionOnly: true,
+    evidence: ['Isolated spoken title with repeated title structure', 'Changing acoustic cue above surrounding background'],
     notes: `Spoken title without a chapter label; ${cue.acoustic.duration.toFixed(1)}s tonal transition, isolated title phrase, and ${cue.supportingTitles} other title boundaries. Heuristic evidence, not music probability. Title and timestamp come from saved words; listen to verify transcription.`,
     words: words.slice(Math.max(0, cue.wordIndex - 18), cue.wordEndIndex + 27),
   }));

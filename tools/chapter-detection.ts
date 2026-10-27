@@ -2,7 +2,7 @@ import type { NormalizedSegment } from './transcription-engine';
 import type { HeadingType } from '../src/types';
 
 // Persisted detection results must be rebuilt when parsing/boundary rules change.
-export const CHAPTER_DETECTOR_VERSION = 2;
+export const CHAPTER_DETECTOR_VERSION = 3;
 
 const units = 'one|two|three|four|five|six|seven|eight|nine';
 const small = `zero|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|${units}`;
@@ -14,9 +14,10 @@ const underHundred = `(?:(?:${tens})(?: (?:${units}|${ordinalUnits}))?|${ordinal
 const writtenNumber = `(?:(?:${units}) (?:hundredth|hundred(?: (?:and )?${underHundred})?)|${underHundred})`;
 const numberPattern = `(?:\\d+(?:st|nd|rd|th)?|${writtenNumber}|[mdclxvi]+)`;
 const numberAtStart = new RegExp(`^(${numberPattern})(?: |$)`);
-const numberedLabels = new Set(['chapter', 'part', 'book', 'section']);
+const numberedLabels = new Set(['chapter', 'part', 'book', 'section', 'side']);
 const headingTypes: Record<string, HeadingType> = {
   chapter: 'numbered_chapter', part: 'section_divider', book: 'section_divider', section: 'section_divider',
+  side: 'section_divider',
   introduction: 'front_matter', foreword: 'front_matter', preface: 'front_matter', prologue: 'front_matter',
   interlude: 'chapter_like', prelude: 'chapter_like', coda: 'chapter_like',
   epilogue: 'back_matter', afterword: 'back_matter', conclusion: 'back_matter',
@@ -51,6 +52,14 @@ function parseNumber(text: string): number | undefined {
     return [...text].reduce((sum, letter, i) => sum + (values[letter] < (values[text[i + 1]] || 0) ? -values[letter] : values[letter]), 0);
   }
   return text.split(' ').reduce((sum, word) => word === 'hundred' || word === 'hundredth' ? sum * 100 : sum + (numberValues.get(word) || 0), 0);
+}
+
+// Strict whole-phrase parser shared by the experimental section detector.
+export function parseHeadingNumber(text: string): number | undefined {
+  const normalized = text.trim().toLowerCase().replace(/[.,:;]+$/u, '').replace(/[-–—]/g, ' ').replace(/\s+/g, ' ');
+  if (!new RegExp(`^${numberPattern}$`).test(normalized)) return;
+  const value = parseNumber(normalized);
+  return value && value <= 3999 ? value : undefined;
 }
 
 export interface DetectedHeading {
@@ -180,6 +189,13 @@ export function detectChapterHeadings(segments: NormalizedSegment[]): DetectedHe
     const punctuationAfter = next && /[.!?:;\n\r\u2013\u2014]/.test(source.slice(last.end, next.offset));
     const pauseAfter = next && last.hasWordTiming && next.hasWordTiming &&
       next.startTime - last.endTime >= headingPauseSeconds;
+    // "Side" is also an ordinary narrative noun ("on the other side, two
+    // people waited"). Require a complete announcement, not an ASR split or
+    // a number that happens to begin the following clause.
+    if (first.normalized === 'side' && (
+      (previous && !punctuationBefore && !pauseBefore) ||
+      (next && !punctuationAfter && !pauseAfter && !(last.segmentEnd && !last.hasWordTiming && !next.hasWordTiming))
+    )) return false;
     if (next && !punctuationAfter && !pauseAfter && proseContinuations.has(next.normalized)) return false;
     if (!numbered && !last.segmentEnd && next && !punctuationAfter && !pauseAfter) return false;
     if (!Number.isFinite(first.startTime) || first.startTime < 0 ||
@@ -209,6 +225,7 @@ export function detectChapterHeadings(segments: NormalizedSegment[]): DetectedHe
     const label = tokens[i].normalized;
     if (numberedLabels.has(label)) {
       const numberOffset = tokens[i + 1]?.normalized === 'the' ? 2 : 1;
+      if (label === 'side' && tokens[i + 1] && /[.!?;,]/.test(source.slice(tokens[i].end, tokens[i + 1].offset))) continue;
       const number = numberFollowing(tokens, source, i + numberOffset);
       if (number) addHeading(i, number.tokenCount + numberOffset, headingTypes[label], number.chapterNumber);
       if (label === 'chapter' && tokens[i + 1]?.normalized === 'number') {

@@ -80,6 +80,19 @@ test('storage cleanup removes only SwissMouse-managed working files', { timeout:
     assert.equal(fs.existsSync(transcript), true);
     assert.equal(fs.existsSync(activeWorking), true);
 
+    const sourceBook = putFile('Inbox/Original/source.mp3', 'original');
+    const manifest = putFile(`output/intermediates/${project.id}/manifest.json`, '{}');
+    const overview = await request('/api/storage/processing');
+    assert.equal(overview.response.status, 200);
+    assert.ok(overview.data.pcm >= fs.statSync(activeWorking).size);
+    const pcm = await post('/api/cleanup', { cleanupType: 'pcm' });
+    assert.equal(pcm.response.status, 200);
+    assert.equal(fs.existsSync(activeWorking), false);
+    assert.equal(fs.existsSync(transcript), true);
+    assert.equal(fs.existsSync(manifest), true);
+    assert.equal(fs.readFileSync(sourceBook, 'utf8'), 'original');
+    assert.equal(fs.existsSync(finishedExport), true);
+
     const generated = await post(`/api/jobs/${project.id}/purge`, { purgeType: 'intermediate' });
     assert.equal(generated.response.status, 200);
     assert.equal(fs.existsSync(path.dirname(activeWorking)), false);

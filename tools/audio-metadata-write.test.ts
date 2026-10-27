@@ -22,12 +22,13 @@ test('writing exported audio metadata preserves encoded audio and reads back the
       if (format === 'm4b') execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=32x32:d=0.1', '-frames:v', '1', '-y', coverFile], { windowsHide: true });
       execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', ...(format === 'm4b' ? ['-i', chapterFile, '-i', coverFile, '-map', '0:a:0', '-map', '2:v:0', '-c:v', 'copy', '-disposition:v:0', 'attached_pic', '-map_metadata', '1', '-map_chapters', '1'] : []), '-c:a', codec, '-metadata', 'title=Old title', '-metadata', 'artist=Old author', '-y', file], { windowsHide: true });
       const before = inspect(ffprobe, file);
-      const result = await writeAudioMetadata({ ffmpeg, ffprobe, file, format, tags: { title: 'New title', artist: 'New author', composer: 'New narrator', genre: 'Science Fiction' } }).catch(error => { throw new Error(`${format}: ${error.message}`); });
+      const result = await writeAudioMetadata({ ffmpeg, ffprobe, file, format, tags: { title: 'New title', artist: 'New author', composer: 'New narrator', genre: 'Science Fiction', language: 'fra' } }).catch(error => { throw new Error(`${format}: ${error.message}`); });
       const read = inspect(ffprobe, file);
       const tags = Object.fromEntries(Object.entries(read.tags).map(([key, value]) => [key.toLowerCase(), value]));
       assert.equal(tags.title, 'New title');
       assert.equal(tags.artist, 'New author');
       assert.equal(tags.genre, 'Science Fiction');
+      if (format === 'm4b' || format === 'm4a') assert.equal(tags.language, 'fra');
       assert.deepEqual(read.chapters, before.chapters);
       assert.equal(Boolean(read.artwork), Boolean(before.artwork));
       assert.ok(result.sizeBytes > 0);

@@ -1,60 +1,40 @@
+import { PreviewPanel } from './PreviewPanel';
 import { TranscriptionOptions } from './TranscriptionOptions';
-import { capabilityLabel, type BackendCapabilities } from '../transcription';
-import { YouTubeIcon } from './YouTubeIcon';
+import { TranscriptTimingWarning } from './TranscriptTimingWarning';
+import { DesktopWindow } from './DesktopWorkspace';
+import { AdaptiveButton } from './AdaptiveButton';
+import { type BackendCapabilities } from '../transcription';
 import { stitchCompatibility } from '../audioFormats';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import {
-  AudiobookJob,
-  WorkbenchConfig,
-  ChapterSourceType,
-  AudioMergeMethodType,
-  HardwareInfo,
-  SpeechModelInfo,
-  DiscoveredMp3File,
-  FolderScanResult,
-  SourceSummaryData,
-  Step1InputMethod
-} from '../types';
-import { SourceSummary } from './SourceSummary';
-import { YouTubeAudioImport } from './YouTubeAudioImport';
-import { LibriVoxImport } from './LibriVoxImport';
-import { Step1ProgressPanel } from './Step1ProgressPanel';
+import { AudiobookJob, WorkbenchConfig, ChapterSourceType, AudioMergeMethodType, HardwareInfo, SpeechModelInfo, DiscoveredMp3File } from '../types';
+import { hasProcessingDetails, Step1ProgressPanel } from './Step1ProgressPanel';
 import { useDependencyStatus } from '../dependency-status';
 import { RerunnablePipelineStep, Step1ProcessState } from '../types';
 import { canRerunStep } from '../utils/pipelineRerun';
-import {
-  Loader2, FolderOpen, BookOpen,
-  FolderCheck,
-  FileAudio,
-  Layers,
-  Cpu,
-  Sparkles,
-  CheckCircle2,
-  AlertCircle,
-  AlertTriangle,
-  Download,
-  Trash2,
-  XCircle,
-  RotateCcw,
-  Play,
-  ArrowRight,
-  Clock,
-  HardDrive,
-  ShieldCheck,
-  Sliders,
-  ChevronDown,
-  ChevronUp,
-  FolderSync,
-  FolderEdit,
-  Radio,
-  FileCheck,
-  RefreshCw
-} from 'lucide-react';
+import { Loader2, FileAudio, ListMusic, BookAudio, Music, Sparkles, CheckCircle2, AlertCircle, AlertTriangle, Download, Trash2, XCircle, Play, Sliders, ChevronDown, RefreshCw, Info, Import, Undo2 } from 'lucide-react';
+
+function OptionInfo({ text }: { text: string }) {
+  return <span className="chapter-option-info" tabIndex={0} role="img" aria-label={text} title={text}
+    onClick={event => event.preventDefault()}><Info aria-hidden="true" className="h-3.5 w-3.5" /></span>;
+}
+
+function ModelAction({ icon, label, modelName, title, disabled, onClick, id }: {
+  icon: React.ReactNode; label: string; modelName: string; id?: string; title?: string; disabled?: boolean; onClick: () => void;
+}) {
+  return <span className="processing-model-action" onClick={event => event.stopPropagation()}>
+    <button id={id} type="button" aria-label={`${label} ${modelName}`.trim()} title={title || `${label} ${modelName}`} disabled={disabled}
+      className="processing-model-action-icon" onClick={onClick}>{icon}</button>
+    <span className="processing-model-action-label">{label}</span>
+  </span>;
+}
 
 interface Step1Props {
+  mode?: 'import' | 'process' | 'file-review';
   job: AudiobookJob;
   config: WorkbenchConfig;
   onRunStep1: (options?: {
+    generateWaveform?: boolean;
+    generateTranscript?: boolean;
     chapterSource?: ChapterSourceType;
     mergeMethod?: AudioMergeMethodType;
     selectedModelId?: string;
@@ -63,20 +43,21 @@ interface Step1Props {
     outputFolderPath?: string;
     parts?: any[];
   }) => Promise<void>;
-  onRerunStep: (step: RerunnablePipelineStep) => Promise<void>;
+  onRerunStep: (step: RerunnablePipelineStep, settings?: { transcriptionSettings?: AudiobookJob['transcriptionSettings']; selectedModelId?: string }) => Promise<void>;
   isRunning: boolean;
-  onNextStep: () => void;
-  onUpdateJobSettings?: (settings: Partial<AudiobookJob>) => void;
+  onReadinessChange?: (value: { jobId: string; valid: boolean }) => void;
+  onUpdateJobSettings?: (settings: Partial<AudiobookJob>) => Promise<void>;
   onConfigChange?: (config: WorkbenchConfig) => void;
 }
 
 export const Step1MergeDetect: React.FC<Step1Props> = ({
+  mode = 'process',
   job,
   config,
   onRunStep1,
   onRerunStep,
   isRunning,
-  onNextStep,
+  onReadinessChange,
   onUpdateJobSettings,
   onConfigChange,
 }) => {
@@ -91,7 +72,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     setMusicSettingError('');
     try {
       const response = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ detect_musical_transitions: enabled }) });
-      if (!response.ok) throw new Error('Could not save music detection setting.');
+      if (!response.ok) throw new Error('Could not save improved chapter detection setting.');
       const saved = await response.json();
       onConfigChange?.(saved.config);
     } catch (error) { setMusicSettingError(error instanceof Error ? error.message : 'Could not save setting.'); }
@@ -115,62 +96,76 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     window.addEventListener('requirements-changed', load);
     return () => { active = false; window.removeEventListener('requirements-changed', load); };
   }, [transcriptionEngine]);
-  const importAvailability = feature('file_import');
-  const scanAvailability = feature('folder_scan');
   const modelAvailability = feature(fasterEnabled ? 'faster_model_management' : 'openai_model_management');
   const modelsApi = `/api/models?engine=${transcriptionEngine}`;
   const engineRef = useRef(transcriptionEngine);
   engineRef.current = transcriptionEngine;
-  // Folder & Files State (persisted on job where available)
-  const [sourceFolderPath, setSourceFolderPath] = useState<string>(
-    job.sourceFolderPath || ''
-  );
+  const sourceFolderPath = job.sourceFolderPath || (mode === 'file-review' ? job.source?.path || '' : '');
   const [discoveredFiles, setDiscoveredFiles] = useState<DiscoveredMp3File[]>(
-    job.discoveredFiles ||
-      job.parts.map((p, i) => ({
-        relativePath: p.sourceRelativePath || p.name,
-        storedName: p.name,
-        fileName: p.name,
-        folderName: 'Root',
-        sizeBytes: p.sizeBytes,
-        durationSeconds: p.durationSeconds,
-      }))
-  );
-  const [hasNestedChapters, setHasNestedChapters] = useState<boolean>(
-    job.hasNestedChapterFolders ?? false
-  );
-  const [isScanningFolder, setIsScanningFolder] = useState<boolean>(false);
-  const [folderScanError, setFolderScanError] = useState<string | null>(null);
-  const [isSourceExpanded, setIsSourceExpanded] = useState(true);
-  const [showFilePreview, setShowFilePreview] = useState<boolean>(false);
-  const [customPathInput, setCustomPathInput] = useState<string>('');
-  const [showPathInput, setShowPathInput] = useState<boolean>(false);
-
-  // Source selection is shared by local and remote importers.
-  const [inputMethod, setInputMethod] = useState<Step1InputMethod>(
-    job.inputMethod || (job.youtubeUrl ? 'youtube' : 'folder')
+    job.sourceFolderPath ? job.discoveredFiles || job.parts.map(part => ({
+      relativePath: part.sourceRelativePath || part.name, storedName: part.name, fileName: part.name,
+      folderName: 'Root', sizeBytes: part.sizeBytes, durationSeconds: part.durationSeconds,
+    })) : [],
   );
 
   // Workflow State (persisted on job or default to safe workflow)
   const [chapterSource, setChapterSource] = useState<ChapterSourceType>(
     job.chapterSource || 'whisperx'
   );
+  const [generateTranscript, setGenerateTranscript] = useState(job.generateTranscript === true);
+  const [generateWaveform,setGenerateWaveform] = useState(job.generateWaveform === true);
+  useEffect(()=>setGenerateWaveform(job.generateWaveform===true),[job.generateWaveform]);
+  const needsTranscript = chapterSource === 'whisperx' || generateTranscript;
+  const [existingChapterInfo, setExistingChapterInfo] = useState<{count:number;source?:string;importedName?:string}>({ count: job.existingChapters?.length || 0, source: job.existingChapterSource });
+  const chapterFileInput = useRef<HTMLInputElement>(null);
+  const chapterInfoRequest = useRef(0);
+  const [importingChapterFile,setImportingChapterFile] = useState(false);
+  const [chapterFileMessage,setChapterFileMessage] = useState('');
+  const importChapterFile = async (file:File) => {
+    chapterInfoRequest.current++;
+    setImportingChapterFile(true);setChapterFileMessage('');
+    try {
+      if(file.size>1024*1024)throw new Error('Choose a chapter or playlist file smaller than 1 MiB.');
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let content:string;
+      if(bytes[0]===255&&bytes[1]===254)content=new TextDecoder('utf-16le').decode(bytes);
+      else if(bytes[0]===254&&bytes[1]===255)content=new TextDecoder('utf-16be').decode(bytes);
+      else {try{content=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{content=new TextDecoder('windows-1252').decode(bytes);}}
+      const response=await fetch(`/api/jobs/${job.id}/chapter-file`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,content})});
+      const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not import chapter file.');
+      setExistingChapterInfo(result);setChapterSource('existing_chapters');
+      setChapterFileMessage(`${result.count} ${result.kind==='tracks'?'file-boundary chapters':'chapter markers'} loaded. Run this workflow to open them in the editor. Your current chapter edits have not been replaced.`);
+    }catch(error:any){setChapterFileMessage(error.message||'Could not import chapter file.');}
+    finally{setImportingChapterFile(false);if(chapterFileInput.current)chapterFileInput.current.value='';}
+  };
+  const clearChapterFile = async () => {
+    chapterInfoRequest.current++;
+    setImportingChapterFile(true);
+    try {
+      const response=await fetch(`/api/jobs/${job.id}/chapter-file`,{method:'DELETE'});
+      if(!response.ok)throw new Error((await response.json()).error);
+      const detected=await fetch(`/api/jobs/${job.id}/existing-chapters`);if(detected.ok)setExistingChapterInfo(await detected.json());
+      setChapterFileMessage('Imported source cleared. Existing embedded or matched chapter files will be used. Current chapter edits are unchanged.');
+    }catch(error:any){setChapterFileMessage(error.message||'Could not clear the imported source.');}finally{setImportingChapterFile(false);}
+  };
+  useEffect(() => {
+    let current = true;
+    const request = ++chapterInfoRequest.current;
+    void fetch(`/api/jobs/${job.id}/existing-chapters`).then(response => response.ok ? response.json() : undefined)
+      .then(value => { if (current && request === chapterInfoRequest.current && value) setExistingChapterInfo(value); }).catch(() => {});
+    return () => { current = false; };
+  }, [job.id, job.parts, job.sourceFolderPath]);
   const [mergeMethod, setMergeMethod] = useState<AudioMergeMethodType>(
     job.mergeMethod || 'standard'
   );
 
-  // Detected audio formats across discovered files
-  const formatsDetected = useMemo(() => {
-    if (job.sourceSummary?.formatsDetected?.length) return job.sourceSummary.formatsDetected;
-    const exts = new Set<string>();
-    discoveredFiles.forEach((f) => {
-      const ext = f.fileName.split('.').pop()?.toLowerCase();
-      if (ext) exts.add(ext);
-    });
-    return exts.size > 0 ? Array.from(exts) : ['mp3'];
-  }, [discoveredFiles, job.sourceSummary]);
-
-  const compatibility = useMemo(() => stitchCompatibility(discoveredFiles), [discoveredFiles]);
+  useEffect(() => {
+    if (job.discoveredFiles) setDiscoveredFiles(job.discoveredFiles);
+  }, [job.discoveredFiles]);
+  const compatibility = useMemo(() => {
+    const selected = new Set(job.parts.map(part => (part.sourceRelativePath || part.name).replace(/\\/g, '/')));
+    return stitchCompatibility(discoveredFiles.filter(file => selected.has(file.relativePath.replace(/\\/g, '/'))));
+  }, [discoveredFiles, job.parts]);
   const streamCopyCompatible = compatibility.compatible;
 
   // If streamCopy is incompatible and user has quick merge selected, enforce standard merge
@@ -185,11 +180,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   const [outputFolderPath, setOutputFolderPath] = useState<string>(
     job.outputFolderPath || 'output'
   );
-  const [defaultOutputFolder, setDefaultOutputFolder] = useState<string>('output');
   const [isOutputWritable, setIsOutputWritable] = useState<boolean>(true);
-  const [outputFolderError, setOutputFolderError] = useState<string | null>(null);
-  const [showOutputInput, setShowOutputInput] = useState<boolean>(false);
-  const [customOutputInput, setCustomOutputInput] = useState<string>('');
 
   // Hardware & Speech Models State
   const [hardware, setHardware] = useState<HardwareInfo>({
@@ -204,7 +195,6 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   const [selectedModelId, setSelectedModelId] = useState<string>(
     job.selectedModelId || 'small'
   );
-  const [isLoadingModels, setIsLoadingModels] = useState<boolean>(true);
 
   // GPU Required Modal State
   const [showGpuRequiredModal, setShowGpuRequiredModal] = useState<boolean>(false);
@@ -246,23 +236,11 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     } catch (e) {}
   };
 
-  // Native folder selection input ref
-  const folderInputRef = useRef<HTMLInputElement>(null);
-  // Native output folder selection input ref
-  const outputFolderInputRef = useRef<HTMLInputElement>(null);
-
-  // Natural sort helper for client-side sorting
-  const naturalSort = <T,>(items: T[], keyFn: (item: T) => string): T[] => {
-    return [...items].sort((a, b) =>
-      keyFn(a).localeCompare(keyFn(b), undefined, { numeric: true, sensitivity: 'base' })
-    );
-  };
 
   // Load initial hardware, models, and output directory
   useEffect(() => {
     let cancelled = false;
     async function initHardwareAndModels() {
-      setIsLoadingModels(true);
       try {
         const [hwRes, modelsRes, outRes] = await Promise.all([
           fetch('/api/system/hardware'),
@@ -286,13 +264,10 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
         if (outRes.ok) {
           const outData = await outRes.json();
           setOutputFolderPath(job.outputFolderPath || outData.outputFolder);
-          setDefaultOutputFolder(outData.defaultOutputFolder);
           setIsOutputWritable(outData.isWritable);
         }
       } catch (err) {
         console.error('Failed to load hardware or models info:', err);
-      } finally {
-        setIsLoadingModels(false);
       }
     }
 
@@ -325,276 +300,15 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
   }, [hasModelDownload, modelsApi]);
 
   // Sync settings back to parent / job state
-  const notifyJobUpdate = (updates: Partial<AudiobookJob>) => {
+  const notifyJobUpdate = async (updates: Partial<AudiobookJob>) => {
     if (onUpdateJobSettings) {
-      onUpdateJobSettings(updates);
+      await onUpdateJobSettings(updates);
     }
     if (updates.selectedModelId) {
       fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selected_model: updates.selectedModelId }) })
         .then(response => response.ok ? response.json() : Promise.reject(new Error('Could not save the selected model.')))
         .then(data => onConfigChange?.(data.config))
         .catch(error => console.error(error));
-    }
-  };
-
-  // ----------------------------------------------------
-  // Folder Import Handlers
-  // ----------------------------------------------------
-
-  // Trigger native folder browser dialog
-  const handleOpenNativeFolderPicker = () => {
-    if (!importAvailability.ready) return;
-    if (folderInputRef.current) {
-      folderInputRef.current.click();
-    }
-  };
-
-  // Supported audio extensions regex: MP3, M4A, AAC, M4B, OGG, OPUS, FLAC, WAV, AIFF, WMA
-  const AUDIO_EXTENSIONS_REGEX = /\.(mp3|m4a|aac|m4b|ogg|oga|opus|flac|wav|aiff|aif|wma|alac)$/i;
-
-  // Handle native folder picker selection (webkitdirectory)
-
-  const [isUploadingFiles, setIsUploadingFiles] = useState(false);
-  const [uploadProgressState, setUploadProgressState] = useState('');
-
-  const handleNativeFolderSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!importAvailability.ready) { event.target.value = ''; return; }
-    const fileList = event.target.files;
-    if (!fileList || fileList.length === 0) return;
-
-    const filesToUpload: File[] = [];
-    for (let i = 0; i < fileList.length; i++) {
-        if (AUDIO_EXTENSIONS_REGEX.test(fileList[i].name)) {
-            filesToUpload.push(fileList[i]);
-        }
-    }
-
-    if (filesToUpload.length === 0) {
-      setFolderScanError('No supported audio files were found in the selected folder.');
-      setDiscoveredFiles([]);
-      return;
-    }
-
-    setIsUploadingFiles(true);
-    setUploadProgressState('Preparing upload...');
-    
-    try {
-        const formData = new FormData();
-        filesToUpload.forEach(f => formData.append('files', f, f.webkitRelativePath ? f.webkitRelativePath.split('/').slice(1).join('/') : f.name));
-
-        setUploadProgressState(`Uploading ${filesToUpload.length} files to internal workspace...`);
-        const res = await fetch(`/api/upload-audio?jobId=${job.id}`, {
-            method: 'POST',
-            body: formData,
-        });
-
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.message || data.error || 'Failed to upload files');
-        
-        // Use the server-side filenames and metadata directly
-        const sortedUploadedFiles = naturalSort(data.files, (f: any) => f.originalName);
-
-        const audioFiles: DiscoveredMp3File[] = sortedUploadedFiles.map((f: any) => {
-          // Flatten folder name for the UI display, but keep original for sorting context if needed
-          const pathParts = f.originalName.split(/[/\\]/);
-          const folderName = pathParts.length > 1 ? pathParts[pathParts.length - 2] : 'Root';
-          const chapterGroup = pathParts.length > 1 ? pathParts.slice(0, -1).join('/') : undefined;
-
-          return {
-            relativePath: f.originalName,
-            fileName: pathParts[pathParts.length - 1],
-            storedName: f.filename,
-            folderName: folderName,
-            chapterGroup: chapterGroup,
-            sizeBytes: f.size,
-            durationSeconds: f.durationSeconds,
-            format: f.format,
-            codec: f.codec,
-            sampleRate: f.sampleRate,
-            channels: f.channels,
-            isProbed: true,
-            streamSignature: f.streamSignature,
-          };
-        });
-
-        const chapterFolders = new Set<string>();
-        audioFiles.forEach(af => {
-            if (af.chapterGroup) chapterFolders.add(af.chapterGroup);
-        });
-
-        setFolderScanError(null);
-        setSourceFolderPath(data.uploadDir); 
-        
-        setDiscoveredFiles(audioFiles);
-        setHasNestedChapters(chapterFolders.size > 0);
-        setInputMethod('folder');
-        
-        notifyJobUpdate({
-            inputMethod: 'folder',
-            sourceFolderPath: data.uploadDir,
-            discoveredFiles: audioFiles,
-            hasNestedChapterFolders: chapterFolders.size > 0,
-            parts: audioFiles.map((f, idx) => ({
-                id: `p-${idx + 1}`,
-                name: f.storedName || f.fileName, // App-owned disk filename
-                sourceRelativePath: f.relativePath,
-                sizeBytes: f.sizeBytes,
-                durationSeconds: f.durationSeconds,
-                bitrate: f.bitrate || 0,
-                order: idx + 1,
-            }))
-        });
-
-    } catch (e: any) {
-        setFolderScanError(e.message || 'Upload failed');
-    } finally {
-        setIsUploadingFiles(false);
-        setUploadProgressState('');
-    }
-  };
-
-
-  // Scan folder by path on local filesystem
-  const handleScanLocalPath = async (pathToScan: string) => {
-    if (!scanAvailability.ready) return;
-    setIsScanningFolder(true);
-    setFolderScanError(null);
-    try {
-      const res = await fetch('/api/system/scan-folder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderPath: pathToScan }),
-      });
-      const data: FolderScanResult = await res.json();
-      if (!res.ok) {
-        throw new Error((data as any).error || 'Failed to scan folder');
-      }
-
-      if (data.totalFiles === 0) {
-        setFolderScanError('No supported audio files (.mp3, .m4a, .m4b, .flac, .ogg, .opus, .wav, etc.) were found in the selected folder.');
-        setDiscoveredFiles([]);
-        return;
-      }
-
-      setSourceFolderPath(data.sourcePath);
-      setDiscoveredFiles(data.files);
-      setHasNestedChapters(data.hasNestedChapterFolders);
-      setInputMethod('folder');
-
-      notifyJobUpdate({
-        inputMethod: 'folder',
-        sourceFolderPath: data.sourcePath,
-        discoveredFiles: data.files,
-        hasNestedChapterFolders: data.hasNestedChapterFolders,
-        parts: data.files.map((f, idx) => ({
-          id: `p-${idx + 1}`,
-          name: f.relativePath || f.fileName,
-          sourceRelativePath: f.relativePath,
-          sizeBytes: f.sizeBytes,
-          durationSeconds: f.durationSeconds,
-          bitrate: f.bitrate || 0,
-          order: idx + 1,
-        })),
-      });
-    } catch (err: any) {
-      setFolderScanError(err.message || 'Could not scan specified folder.');
-    } finally {
-      setIsScanningFolder(false);
-    }
-  };
-
-  const [libriVoxBusy, setLibriVoxBusy] = useState(false);
-  // Remote importers return the same source-job shape used by folder imports.
-  const handleYouTubeAudioImported = (updatedJob: AudiobookJob) => {
-    setInputMethod(updatedJob.inputMethod || 'youtube');
-    setMergeMethod(updatedJob.mergeMethod || 'quick');
-    if (updatedJob.sourceFolderPath) setSourceFolderPath(updatedJob.sourceFolderPath);
-    if (updatedJob.discoveredFiles) setDiscoveredFiles(updatedJob.discoveredFiles);
-    if (updatedJob.chapterSource) setChapterSource(updatedJob.chapterSource);
-    if (updatedJob.hasNestedChapterFolders !== undefined) {
-      setHasNestedChapters(updatedJob.hasNestedChapterFolders);
-    }
-    notifyJobUpdate(updatedJob);
-  };
-
-  // Reset current source selection to pick a different folder or YouTube video
-  const handleResetSource = () => {
-    setDiscoveredFiles([]);
-    setSourceFolderPath('');
-    notifyJobUpdate({
-      discoveredFiles: [],
-      sourceFolderPath: '',
-      youtubeUrl: undefined,
-      youtubeVideoInfo: undefined,
-      sourceSummary: undefined,
-      parts: [],
-    });
-  };
-
-  // ----------------------------------------------------
-  // Output Folder Handlers
-  // ----------------------------------------------------
-
-  // Trigger native file explorer to choose an output folder
-  const handleOpenNativeOutputFolderPicker = async () => {
-    // Browser directory handles expose only a folder name, not its absolute disk path.
-    setShowOutputInput(true);
-    setCustomOutputInput(outputFolderPath);
-    setOutputFolderError('Paste the full output folder path. Browser folder selection cannot provide its disk location.');
-  };
-
-  // Handle folder chosen via native file explorer input
-  const handleNativeOutputFolderSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const fileList = event.target.files;
-    if (!fileList || fileList.length === 0) return;
-
-    // The root folder chosen by the user in file explorer
-    const chosenFolder = fileList[0]?.webkitRelativePath?.split('/')[0] || fileList[0]?.name;
-    if (chosenFolder) {
-      await handleSetOutputFolder(chosenFolder);
-    }
-    // Reset file input so selecting the same folder again triggers change event
-    event.target.value = '';
-  };
-
-  const handleSetOutputFolder = async (newPath: string) => {
-    setOutputFolderError(null);
-    try {
-      const res = await fetch('/api/system/output-folder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ outputFolder: newPath }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'The selected output folder cannot be written to.');
-      }
-      setOutputFolderPath(data.outputFolder);
-      setIsOutputWritable(true);
-      setShowOutputInput(false);
-      notifyJobUpdate({ outputFolderPath: data.outputFolder });
-    } catch (err: any) {
-      setOutputFolderError(err.message);
-      setIsOutputWritable(false);
-    }
-  };
-
-  const handleResetDefaultOutput = async () => {
-    setOutputFolderError(null);
-    try {
-      const res = await fetch('/api/system/output-folder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ outputFolder: defaultOutputFolder }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setOutputFolderPath(data.outputFolder);
-        setIsOutputWritable(true);
-        notifyJobUpdate({ outputFolderPath: data.outputFolder });
-      }
-    } catch (err) {
-      console.error(err);
     }
   };
 
@@ -691,7 +405,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
 
   const hasSourceFolder = Boolean(sourceFolderPath && sourceFolderPath.trim().length > 0);
   const hasAudioFiles = discoveredFiles.length > 0;
-  const isOutputValid = isOutputWritable && !outputFolderError;
+  const isOutputValid = isOutputWritable;
 
   // WhisperX downloads the selected Faster-Whisper model into the app-local cache
   // on first use, so a previous manual model download is not a prerequisite.
@@ -700,51 +414,32 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     ? hardware.mode === 'gpu' || !selectedModel.requiresGpu
     : false;
   const isWhisperXValid =
-    chapterSource !== 'whisperx' || isSelectedModelCompatible;
+    !needsTranscript || isSelectedModelCompatible;
 
   const processAvailability = feature(
     'audio_processing',
-    ...(chapterSource === 'whisperx' ? [fasterEnabled ? 'faster_transcription' : 'openai_transcription'] as const : []),
+    ...(needsTranscript ? [fasterEnabled ? 'faster_transcription' : 'openai_transcription'] as const : []),
   );
   const canRunStep1 = processAvailability.ready && !isSwitchingEngine && !isSavingMusicSetting && hasSourceFolder && hasAudioFiles && isOutputValid && isWhisperXValid;
+  useEffect(() => {
+    onReadinessChange?.({ jobId: job.id, valid: canRunStep1 });
+    return () => onReadinessChange?.({ jobId: job.id, valid: false });
+  }, [job.id, canRunStep1, onReadinessChange]);
   const hasCompletedStep1 = Boolean(job.pipelineSteps?.extracting_chapters?.hasOutput
     || job.pipelineSteps?.detecting_chapters?.hasOutput
     || (job.status !== 'draft' && job.chapters.length > 0));
-  const runButtonLabel = chapterSource === 'existing_files'
+  const runButtonLabel = mergeMethod === 'skip' && !needsTranscript ? 'Continue to chapter review' : chapterSource !== 'whisperx'
     ? hasCompletedStep1 ? 'Re-run audio and chapters' : 'Prepare audio and chapters'
-    : hasCompletedStep1 ? 'Re-run processing' : 'Prepare audiobook';
-
-  // Source summary object for SourceSummary component
-  const sourceSummaryData: SourceSummaryData = useMemo(() => {
-    return {
-      inputMethod,
-      sourcePath: inputMethod === 'youtube' ? (job.youtubeUrl || 'YouTube Download') : inputMethod === 'librivox' ? (job.librivox?.projectUrl || sourceFolderPath) : sourceFolderPath,
-      totalFiles: discoveredFiles.length,
-      totalDurationSeconds: discoveredFiles.reduce((acc, f) => acc + f.durationSeconds, 0),
-      totalSizeBytes: discoveredFiles.reduce((acc, f) => acc + f.sizeBytes, 0),
-      formatsDetected,
-      hasNestedChapters,
-      streamCopyCompatible,
-      incompatibilityReason: compatibility.reason || undefined,
-      chapterWorkflow: chapterSource,
-    };
-  }, [
-    inputMethod,
-    job.youtubeUrl,
-    job.librivox?.projectUrl,
-    sourceFolderPath,
-    discoveredFiles,
-    formatsDetected,
-    hasNestedChapters,
-    streamCopyCompatible,
-    chapterSource
-  ]);
+    : hasCompletedStep1 ? 'Re-run processing' : 'Run processing';
 
   // Execute Step 1
   const handleExecute = async () => {
     if (!canRunStep1) return;
+    if (hasCompletedStep1 && !window.confirm('Audio preparation has already been completed. Are you sure you want to rerun it?')) return;
 
     await onRunStep1({
+      generateWaveform,
+      generateTranscript,
       chapterSource,
       mergeMethod,
       selectedModelId,
@@ -755,6 +450,8 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
         id: `p-${idx + 1}`,
         name: f.storedName || f.relativePath || f.fileName,
         sourceRelativePath: f.relativePath,
+        discNumber: f.discNumber,
+        trackNumber: f.trackNumber,
         sizeBytes: f.sizeBytes,
         durationSeconds: f.durationSeconds,
         bitrate: f.bitrate || 0,
@@ -763,65 +460,32 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
     });
   };
 
-  const formatSec = (seconds: number) => {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    if (h > 0) return `${h}h ${m}m ${s}s`;
-    return `${m}m ${s}s`;
+  const rerunnableStageCards: Step1ProcessState['stages'] = [
+    { key: 'generating_waveform', label: 'Generate waveform (optional)', desc: 'Create waveform data for chapter review.' },
+    { key: 'transcribing_whisper', label: chapterSource === 'whisperx' ? 'Speech recognition' : 'Generate transcript only', desc: 'Transcribe audio. Existing chapter markers remain unchanged.' },
+    ...(chapterSource === 'whisperx' ? [{ key: 'detecting_chapters' as const, label: 'Detect chapter candidates', desc: 'Generate candidates from the transcript.' }]
+      : chapterSource === 'manual' ? [] : [{ key: 'extracting_chapters' as const, label: chapterSource === 'existing_chapters' ? 'Read existing chapters' : 'Create chapters from files', desc: 'Read chapter markers for editing.' }]),
+  ];
+  const processingProgress: Step1ProcessState = step1Progress && (!step1Progress.jobId || step1Progress.jobId === job.id) ? {
+    ...step1Progress,
+    isActive: isRunning || step1Progress.isActive,
+    ...(step1Progress.rerunStep ? { stages: rerunnableStageCards, totalStages: rerunnableStageCards.length } : {}),
+  } : {
+    jobId: job.id, isActive: isRunning, stage: hasCompletedStep1 ? 'completed' : 'idle', label: canRunStep1 ? 'Ready for Processing' : 'Not Ready', currentTask: hasCompletedStep1 ? 'Individual stages can be rerun.' : canRunStep1 ? 'Ready to start.' : 'Check the processing options and requirements below.',
+    currentStageNumber: 0, totalStages: rerunnableStageCards.length, stages: rerunnableStageCards,
+    percentage: hasCompletedStep1 ? 100 : 0, isDeterminate: true, elapsedSeconds: 0, liveStatusMessage: hasCompletedStep1 ? 'Processing complete.' : 'Idle', logs: [], canCancel: false,
   };
 
-  const formatBytes = (bytes: number) => {
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
-
-  const rerunnableStageCards: Step1ProcessState['stages'] = chapterSource === 'existing_files'
-    ? [{ key: 'generating_waveform', label: 'Create preview and waveform', desc: 'Generate review waveform data.' }, { key: 'extracting_chapters', label: 'Create chapters from files', desc: 'Derive markers from source files.' }]
-    : [{ key: 'generating_waveform', label: 'Create preview and waveform', desc: 'Generate review waveform data.' }, { key: 'transcribing_whisper', label: 'Speech recognition', desc: 'Transcribe the prepared audio.' }, { key: 'detecting_chapters', label: 'Detect chapter candidates', desc: 'Generate candidates from the transcript.' }];
-
-  const importFolderButton = (
-    <button
-      id="btn-import-mp3-folder"
-      onClick={() => {
-        setIsSourceExpanded(true);
-        setInputMethod('folder');
-        handleOpenNativeFolderPicker();
-      }}
-      disabled={!importAvailability.ready || libriVoxBusy}
-      title={importAvailability.tooltip}
-      className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-xs transition-colors cursor-pointer flex items-center space-x-1.5 disabled:bg-stone-300 disabled:text-stone-500 disabled:cursor-not-allowed"
-    >
-      <FolderOpen className="w-4 h-4" />
-      <span>Import Audio Folder</span>
-    </button>
-  );
+  const processingAction = (collapsed = false) => <ModelAction
+    id={collapsed ? 'btn-run-step1-collapsed' : 'btn-run-step1-main'}
+    icon={isRunning ? <Loader2 className="animate-spin" /> : <Play />}
+    label={isRunning ? 'Processing...' : hasCompletedStep1 ? 'Re-run' : 'Run processing'} modelName=""
+    title={processAvailability.tooltip || runButtonLabel}
+    disabled={isRunning || !canRunStep1} onClick={() => void handleExecute()} />;
 
   return (
-    <div className="space-y-6">
-      {/* Hidden native folder input (uses OS native folder-selection dialog) */}
-      <input
-        type="file"
-        ref={folderInputRef}
-        onChange={handleNativeFolderSelected}
-        style={{ display: 'none' }}
-        // @ts-expect-error webkitdirectory is supported in Chromium/Firefox/Safari
-        webkitdirectory=""
-        directory=""
-        multiple
-        accept=".mp3,.m4a,.aac,.m4b,.ogg,.oga,.opus,.flac,.wav,.aiff,.aif,.wma,.alac,audio/*"
-      />
-
-      {/* Hidden native output folder input (uses OS native file explorer dialog) */}
-      <input
-        type="file"
-        ref={outputFolderInputRef}
-        onChange={handleNativeOutputFolderSelected}
-        style={{ display: 'none' }}
-        // @ts-expect-error webkitdirectory is supported in Chromium/Firefox/Safari
-        webkitdirectory=""
-        directory=""
-      />
-
+    <div className="processing-stage space-y-6">
+      <TranscriptTimingWarning segments={job.transcriptSegments} />
       {/* GPU Required Modal */}
       {showGpuRequiredModal && (
         <div
@@ -860,650 +524,120 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
         </div>
       )}
 
-      {/* Header Banner */}
-      <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center space-x-2">
-              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold">
-                1
-              </span>
-              <h2 className="text-lg font-bold text-stone-900">
-                Choose audio and chapter options
-              </h2>
-            </div>
-            <p className="text-xs sm:text-sm text-stone-600 mt-1 max-w-3xl">
-              Start by choosing your source audio. Then decide whether SwissMouse should find chapters from speech or use the file structure you already have.
-            </p>
-          </div>
-
-          <div className="flex items-center justify-end space-x-3 shrink-0">
-            {job.status !== 'draft' && (
-              <button
-                onClick={onNextStep}
-                className="px-4 py-2.5 rounded-lg text-xs sm:text-sm font-semibold bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 transition-colors cursor-pointer flex items-center space-x-1.5"
-              >
-                <span>Review chapters</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
+      {mode === 'process' && <>
       {/* Real-time Step 1 Processing Feedback Panel */}
-      <Step1ProgressPanel
+      <DesktopWindow id="processing-progress" title="Audio processing" collapsedIcon={<Music className="h-5 w-5" />} headerOnly={!hasProcessingDetails(processingProgress, job.pipelineSteps)} expandWhen={processingProgress.isActive} collapsedActions={processingAction(true)}><Step1ProgressPanel
+        ready={canRunStep1}
         processingAction={
-          <button
-            id="btn-run-step1-main"
-            onClick={handleExecute}
-            disabled={isRunning || !canRunStep1}
-            title={processAvailability.tooltip}
-            className={`flex items-center space-x-2 px-4 py-2.5 rounded-lg text-xs sm:text-sm font-semibold text-white shadow-sm transition-all cursor-pointer ${
-              isRunning || !canRunStep1
-                ? 'bg-stone-300 text-stone-500 cursor-not-allowed border border-stone-300'
-                : 'bg-amber-600 hover:bg-amber-500 active:scale-98'
-            }`}
-          >
-            {isRunning ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                <span>Processing...</span>
-              </>
-            ) : (
-              <>
-                <Play className="w-4 h-4 fill-white" />
-                <span>
-                  {runButtonLabel}
-                </span>
-              </>
-            )}
-          </button>
+          processingAction()
         }
-        progress={step1Progress && (!step1Progress.jobId || step1Progress.jobId === job.id) ? {
-          ...step1Progress,
-          isActive: isRunning || step1Progress.isActive,
-          ...(step1Progress.rerunStep ? { stages: rerunnableStageCards, totalStages: rerunnableStageCards.length } : {}),
-        } : {
-          jobId: job.id, isActive: isRunning, stage: hasCompletedStep1 ? 'completed' : 'idle', label: 'Ready to process audiobook source', currentTask: hasCompletedStep1 ? 'Individual stages can be rerun.' : 'Idle',
-          currentStageNumber: 0, totalStages: rerunnableStageCards.length,
-          stages: rerunnableStageCards,
-          percentage: hasCompletedStep1 ? 100 : 0, isDeterminate: true, elapsedSeconds: 0, liveStatusMessage: hasCompletedStep1 ? 'Processing complete.' : 'Idle', logs: [], canCancel: false,
-        }}
+        progress={processingProgress}
         pipelineSteps={job.pipelineSteps}
         onRerunStep={async step => {
-          if (step === 'transcribing_whisper') {
-            const response = await fetch(`/api/jobs/${job.id}/step1-settings`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ transcriptionSettings: transcriptionOptions, selectedModelId }),
-            });
-            if (!response.ok) { setFolderScanError((await response.json()).error || 'Could not save transcription settings'); return; }
-          }
-          await onRerunStep(step);
+          await onRerunStep(step, step === 'transcribing_whisper' ? { transcriptionSettings: transcriptionOptions, selectedModelId } : undefined);
         }}
         canRerunStep={(step) => !isSavingMusicSetting && canRerunStep(job, step)}
         onCancel={handleCancelStep1}
         onDismissSummary={() => setStep1Progress(null)}
-      />
+      /></DesktopWindow>
+      </>}
 
-      {/* SECTION 1: Import Audiobook Source */}
-      <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs space-y-4">
-        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${isSourceExpanded ? 'border-b border-stone-100 pb-3' : ''}`}>
-          <div className="flex items-center space-x-2">
-            <FolderOpen className="w-5 h-5 text-amber-600" />
-            <div>
-              <h3 className="font-bold text-sm text-stone-900">Import Options</h3>
-              <p className="text-xs text-stone-500">
-                Import a folder, download from YouTube, or browse LibriVox.
-              </p>
-            </div>
-          </div>
+      {mode === 'process' && <>
 
-          <div className="flex items-center justify-end gap-3">
-            {!isSourceExpanded && importFolderButton}
-            {/* Source switcher */}
-            {isSourceExpanded && (
-            <div className="flex flex-wrap items-center gap-1 p-1 bg-stone-100 rounded-lg border border-stone-200/80">
-              <button
-                disabled={libriVoxBusy}
-                onClick={() => setInputMethod('folder')}
-                className={`flex items-center whitespace-nowrap space-x-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
-                  inputMethod === 'folder'
-                    ? 'bg-white text-stone-900 shadow-xs'
-                    : 'text-stone-600 hover:text-stone-900'
-                }`}
-              >
-                <FolderOpen className="w-3.5 h-3.5 text-amber-600" />
-                <span>Audio Folder</span>
-              </button>
-              <button
-                disabled={libriVoxBusy}
-                onClick={() => setInputMethod('youtube')}
-                className={`flex items-center whitespace-nowrap space-x-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
-                  inputMethod === 'youtube'
-                    ? 'bg-white text-stone-900 shadow-xs'
-                    : 'text-stone-600 hover:text-stone-900'
-                }`}
-              >
-                <YouTubeIcon className="w-3.5 h-3.5 text-red-600" />
-                <span>From YouTube</span>
-              </button>
-              <button type="button" onClick={() => setInputMethod('librivox')} className={`flex items-center whitespace-nowrap gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${inputMethod === 'librivox' ? 'bg-white text-stone-900 shadow-xs' : 'text-stone-600 hover:text-stone-900'}`}>
-                <BookOpen className="w-3.5 h-3.5 text-amber-600" /><span>LibriVox</span>
-              </button>
-            </div>
-            )}
-            <button
-              type="button"
-              onClick={() => setIsSourceExpanded(expanded => !expanded)}
-              aria-expanded={isSourceExpanded}
-              aria-controls="source-configuration"
-              aria-label={isSourceExpanded ? 'Collapse import options' : 'Expand import options'}
-              className="p-2 rounded-lg text-stone-500 hover:text-stone-900 hover:bg-stone-100 cursor-pointer focus-visible:outline-2 focus-visible:outline-amber-500"
-            >
-              {isSourceExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </button>
-          </div>
-        </div>
-
-        <div id="source-configuration" hidden={!isSourceExpanded} className="space-y-4">
-          {inputMethod === 'librivox' && <LibriVoxImport job={job} onAudioImported={handleYouTubeAudioImported} onBusyChange={setLibriVoxBusy} />}
-          {/* YOUTUBE IMPORT WORKFLOW */}
-          {inputMethod === 'youtube' && (
-            <div className="space-y-4">
-              <YouTubeAudioImport
-                job={job}
-                onAudioImported={handleYouTubeAudioImported}
-                onCancel={() => setInputMethod('folder')}
-              />
-            </div>
-          )}
-
-          {/* LOCAL AUDIO FOLDER WORKFLOW */}
-          {inputMethod === 'folder' && (
-            <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-stone-50/80 rounded-xl border border-stone-200">
-                <div>
-                  <h4 className="text-xs font-bold text-stone-900 uppercase tracking-wider mb-1">
-                    Choose an audio folder
-                  </h4>
-                  <p className="text-xs text-stone-600 max-w-xl leading-relaxed">
-                    Select the folder that contains the audio files for one book. SwissMouse reads copies for processing and does not rename, move, or alter the originals.
-                  </p>
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {['MP3', 'M4A', 'M4B', 'FLAC', 'OGG', 'OPUS', 'WAV', 'AAC', 'AIFF', 'WMA'].map((fmt) => (
-                      <span
-                        key={fmt}
-                        className="px-1.5 py-0.5 rounded bg-white text-stone-600 border border-stone-200 text-[10px] font-mono font-medium"
-                      >
-                        .{fmt.toLowerCase()}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex items-center space-x-2 shrink-0">
-                  {isSourceExpanded && importFolderButton}
-
-                  <button
-                    onClick={() => setShowPathInput(!showPathInput)}
-                    className="px-3 py-2 rounded-lg text-xs font-medium bg-white hover:bg-stone-100 text-stone-700 border border-stone-200 transition-colors cursor-pointer"
-                  >
-                    {showPathInput ? 'Hide path entry' : 'Enter folder path'}
-                  </button>
-                </div>
-              </div>
-
-              {/* Optional path scanner for local desktop filesystem paths. */}
-              {showPathInput && (
-                <div className="p-3.5 bg-stone-50 rounded-lg border border-stone-200 space-y-2 text-xs">
-                  <div className="font-medium text-stone-700">Paste a folder path</div>
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="text"
-                      value={customPathInput}
-                      onChange={(e) => setCustomPathInput(e.target.value)}
-                      placeholder="Example: C:\\Audiobooks\\My Book"
-                      className="flex-1 px-3 py-2 bg-white border border-stone-300 rounded-md font-mono text-stone-800 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
-                    />
-                    <button
-                      onClick={() => handleScanLocalPath(customPathInput.trim())}
-                      disabled={!scanAvailability.ready || isScanningFolder || !customPathInput.trim()}
-                      title={scanAvailability.tooltip}
-                      className="px-3 py-2 bg-stone-900 text-white rounded-md font-semibold hover:bg-stone-800 disabled:opacity-50 cursor-pointer"
-                    >
-                      {isScanningFolder ? 'Checking folder...' : 'Check folder'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {isUploadingFiles && (
-            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 flex items-center space-x-2">
-              <Loader2 className="w-4 h-4 shrink-0 animate-spin text-blue-600" />
-              <span className="font-medium">{uploadProgressState}</span>
-            </div>
-          )}
-          {/* Inline Folder Validation Message */}
-          {folderScanError && (
-            <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 flex items-center space-x-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-              <span className="font-medium">{folderScanError}</span>
-            </div>
-          )}
-
-          {!hasAudioFiles && !folderScanError && inputMethod === 'folder' && (
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 flex items-center space-x-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
-                  <span>No audio files selected yet. Choose an audio folder to continue.</span>
-            </div>
-          )}
-
-          {/* Source Summary Card if files discovered */}
-          {discoveredFiles.length > 0 && (
-            <div className="space-y-3">
-              <SourceSummary summary={sourceSummaryData} onResetSource={libriVoxBusy ? undefined : handleResetSource} />
-
-              {/* Naturally Sorted File Preview Accordion */}
-              <div className="border border-stone-200 rounded-lg overflow-hidden">
-                <button
-                  onClick={() => setShowFilePreview(!showFilePreview)}
-                  className="w-full px-3.5 py-2.5 bg-stone-50 hover:bg-stone-100 flex items-center justify-between text-xs font-semibold text-stone-700 cursor-pointer"
-                >
-                  <div className="flex items-center space-x-2">
-                    <FileAudio className="w-3.5 h-3.5 text-amber-600" />
-                    <span>
-                      Audio files in processing order ({discoveredFiles.length} files)
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-1 text-stone-500">
-                    <span>{showFilePreview ? 'Hide Preview' : 'Show Preview'}</span>
-                    {showFilePreview ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                  </div>
-                </button>
-
-                {showFilePreview && (
-                  <div className="divide-y divide-stone-100 max-h-60 overflow-y-auto bg-white text-xs">
-                    {discoveredFiles.map((file, idx) => {
-                      const ext = file.fileName.split('.').pop()?.toUpperCase() || 'AUDIO';
-                      return (
-                        <div
-                          key={`${file.relativePath}-${idx}`}
-                          className="p-2.5 px-3.5 flex items-center justify-between hover:bg-stone-50/70"
-                        >
-                          <div className="flex items-center space-x-2.5 min-w-0">
-                            <span className="w-5 h-5 rounded bg-stone-100 text-stone-600 font-mono text-[11px] flex items-center justify-center font-bold">
-                              {idx + 1}
-                            </span>
-                            <span className="px-1.5 py-0.2 rounded bg-stone-100 text-stone-700 text-[10px] font-mono border border-stone-200">
-                              {ext}
-                            </span>
-                            <div className="truncate">
-                              <span className="font-mono text-stone-800 font-medium">{file.fileName}</span>
-                              {file.chapterGroup && (
-                                <span className="ml-2 px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 text-[10px] border border-amber-200 font-mono">
-                                  {file.chapterGroup}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="flex items-center space-x-3 text-stone-500 font-mono text-[11px] shrink-0">
-                            <span>{formatSec(file.durationSeconds)}</span>
-                            <span>•</span>
-                            <span>{formatBytes(file.sizeBytes)}</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Preservation Guarantee Note */}
-              <div className="flex items-center space-x-2 text-[11px] text-stone-500">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span>
-                  Non-destructive: original source audio files are never moved, renamed, or modified on disk.
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Output destination is useful, but the safe default keeps it out of the primary flow. */}
-      <details className="advanced-disclosure rounded-xl border border-stone-200/80 bg-white shadow-xs">
-        <summary className="flex cursor-pointer items-center justify-between gap-3 rounded-xl px-5 py-4">
-          <span className="flex min-w-0 items-center gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-stone-100 text-stone-600"><FolderCheck className="h-4 w-4" /></span>
-            <span className="min-w-0"><span className="block text-sm font-bold text-stone-900">Save location</span><span className="block truncate text-xs text-stone-500">Using {outputFolderPath}</span></span>
-          </span>
-          <span className="flex items-center gap-2 text-xs font-semibold text-stone-500">Change <ChevronDown className="disclosure-chevron h-4 w-4" /></span>
-        </summary>
-        <div className="space-y-4 border-t border-stone-100 p-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-100 pb-3">
-          <div className="flex items-center space-x-2">
-            <FolderCheck className="w-5 h-5 text-amber-600" />
-            <div>
-              <h3 className="font-bold text-sm text-stone-900">Output Folder</h3>
-              <p className="text-xs text-stone-500">
-                Destination where merged masters, transcription candidate logs, and final audio exports are written.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-2 flex-wrap gap-y-2">
-            <button
-              id="btn-choose-output-folder"
-              onClick={handleOpenNativeOutputFolderPicker}
-              className="px-3 py-2 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-xs transition-colors cursor-pointer flex items-center space-x-1.5"
-              title="Open native file explorer to choose an output location"
-            >
-              <FolderOpen className="w-4 h-4" />
-              <span>Choose Output Folder</span>
-            </button>
-
-            <button
-              id="btn-toggle-output-path"
-              onClick={() => setShowOutputInput(!showOutputInput)}
-              className="px-3 py-2 rounded-lg text-xs font-medium bg-white hover:bg-stone-100 text-stone-700 border border-stone-200 transition-colors cursor-pointer flex items-center space-x-1.5"
-              title="Type or paste a custom directory path"
-            >
-              <FolderEdit className="w-3.5 h-3.5 text-stone-500" />
-              <span>{showOutputInput ? 'Hide Path Input' : 'Enter Path'}</span>
-            </button>
-
-            <button
-              id="btn-reset-default-output"
-              onClick={handleResetDefaultOutput}
-              className="px-3 py-2 rounded-lg text-xs font-medium bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 transition-colors cursor-pointer flex items-center space-x-1.5"
-              title="Reset output destination to the library folder in Settings"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset to Default</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Selected Output Path Display */}
-        <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-          <div className="space-y-0.5 min-w-0">
-            <span className="text-stone-500 font-medium">Selected Output Destination:</span>
-            <div className="font-mono font-bold text-stone-900 truncate" title={outputFolderPath}>
-              {outputFolderPath}
-            </div>
-          </div>
-          <span className="px-2.5 py-1 rounded bg-emerald-100 text-emerald-800 font-medium shrink-0 flex items-center space-x-1">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>Local Directory Verified</span>
-          </span>
-        </div>
-
-        {/* Optional Custom Output Path Input */}
-        {showOutputInput && (
-          <div className="p-3.5 bg-stone-50 rounded-lg border border-stone-200 space-y-2.5 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="font-semibold text-stone-700">Enter Local Output Directory Path:</span>
-              <span className="text-[11px] text-stone-500">Auto-created if it does not yet exist</span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <input
-                id="custom-output-path-input"
-                type="text"
-                value={customOutputInput}
-                onChange={(e) => setCustomOutputInput(e.target.value)}
-                placeholder="e.g. output or /home/user/Audiobooks/output or C:\Audiobooks\Output"
-                className="flex-1 px-3 py-2 bg-white border border-stone-300 rounded-md font-mono text-stone-800 focus:outline-hidden focus:ring-1 focus:ring-amber-500 text-xs"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && customOutputInput.trim()) {
-                    handleSetOutputFolder(customOutputInput.trim());
-                  }
-                }}
-              />
-              <button
-                id="btn-set-custom-output-folder"
-                onClick={() => handleSetOutputFolder(customOutputInput.trim())}
-                disabled={!customOutputInput.trim()}
-                className="px-3.5 py-2 bg-stone-900 text-white rounded-md font-semibold hover:bg-stone-800 disabled:opacity-50 cursor-pointer text-xs shrink-0"
-              >
-                Set Output Folder
-              </button>
-            </div>
-            <div className="flex items-center space-x-2 text-stone-500 text-[11px]">
-              <span>Quick paths:</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setCustomOutputInput('output');
-                  handleSetOutputFolder('output');
-                }}
-                className="underline hover:text-amber-800 cursor-pointer"
-              >
-                output
-              </button>
-              <span>•</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setCustomOutputInput('output/audiobooks');
-                  handleSetOutputFolder('output/audiobooks');
-                }}
-                className="underline hover:text-amber-800 cursor-pointer"
-              >
-                output/audiobooks
-              </button>
-              <span>•</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setCustomOutputInput('audiobooks/exports');
-                  handleSetOutputFolder('audiobooks/exports');
-                }}
-                className="underline hover:text-amber-800 cursor-pointer"
-              >
-                audiobooks/exports
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Inline Output Validation Error */}
-        {outputFolderError && (
-          <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 flex items-center space-x-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-            <span className="font-medium">{outputFolderError}</span>
-          </div>
-        )}
-        </div>
-      </details>
 
       {/* Basic Workflow Options: chapter source and audio merge method */}
-      <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs space-y-3">
-        <div className="flex items-center space-x-2 border-b border-stone-100 pb-3">
+      <DesktopWindow id="processing-options" title="Audio and Chapters" collapsedIcon={<BookAudio className="h-5 w-5" />}><div className="workspace-panel processing-panel processing-options-parent bg-white rounded-xl border border-stone-200/80 shadow-xs">
+        <header className="workspace-panel-header workspace-toolbar flex items-center gap-2 border-b border-stone-200 px-4 py-3">
           <Sliders className="w-5 h-5 text-amber-600" />
-          <h3 className="font-bold text-sm text-stone-900">How should chapters be created?</h3>
-        </div>
+          <h3 className="workspace-panel-title inline-block font-bold text-sm text-stone-900">Audio and Chapters</h3>
+        </header>
+        <div className="processing-option-children p-4">
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-          {/* Option A: Generate chapters with WhisperX (Default) */}
-          <label
-            className={`p-4 rounded-xl border-2 transition-all cursor-pointer flex flex-col justify-between ${
-              chapterSource === 'whisperx'
-                ? 'bg-amber-50/60 border-amber-500 shadow-xs'
-                : 'bg-stone-50/50 border-stone-200 hover:border-stone-300'
-            }`}
-          >
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="radio"
-                    name="chapterSource"
-                    value="whisperx"
-                    checked={chapterSource === 'whisperx'}
-                    onChange={() => {
-                      setChapterSource('whisperx');
-                      notifyJobUpdate({ chapterSource: 'whisperx' });
-                    }}
-                    className="w-4 h-4 text-amber-600 focus:ring-amber-500"
-                  />
-                  <span className="font-bold text-sm text-stone-900">
-                    Find chapters from spoken audio
+        <DesktopWindow id="chapter-creation" title="Chapter Creation" role="child" homeWindow="processing-options">
+        <section className="workspace-panel processing-panel processing-options rounded-xl border border-stone-200 bg-white">
+        <header className="workspace-panel-header workspace-toolbar px-4 py-3 border-b border-stone-200"><h4 className="workspace-panel-title text-sm font-bold">Chapter Creation</h4></header>
+        <div className="chapter-option-notes grid grid-cols-1 md:grid-cols-2 gap-3 p-4">
+          {([
+            {source:'whisperx',label:'Find spoken chapters',description:'Most accurate and feature-rich. Generates a transcript and suggests chapter starts.',help:'Best when the book has spoken chapter headings but no usable chapter list. AI suggests chapter starts for you to review.'},
+            {source:'existing_files',label:'Use files & folders',description:'Creates chapters from sequential numbered folders. Individual files become their own chapters.',help:'Best when each audio file or numbered folder represents a chapter. Uses that structure to create markers without AI.'},
+            {source:'grouped_files',label:'Use chapter groups',description:'Uses chapter groups from Book Files. Ungrouped files become their own chapters.',help:'Best when a chapter spans several files or you want to name the groups yourself. Create groups in Book Files first, then use them as chapters.'},
+            {source:'existing_chapters',label:'Use existing chapters',description:'Use embedded markers or a matched chapter/playlist file.',help:'Best when the audiobook already has embedded chapters or a chapter/playlist file. Load those markers, then edit any names or timings that need fixing.'},
+            {source:'manual',label:'Skip',description:'Open the Chapter Editor without generating markers.',help:'Best when you want to build the chapter list yourself or keep working on your current edits. Opens the editor without generating new markers.'},
+          ] as const).map(choice=>{
+            const selected=chapterSource===choice.source;
+            const ai=choice.source==='whisperx'||(selected&&generateTranscript);
+            return <div key={choice.source} onClick={event=>{if(isRunning||(event.target as Element).closest('input,button,label,.chapter-option-info,.chapter-transcript-option'))return;setChapterSource(choice.source);void notifyJobUpdate({chapterSource:choice.source});}} className={`chapter-option-note p-4 rounded-xl border-2 flex flex-col ${selected?'border-amber-500 bg-amber-50/60':'border-stone-200'}`}>
+              <span className="flex items-center gap-2"><label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="chapterSource" value={choice.source} aria-label={choice.source==='existing_files'?'Use files and folders':choice.label} checked={selected} disabled={isRunning} onChange={()=>{setChapterSource(choice.source);void notifyJobUpdate({chapterSource:choice.source});}} />
+                <span className="font-bold text-sm">{choice.label} <OptionInfo text={choice.help}/></span>
+              </label></span>
+              <div className="chapter-source-badges mt-2 flex flex-wrap items-center gap-2">
+                <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${ai?'bg-amber-100 text-amber-800':'bg-stone-200 text-stone-700'}`}>{ai?'AI · Slow':'No AI · Fast'}</span>
+                {choice.source==='existing_chapters'&&existingChapterInfo.count>0&&<>
+                  <span role="status" className="px-2 py-0.5 rounded bg-stone-200 text-stone-700 text-[11px] font-semibold">{existingChapterInfo.count} chapters</span>
+                  <span role="img" aria-label={existingChapterInfo.source||'Embedded chapters from audio'} title={existingChapterInfo.source||'Embedded chapters from audio'} className="chapter-source-mark inline-flex opacity-70" style={{color:'var(--sm-muted)'}}>
+                    {(!existingChapterInfo.source||existingChapterInfo.source==='Embedded chapters')?<FileAudio aria-hidden="true" className="h-3.5 w-3.5" strokeWidth={1.5}/>:<ListMusic aria-hidden="true" className="h-3.5 w-3.5" strokeWidth={1.5}/>}
                   </span>
+                </>}
+              </div>
+              <p className="mt-2 text-xs">{choice.description}</p>
+              {choice.source==='grouped_files'&&<span className="mt-2 text-[11px]">{new Set(job.parts.flatMap(part=>part.chapterGroup?[part.chapterGroup.id]:[])).size} chapter groups saved in Book Files</span>}
+              {choice.source==='existing_chapters'&&<>
+                {!existingChapterInfo.count&&<p role="status" className="mt-2 text-xs">{existingChapterInfo.source||'No confirmed chapters found yet. Checks the selected audio and matching chapter files again when you continue.'}</p>}
+                {chapterFileMessage&&<p role="status" className="mt-2 text-xs">{chapterFileMessage}</p>}
+                <div className="mt-auto flex items-center gap-2 pt-3">
+                  <input ref={chapterFileInput} type="file" hidden aria-label="Chapter or playlist file" accept=".cue,.m3u,.m3u8,.pls,.xspf,.wpl,.asx,.ffmeta,.ffmetadata,.txt,.xml,.vtt" onChange={event=>{const file=event.target.files?.[0];if(file)void importChapterFile(file);}} />
+                  <div className="ml-auto flex items-center gap-2">
+                    {existingChapterInfo.importedName&&<button type="button" aria-label="Clear imported chapter source" title="Use detected chapters again" disabled={isRunning||importingChapterFile} onClick={()=>void clearChapterFile()} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-stone-300"><Undo2 className="h-4 w-4"/></button>}
+                    <button type="button" aria-label="Import chapter or playlist file" title="Import chapters or playlist: CUE, M3U/M3U8, PLS, XSPF, WPL, ASX, FFmetadata, chapter TXT/XML or WebVTT" disabled={isRunning||importingChapterFile} onClick={()=>chapterFileInput.current?.click()} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-stone-300 disabled:opacity-50">{importingChapterFile?<Loader2 className="h-4 w-4 animate-spin"/>:<Import className="h-4 w-4"/>}</button>
+                  </div>
                 </div>
-                <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[11px] font-semibold">
-                  Default / AI
-                </span>
-              </div>
-              <p className="text-xs text-stone-600 pl-6 leading-relaxed">
-                Combines your source files, transcribes speech, and uses spoken headings and musical transitions to suggest chapter starts for review.
-              </p>
-              <div className="pl-6 pt-1 text-[11px] text-amber-800 italic">
-                Best when files are long parts, chapter boundaries are unclear, or you want speech-based chapter suggestions.
-              </div>
-            </div>
-          </label>
-
-          {/* Option B: Derive chapters from the imported source structure */}
-          <label
-            className={`p-4 rounded-xl border-2 transition-all cursor-pointer flex flex-col justify-between ${
-              chapterSource === 'existing_files'
-                ? 'bg-amber-50/60 border-amber-500 shadow-xs'
-                : 'bg-stone-50/50 border-stone-200 hover:border-stone-300'
-            }`}
-          >
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="radio"
-                    name="chapterSource"
-                    value="existing_files"
-                    checked={chapterSource === 'existing_files'}
-                    onChange={() => {
-                      setChapterSource('existing_files');
-                      notifyJobUpdate({ chapterSource: 'existing_files' });
-                    }}
-                    className="w-4 h-4 text-amber-600 focus:ring-amber-500"
-                  />
-                  <span className="font-bold text-sm text-stone-900">
-                    Use files and folders as chapters
-                  </span>
-                </div>
-                <span className="px-2 py-0.5 rounded bg-stone-200 text-stone-700 text-[11px] font-semibold">
-                  No transcription
-                </span>
-              </div>
-              <p className="text-xs text-stone-600 pl-6 leading-relaxed">
-                Each numbered folder becomes a chapter; files inside are combined in name order. If there are no numbered folders, each audio file becomes a chapter.
-              </p>
-              <div className="pl-6 pt-1 text-[11px] text-amber-800 italic">
-                Best when your files are already separated into the chapters you want.
-              </div>
-            </div>
-          </label>
+              </>}
+              {selected&&choice.source!=='whisperx'&&<div className="chapter-transcript-option mt-auto pt-3 text-right">
+                <label className="inline-flex items-center gap-1.5 cursor-pointer text-[11px]">
+                  <input type="checkbox" aria-label="Generate transcript" checked={generateTranscript} disabled={isRunning} onChange={event=>{setGenerateTranscript(event.target.checked);void notifyJobUpdate({generateTranscript:event.target.checked});}} />
+                  <span>Generate transcript <OptionInfo text="Use this when you want searchable text or word-by-word timing for review. Your chapter markers stay unchanged."/></span>
+                </label>
+              </div>}
+            </div>;
+          })}
         </div>
+        <div className="px-4 pb-4 space-y-2">
+        </div>
+        </section>
+        </DesktopWindow>
 
         {/* Audio Merge Method */}
-        {(
-          <div className="space-y-3 pt-1">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {/* Option A: Standard merge (recommended) */}
-              <label
-                className={`p-4 rounded-xl border-2 transition-all cursor-pointer flex flex-col justify-between ${
-                  mergeMethod === 'standard'
-                    ? 'bg-amber-50/60 border-amber-500 shadow-xs'
-                    : 'bg-stone-50/50 border-stone-200 hover:border-stone-300'
-                }`}
-              >
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="radio"
-                        name="mergeMethod"
-                        value="standard"
-                        checked={mergeMethod === 'standard'}
-                        onChange={() => {
-                          setMergeMethod('standard');
-                          notifyJobUpdate({ mergeMethod: 'standard' });
-                        }}
-                        className="w-4 h-4 text-amber-600 focus:ring-amber-500"
-                      />
-                      <span className="font-bold text-sm text-stone-900">
-                    Prepare audio for reliable timing
-                      </span>
-                    </div>
-                    <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-semibold">
-                      Most Reliable
-                    </span>
+        <DesktopWindow id="audio-preparation" title="Audio Preparation" role="child" homeWindow="processing-options">
+        <section className="workspace-panel processing-panel processing-options rounded-xl border border-stone-200 bg-white">
+        <header className="workspace-panel-header workspace-toolbar px-4 py-3 border-b border-stone-200"><h4 className="workspace-panel-title text-sm font-bold">Audio Preparation</h4></header>
+          <div className="space-y-3 p-4">
+            <div className="chapter-option-notes grid grid-cols-1 md:grid-cols-2 gap-3">
+              {([
+                {method:'standard',label:'Prepare for accuracy',description:'Standardizes audio for reliable timing and chapter detection.',help:'Best for mixed audio formats or files with inconsistent timing. Standardizes audio for reliable chapter review and transcription, but takes longer.'},
+                {method:'quick',label:'Join without converting',description:'Joins compatible audio unchanged.',help:'Best when you have several clean files with matching audio settings. Joins them without re-encoding after the audio check confirms they are compatible.'},
+                {method:'skip',label:'Skip',description:'Keep the original files without normalization or joining.',help:'Best for clean, finished audio that only needs metadata or chapter edits. Keeps the original files as the audio source and leaves any required joining until export.'},
+              ] as const).map(choice=>{
+                const selected=mergeMethod===choice.method;
+                const unavailable=choice.method==='quick'&&!streamCopyCompatible;
+                const ai=selected&&needsTranscript;
+                const fast=choice.method!=='standard'&&!ai;
+                return <div key={choice.method} onClick={event=>{if(isRunning||unavailable||selected||(event.target as Element).closest('input,label,button,.chapter-option-info'))return;setMergeMethod(choice.method);void notifyJobUpdate({mergeMethod:choice.method});}} className={`chapter-option-note p-4 rounded-xl border-2 flex flex-col ${unavailable?'opacity-50 cursor-not-allowed':selected?'border-amber-500 bg-amber-50/60':'border-stone-200'}`} title={unavailable?`Unavailable: ${compatibility.reason}`:undefined}>
+                  <span className="flex items-center gap-2"><label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="mergeMethod" value={choice.method} aria-label={choice.label} disabled={isRunning||unavailable} checked={selected} onChange={()=>{setMergeMethod(choice.method);void notifyJobUpdate({mergeMethod:choice.method});}} />
+                    <span className="font-bold text-sm">{choice.label} <OptionInfo text={choice.help}/></span>
+                  </label></span>
+                  <span className={`self-start mt-2 px-2 py-0.5 rounded text-[11px] font-semibold ${ai?'bg-amber-100 text-amber-800':'bg-stone-200 text-stone-700'}`}>{ai?'AI':'No AI'} · {fast?'Fast':'Slow'}</span>
+                  <p className="mt-2 text-xs">{choice.description}</p>
+                  <div className="audio-waveform-option mt-auto pt-3 text-right">
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer text-[11px]">
+                      <input type="checkbox" aria-label={`Generate waveform — ${choice.label}`} checked={selected&&generateWaveform} disabled={isRunning||unavailable||!selected} onChange={event=>{setGenerateWaveform(event.target.checked);void notifyJobUpdate({generateWaveform:event.target.checked});}} />
+                      <span>Generate waveform <OptionInfo text="Enable this for a visual audio timeline when reviewing chapter boundaries. Leave it off to skip waveform analysis; transcription can still run."/></span>
+                    </label>
                   </div>
-                  <p className="text-xs text-stone-600 pl-6 leading-relaxed">
-                    Standardizes audio first for the most accurate timing and best AI chapter detection results.
-                  </p>
-                </div>
-              </label>
-
-              {/* Option B: Quick Merge — stitch audio files directly */}
-              <label
-                className={`p-4 rounded-xl border-2 transition-all flex flex-col justify-between ${
-                  !streamCopyCompatible
-                    ? 'opacity-50 bg-stone-100/70 border-stone-200 cursor-not-allowed'
-                    : mergeMethod === 'quick'
-                    ? 'bg-amber-50/60 border-amber-500 shadow-xs cursor-pointer'
-                    : 'bg-stone-50/50 border-stone-200 hover:border-stone-300 cursor-pointer'
-                }`}
-              >
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="radio"
-                        name="mergeMethod"
-                        value="quick"
-                        disabled={!streamCopyCompatible}
-                        checked={mergeMethod === 'quick'}
-                        onChange={() => {
-                          if (streamCopyCompatible) {
-                            setMergeMethod('quick');
-                            notifyJobUpdate({ mergeMethod: 'quick' });
-                          }
-                        }}
-                        className="w-4 h-4 text-amber-600 focus:ring-amber-500 disabled:opacity-40"
-                      />
-                      <span className="font-bold text-sm text-stone-900">
-                    Join compatible files without conversion
-                      </span>
-                    </div>
-                    {!streamCopyCompatible ? (
-                      <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 text-[10px] font-semibold">
-                        Unavailable (Stream Parameters)
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[11px] font-semibold">
-                        Stream copy
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-stone-600 pl-6 leading-relaxed">
-                    Stitches compatible encoded streams without PCM normalization. Analysis/preview decoding and selected chapter processing still run.
-                  </p>
-                </div>
-              </label>
+                </div>;
+              })}
             </div>
-
-            {/* Stream copy incompatibility alert */}
-            {!streamCopyCompatible && (
-              <div className="p-3.5 bg-stone-50 border border-stone-200 rounded-lg text-xs text-stone-700 flex items-start space-x-2.5">
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <div className="leading-relaxed">
-                  <span className="font-semibold text-stone-900">Skip PCM is unavailable:</span> {compatibility.reason}
-                </div>
-              </div>
-            )}
 
             {/* Persistent inline warning for Quick Merge */}
             {mergeMethod === 'quick' && streamCopyCompatible && (
@@ -1515,40 +649,44 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
               </div>
             )}
           </div>
-        )}
+        </section>
+        </DesktopWindow>
       </div>
 
+      </div>
+
+      </DesktopWindow>
       {/* Model management is intentionally secondary to the main import workflow. */}
-      <details
-        className={`advanced-disclosure bg-white rounded-xl p-5 border transition-all ${
-          chapterSource === 'existing_files'
-            ? 'opacity-50 border-stone-200 bg-stone-50/40 pointer-events-none'
-            : 'border-stone-200/80 shadow-xs'
-        } space-y-4`}
+      <DesktopWindow id="transcription-settings" title="Transcription Settings"><details
+        className={`workspace-panel processing-panel processing-models advanced-disclosure bg-white rounded-xl border transition-all ${
+          'border-stone-200/80 shadow-xs'
+        }`}
       >
-        <summary className="mb-4 flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3">
-          <span className="flex min-w-0 items-center gap-3"><Sparkles className="h-4 w-4 shrink-0 text-amber-700" /><span className="min-w-0"><span className="block text-sm font-bold text-stone-900">Transcription & model settings</span><span className="block truncate text-xs text-stone-500">{selectedModel?.name || 'Choose a speech model'} · {fasterEnabled ? 'optimized engine' : 'compatibility engine'}</span></span></span>
-          <span className="flex items-center gap-2 text-xs font-semibold text-stone-500">Advanced <ChevronDown className="disclosure-chevron h-4 w-4" /></span>
+        <summary className="workspace-panel-header workspace-toolbar flex cursor-pointer items-center justify-between gap-3 px-4 py-3">
+          <span className="flex min-w-0 items-center gap-3"><Sparkles className="h-4 w-4 shrink-0 text-amber-700" /><span className="min-w-0"><span className="workspace-panel-title inline-block text-sm font-bold text-stone-900">Transcription Settings</span><span className="block truncate text-xs text-stone-500">{selectedModel?.name || 'Choose a speech model'} · {fasterEnabled ? 'optimized engine' : 'compatibility engine'}</span></span></span>
+          <span className="workspace-header-toggle ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center text-stone-500"><ChevronDown aria-hidden="true" className="disclosure-chevron h-4 w-4" /></span>
         </summary>
-        <label className="flex items-center justify-between gap-4 p-3 rounded-lg border border-emerald-200 bg-emerald-50 cursor-pointer">
-          <span>
-            <span className="block text-sm font-bold text-stone-900">Faster Transcription</span>
-            <span className="block text-xs text-stone-600 mt-0.5">Uses the optimized Faster Whisper engine for faster processing and lower memory usage. Recommended for most systems.</span>
-          </span>
-          <input type="checkbox" checked={fasterEnabled} disabled={isSwitchingEngine || isRunning} onChange={event => handleFasterTranscriptionChange(event.target.checked)} title="Runs your selected Whisper model using the optimized CTranslate2 engine. Disable this if you experience compatibility problems." className="w-5 h-5 accent-emerald-600 shrink-0" />
-        </label>
-        <label className="flex items-center justify-between gap-4 p-3 rounded-lg border border-stone-200 bg-stone-50 cursor-pointer">
-          <span>
-            <span className="block text-sm font-bold text-stone-900">Detect Musical Chapter Transitions <span className="text-xs font-medium text-amber-800">Experimental</span></span>
-            <span className="block text-xs text-stone-600 mt-0.5">On by default. Looks for recurring cues and isolated spoken titles supported by music, including books without chapter numbers. Review the suggestions. Rerun chapter detection to apply changes to an existing transcript.</span>
-          </span>
-          <input type="checkbox" checked={config.detect_musical_transitions === true} disabled={isRunning || isSavingMusicSetting || chapterSource === 'existing_files'}
-            onChange={event => void handleMusicDetectionChange(event.target.checked)}
-            title="Looks for short or recurring musical cues between spoken sections that may indicate chapter boundaries."
-            className="w-5 h-5 accent-emerald-600 shrink-0" />
-        </label>
+        <div className="space-y-4 border-t border-stone-200 p-5">
         {musicSettingError && <p role="alert" className="text-xs text-red-700">{musicSettingError}</p>}
         <TranscriptionOptions engine={transcriptionEngine} model={selectedModelId}
+          leadingControls={<>
+
+          <div className="processing-setting-switch">
+            <button type="button" role="switch" aria-label="Faster Transcription" aria-checked={fasterEnabled}
+              disabled={isSwitchingEngine || isRunning} onClick={() => void handleFasterTranscriptionChange(!fasterEnabled)}
+              className="processing-compact-switch"><span aria-hidden="true" /></button>
+            <span className="text-sm font-bold">Faster Transcription</span>
+            <OptionInfo text="Uses the optimized Faster Whisper engine for faster processing and lower memory usage. Recommended for most systems." />
+          </div>
+          <div className="processing-setting-switch">
+            <button type="button" role="switch" aria-label="Improved Chapter Detection" aria-checked={config.detect_musical_transitions === true}
+              disabled={isRunning || isSavingMusicSetting || chapterSource !== 'whisperx'}
+              onClick={() => void handleMusicDetectionChange(config.detect_musical_transitions !== true)}
+              className="processing-compact-switch"><span aria-hidden="true" /></button>
+            <span className="text-sm font-bold">Improved Chapter Detection <span className="text-xs font-normal text-amber-700">Experimental</span></span>
+            <OptionInfo text="Off by default. Suggests numbered sections, isolated titles, source boundaries and acoustic cues. Rechecks a limited number of uncertain headings with your existing model. Suggestions require acceptance in chapter review; no additional models are installed." />
+          </div>
+          </>}
           value={transcriptionOptions[transcriptionEngine]} capability={backendCapability} disabled={isRunning || isSwitchingEngine}
           onChange={value => {
             const updated = { ...transcriptionOptions, [transcriptionEngine]: value };
@@ -1560,102 +698,46 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
             <Sparkles className="w-5 h-5 text-amber-600" />
             <div>
               <h3 className="font-bold text-sm text-stone-900">Models</h3>
-              <p className="text-xs font-semibold text-amber-800">
-                {fasterEnabled ? 'Faster Whisper / CTranslate2 models' : 'OpenAI Whisper / PyTorch models'}
-              </p>
-              <p className="text-xs text-stone-500">
-                Available models are listed here; installed models are marked and can be reinstalled or removed. Larger models are usually more accurate but take longer and use more storage.
+              <p className="inline-flex items-center gap-2 text-xs font-semibold text-amber-800">
+                {fasterEnabled ? 'Faster Whisper' : 'OpenAI Whisper / PyTorch models'}
+                <OptionInfo text="Installed models are marked and can be reinstalled or removed. Larger models are usually more accurate but take longer and use more storage." />
               </p>
             </div>
           </div>
 
           <div className="flex items-center space-x-2">
-            {chapterSource === 'existing_files' ? (
+            {!needsTranscript ? (
               <span className="text-xs font-semibold px-2.5 py-1 rounded bg-stone-200 text-stone-600">
                 Not needed for file-based chapters
               </span>
             ) : (
               <>
-                <button
+                <AdaptiveButton
                   onClick={handleRefreshModels}
                   disabled={isRefreshingModels}
+                  icon={<RefreshCw className={isRefreshingModels ? 'animate-spin' : ''} />}
+                  label={isRefreshingModels ? 'Checking Disk...' : 'Refresh Models'}
+                  compactLabel="Refresh"
                   className="px-2.5 py-1 rounded text-[11px] font-medium bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 transition-colors cursor-pointer flex items-center space-x-1"
                   title="Scan local models directory on disk for downloaded weights"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingModels ? 'animate-spin' : ''}`} />
-                  <span>{isRefreshingModels ? 'Checking Disk...' : 'Refresh Models'}</span>
-                </button>
+                />
 
               </>
             )}
           </div>
         </div>
 
-        {chapterSource === 'existing_files' ? (
+        {!needsTranscript ? (
           <div className="p-3 bg-stone-100/70 rounded-lg text-xs text-stone-500 italic">
-            Speech recognition is not needed because chapters will come from your folders, files, or existing chapter markers. Audio preparation still runs.
+            Transcription is optional for this chapter source. Enable Generate transcript above to configure it, or run Generate transcript only after opening chapter review.
           </div>
         ) : (
           <div className="space-y-4">
-            {/* Hardware Detection Summary Card */}
-            <div className="p-4 bg-stone-50 rounded-xl border border-stone-200 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
-              <div className="flex items-center space-x-3">
-                <div
-                  className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs ${
-                    hardware.mode === 'gpu'
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-amber-100 text-amber-800'
-                  }`}
-                >
-                  <Cpu className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-bold text-stone-900 text-sm">
-                      {backendCapability ? capabilityLabel(backendCapability, transcriptionOptions[transcriptionEngine]?.device) : 'Checking backend capabilities…'}
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                        hardware.mode === 'gpu'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-stone-200 text-stone-700'
-                      }`}
-                    >
-                      {transcriptionEngine}
-                    </span>
-                  </div>
-                  <p className="text-stone-500 mt-0.5">
-                    Hardware:{' '}
-                    <span className="font-medium text-stone-800">
-                      {hardware.gpuName || hardware.cpuModel || 'Local System Host'}
-                    </span>
-                    {hardware.vramGb ? ` • ${hardware.vramGb} GB VRAM` : ''}
-                  </p>
-                </div>
-              </div>
-
-              <div className="text-left md:text-right border-t md:border-t-0 border-stone-200 pt-2 md:pt-0">
-                <span className="text-stone-500 block text-[11px]">Recommended for this system:</span>
-                <span className="font-bold font-mono text-amber-800 uppercase text-xs">
-                  {hardware.recommendedModelId}
-                </span>
-              </div>
-            </div>
-
-            {/* Helper Text */}
-            <div className="text-xs text-stone-600 bg-amber-50/50 p-3 rounded-lg border border-amber-200/60 flex items-center space-x-2">
-              <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>
-                Recommended based on your detected hardware. You can choose any compatible installed model.
-              </span>
-            </div>
-
             {/* Models Table / Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="processing-model-grid grid grid-cols-1 md:grid-cols-2 gap-3">
               {models.filter(model => model.backend === transcriptionEngine).map((model) => {
                 const isSelected = selectedModelId === model.id;
                 const isRecommended = hardware.recommendedModelId === model.id;
-                const isCompatible = hardware.mode === 'gpu' || !model.requiresGpu;
                 const isUnavailableGpu = model.requiresGpu && hardware.mode === 'cpu';
 
                 return (
@@ -1670,7 +752,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                         notifyJobUpdate({ selectedModelId: model.id });
                       }
                     }}
-                    className={`p-4 rounded-xl border-2 transition-all flex flex-col justify-between ${
+                    className={`processing-model-card p-4 rounded-xl border-2 transition-all flex flex-col justify-between ${
                       isUnavailableGpu
                         ? 'opacity-60 bg-stone-100/80 border-stone-200 cursor-not-allowed'
                         : isSelected
@@ -1705,36 +787,16 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                                   ({model.sizeOnDiskLabel} on disk)
                                 </span>
                               )}
-                              {model.isInstalled && model.installedFile && (
-                                <span className="ml-1 text-stone-400 block sm:inline">
-                                  • {model.installedFile}
-                                </span>
-                              )}
                             </span>
                           </div>
                         </div>
 
-                        <div className="flex flex-col items-end space-y-1">
-                          {isRecommended && (
-                            <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
-                              ★ Recommended
-                            </span>
-                          )}
-                          {model.requiresGpu ? (
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-medium ${
-                                hardware.mode === 'gpu'
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : 'bg-rose-100 text-rose-800'
-                              }`}
-                            >
-                              Requires NVIDIA GPU
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 text-[10px] font-medium">
-                              CPU & GPU Compatible
-                            </span>
-                          )}
+                        <div className="processing-model-badges">
+                          <span title={model.requiresGpu ? 'Requires a compatible NVIDIA GPU' : 'Compatible with GPU and CPU processing'}
+                            className={`px-2 py-0.5 rounded text-[10px] font-medium ${model.requiresGpu ? hardware.mode === 'gpu' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800' : 'bg-stone-100 text-stone-700'}`}>
+                            {model.requiresGpu ? 'GPU' : 'GPU & CPU'}
+                          </span>
+                          {isRecommended && <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">★ Recommended</span>}
                         </div>
                       </div>
 
@@ -1784,7 +846,7 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                     </div>
 
                     {/* Action Buttons */}
-                    <div className="pt-3 border-t border-stone-100 mt-3 flex items-center justify-between text-xs">
+                    <div className="processing-model-footer pt-3 border-t border-stone-100 mt-3 flex items-center justify-between text-xs">
                       <div className="flex items-center space-x-1.5">
                         {model.isInstalled ? (
                           <span className="inline-flex items-center text-emerald-700 font-semibold text-[11px]">
@@ -1801,61 +863,20 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
                         )}
                       </div>
 
-                      <div className="flex items-center space-x-2">
+                      <div className="processing-model-actions">
                         {model.isDownloading ? (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleCancelDownload(model.id);
-                            }}
-                            className="px-2.5 py-1 rounded text-xs font-semibold bg-stone-200 hover:bg-stone-300 text-stone-800 transition-colors cursor-pointer flex items-center space-x-1"
-                          >
-                            <XCircle className="w-3.5 h-3.5" />
-                            <span>Cancel Download</span>
-                          </button>
-                        ) : model.isInstalled ? (
-                          <>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleInstallModel(model, true);
-                              }}
-                              disabled={!modelAvailability.ready}
-                              className="px-2.5 py-1 rounded text-xs font-medium text-stone-600 hover:text-stone-950 hover:bg-stone-100 border border-stone-200 transition-colors cursor-pointer flex items-center space-x-1"
-                              title={modelAvailability.tooltip || 'Download a fresh copy of this model into the application cache'}
-                            >
-                              <RefreshCw className="w-3.5 h-3.5" />
-                              <span>Reinstall</span>
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleUninstallModel(model.id);
-                              }}
-                              className="px-2.5 py-1 rounded text-xs font-medium text-stone-500 hover:text-rose-700 hover:bg-rose-50 border border-stone-200 transition-colors cursor-pointer flex items-center space-x-1"
-                              title="Removes only downloaded weights; never touches user audiobooks or settings"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Uninstall</span>
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleInstallModel(model);
-                            }}
-                            disabled={isUnavailableGpu || !modelAvailability.ready}
-                            title={modelAvailability.tooltip}
-                            className={`px-3 py-1 rounded text-xs font-semibold shadow-xs transition-colors cursor-pointer flex items-center space-x-1 ${
-                              isUnavailableGpu || !modelAvailability.ready
-                                ? 'bg-stone-200 text-stone-400 cursor-not-allowed'
-                                : 'bg-stone-900 hover:bg-stone-800 text-white'
-                            }`}
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Install</span>
-                          </button>
+                          <ModelAction icon={<XCircle />} label="Cancel" modelName={model.name} onClick={() => void handleCancelDownload(model.id)} />
+                        ) : model.isInstalled ? <>
+                          <ModelAction icon={<RefreshCw />} label="Reinstall" modelName={model.name}
+                            disabled={!modelAvailability.ready} title={modelAvailability.tooltip || 'Download a fresh copy of this model into the application cache'}
+                            onClick={() => void handleInstallModel(model, true)} />
+                          <ModelAction icon={<Trash2 />} label="Uninstall" modelName={model.name}
+                            title="Removes only downloaded weights; never touches user audiobooks or settings"
+                            disabled={!modelAvailability.ready} onClick={() => void handleUninstallModel(model.id)} />
+                        </> : (
+                          <ModelAction icon={<Download />} label="Install" modelName={model.name}
+                            disabled={isUnavailableGpu || !modelAvailability.ready} title={modelAvailability.tooltip}
+                            onClick={() => void handleInstallModel(model)} />
                         )}
                       </div>
                     </div>
@@ -1865,88 +886,24 @@ export const Step1MergeDetect: React.FC<Step1Props> = ({
             </div>
           </div>
         )}
-      </details>
-
-      {/* SECTION 6: Validation Before Continuing & Run Action */}
-      <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs space-y-4">
-        {/* Inline Validation Warnings summary */}
-        {!canRunStep1 && (
-          <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 space-y-1">
-            <div className="font-bold flex items-center space-x-1.5 text-rose-900">
-              <AlertCircle className="w-4 h-4 text-rose-600" />
-              <span>Prerequisites missing before running Step 1:</span>
-            </div>
-            <ul className="list-disc list-inside space-y-0.5 text-[11px] pl-1 text-rose-700">
-              {!hasSourceFolder && <li>Choose an audio folder, download from YouTube, or import a LibriVox book.</li>}
-              {!hasAudioFiles && <li>No supported audio files were found in the selected folder.</li>}
-              {!isOutputValid && <li>The selected output folder cannot be written to.</li>}
-              {!processAvailability.ready && <li>{processAvailability.tooltip}</li>}
-              {chapterSource === 'whisperx' && !selectedModel && (
-                <li>Select a compatible Whisper model to continue.</li>
-              )}
-              {chapterSource === 'whisperx' && selectedModel && !isSelectedModelCompatible && (
-                <li>
-                  The selected model requires an NVIDIA GPU and cannot run in CPU-only mode. Choose a
-                  CPU-compatible model.
-                </li>
-              )}
-            </ul>
-          </div>
-        )}
-
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
-          <div className="text-xs text-stone-500">
-            <span className="font-semibold text-stone-700">Workflow:</span>{' '}
-            {chapterSource === 'existing_files' ? (
-              <span className="font-medium text-amber-800">
-                Chapters from Source Structure (No Transcription)
-              </span>
-            ) : (
-              <span className="font-medium text-amber-800">
-                Whisper Chapter Detection ({mergeMethod === 'quick' ? 'Quick Merge' : 'Standard Merge'} •{' '}
-                {selectedModel?.name || 'Whisper Small'})
-              </span>
-            )}
-          </div>
-
-          <div className="flex items-center space-x-3">
-            {job.status !== 'draft' && (
-              <button
-                onClick={onNextStep}
-                className="px-4 py-2.5 rounded-lg text-xs sm:text-sm font-semibold bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 transition-colors cursor-pointer"
-              >
-                Continue to Review →
-              </button>
-            )}
-
-            <button
-              id="btn-run-step1"
-              onClick={handleExecute}
-              disabled={isRunning || !canRunStep1}
-              title={processAvailability.tooltip}
-              className={`flex items-center space-x-2 px-5 py-2.5 rounded-lg text-xs sm:text-sm font-semibold text-white shadow-sm transition-all cursor-pointer ${
-                isRunning || !canRunStep1
-                  ? 'bg-stone-300 text-stone-500 cursor-not-allowed border border-stone-300'
-                  : 'bg-amber-600 hover:bg-amber-500 active:scale-98'
-              }`}
-            >
-              {isRunning ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Processing...</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4 fill-white" />
-                  <span>
-                    {runButtonLabel}
-                  </span>
-                </>
-              )}
-            </button>
-          </div>
         </div>
-      </div>
+      </details></DesktopWindow>
+
+      <PreviewPanel id="processing-readiness" title="Workflow">
+          <ul aria-label="Selected processing options" className="list-disc list-inside space-y-2 text-xs font-medium text-amber-800">
+            <li>{chapterSource === 'whisperx' ? 'Find spoken chapters' : chapterSource === 'grouped_files' ? 'Use chapter groups' : chapterSource === 'existing_chapters' ? 'Use existing chapters' : chapterSource === 'manual' ? 'Edit chapters manually' : 'Use files & folders'}</li>
+            <li>{mergeMethod === 'skip' ? 'Skip' : mergeMethod === 'quick' ? 'Join without converting' : 'Prepare for accuracy'}</li>
+            {generateWaveform && <li>Generate waveform</li>}
+            {needsTranscript && selectedModel && <li>{selectedModel.name}</li>}
+          </ul>
+          <p className="processing-gpu-summary" role="status">
+            <span>GPU acceleration</span>
+            <span tabIndex={0} className={`processing-gpu-status ${backendCapability?.gpuAvailable ? 'is-available' : !backendCapability || backendCapability.gpuDetected || hardware.mode === 'gpu' ? 'is-unavailable' : 'is-missing'}`}
+              title={backendCapability?.gpuAvailable ? hardware.gpuName || 'Compatible CUDA GPU detected' : !backendCapability ? 'Checking GPU support for the selected transcription engine.' : backendCapability.gpuDetected || hardware.mode === 'gpu' ? backendCapability.reason || 'A GPU was detected, but acceleration is unavailable for the selected transcription engine or runtime.' : 'GPU acceleration requires a CUDA-capable GPU.'}>
+              {backendCapability?.gpuAvailable ? 'Available' : !backendCapability || backendCapability.gpuDetected || hardware.mode === 'gpu' ? 'Unavailable' : 'Hardware not detected'}
+            </span>
+          </p>
+      </PreviewPanel></>}
     </div>
   );
 };

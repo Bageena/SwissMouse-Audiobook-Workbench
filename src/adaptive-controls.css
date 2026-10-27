@@ -1,0 +1,78 @@
+/* Commands respond to their own available space, including inside merged panels.
+   Container queries avoid a ResizeObserver/render loop while panels are dragged. */
+:root .adaptive-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+}
+:root .adaptive-button-slot {
+  display: inline-flex;
+  flex: 1 1 140px;
+  align-items: stretch;
+  min-width: 28px;
+  max-width: 100%;
+  container: adaptive-control / inline-size;
+}
+:root .adaptive-actions > .adaptive-button-slot { flex-basis: 0; }
+:root .adaptive-button {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--sm-border);
+  border-radius: 6px;
+  background-color: var(--sm-surface);
+  color: var(--sm-ink);
+  overflow: hidden;
+}
+:root .adaptive-button-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+}
+:root .adaptive-button-icon > :is(svg, img) { width: 100%; height: 100%; max-width: 100%; object-fit: contain; }
+:root .adaptive-button-copy { display: grid; min-width: 0; text-align: left; overflow: hidden; overflow-wrap: normal; }
+:root .adaptive-button-copy > :is(span, small) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root .adaptive-button-label-compact { display: none; }
+:root .adaptive-button-copy small { color: var(--sm-muted); font-size: .75em; }
+:root .adaptive-button[data-tone="primary"] {
+  background-color: var(--sm-accent-soft);
+  border-color: var(--sm-accent);
+  color: var(--sm-accent-text, var(--sm-ink));
+}
+:root .adaptive-button[data-tone="danger"] {
+  background-color: var(--sm-error-soft);
+  border-color: var(--sm-error);
+  color: var(--sm-error);
+}
+:root .adaptive-button:disabled { opacity: .5; cursor: default; }
+:root .adaptive-button:focus-visible { outline: 2px solid var(--sm-ring); outline-offset: 2px; }
+
+@container adaptive-control (max-width: 220px) {
+  :root .adaptive-button-copy small { display: none; }
+  :root .adaptive-button-slot[data-has-compact-label="true"] .adaptive-button-label { display: none; }
+  :root .adaptive-button-slot[data-has-compact-label="true"] .adaptive-button-label-compact { display: inline; }
+}
+@container adaptive-control (max-width: 112px) {
+  :root .adaptive-button-copy { display: none; }
+  :root .adaptive-button { gap: 0; padding: 5px; }
+  :root .adaptive-button-icon { width: clamp(14px, 35cqi, 26px); height: clamp(14px, 35cqi, 26px); }
+}
+@container adaptive-control (max-width: 40px) {
+  :root .adaptive-button { min-height: 28px; padding: 4px; }
+}
+
+/* Metadata save commands remain compact at every panel width. */
+:root .adaptive-actions > .metadata-icon-action { flex: 0 0 40px; }
+:root .metadata-icon-action .adaptive-button-copy { display: none; }
+:root .metadata-icon-action .adaptive-button { padding: 7px; gap: 0; }

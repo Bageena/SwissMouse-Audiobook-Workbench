@@ -1,6 +1,6 @@
 import type { AudiobookMetadata } from '../types';
 
-// Goodreads-inspired browse categories. Keep quick-add choices in one place.
+// Initial choices for a new installation. User changes live in config.json.
 export const QUICK_ADD_CATEGORIES = [
   'Adventure', 'Aliens', 'Art', 'Autobiography', 'Biography', 'Business',
   'Children', 'Classics', 'Contemporary', 'Crime', 'Dark Fantasy', 'Detective',
@@ -16,14 +16,36 @@ export const QUICK_ADD_CATEGORIES = [
 export const alphabetical = (values: readonly string[]) =>
   [...values].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
 
-export const selectedCategory = (metadata: AudiobookMetadata, value: string) =>
-  metadata.genres.some(item => item.toLowerCase() === value.toLowerCase())
-  || (metadata.tags || []).some(item => item.toLowerCase() === value.toLowerCase());
+export const normalizeQuickTag = (value: string) => value.trim().replace(/\s+/g, ' ');
+export const quickTagKey = (value: string) => normalizeQuickTag(value).toLocaleLowerCase();
+export function cleanQuickTags(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  return values.map(normalizeQuickTag).filter(value => {
+    const key = quickTagKey(value);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
-export function quickAddCategory(metadata: AudiobookMetadata, value: string): AudiobookMetadata {
-  const category = value.trim();
-  if (!category || selectedCategory(metadata, category)) return metadata;
-  const genres = metadata.genres.filter(item => item.trim() && item.toLowerCase() !== 'audiobook');
-  if (!genres.length) return { ...metadata, genres: [category] };
-  return { ...metadata, tags: alphabetical([...(metadata.tags || []), category]) };
+export type QuickAddTarget = 'genres' | 'tags';
+
+export function quickAddCategory(metadata: AudiobookMetadata, value: string, target: QuickAddTarget): AudiobookMetadata {
+  const category = normalizeQuickTag(value);
+  if (!category) return metadata;
+  const matches = (item: string) => quickTagKey(item) === quickTagKey(category);
+  if (target === 'genres') {
+    if (metadata.genres.some(matches)) return metadata;
+    return {
+      ...metadata,
+      genres: alphabetical([...metadata.genres.filter(item => item.trim() && !matches(item) && item.trim().toLowerCase() !== 'audiobook'), category]),
+      tags: (metadata.tags || []).filter(item => !matches(item)),
+    };
+  }
+  if ((metadata.tags || []).some(matches)) return metadata;
+  return {
+    ...metadata,
+    genres: metadata.genres.filter(item => !matches(item)),
+    tags: alphabetical([...(metadata.tags || []), category]),
+  };
 }

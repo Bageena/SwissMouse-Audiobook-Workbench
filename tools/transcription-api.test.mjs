@@ -1,13 +1,16 @@
 import test from 'node:test';
+import { createTestFixture, stopTestServer } from './test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { buildSync } from 'esbuild';
 
-test('HTTP transcription rerun retains cache; beam invalidates; lead-in and model-panel preferences reuse words', { timeout: 60000 }, async () => {
+test('HTTP transcription rerun retains cache; beam invalidates; lead-in and model-panel preferences reuse words', { timeout: 60000 }, async t => {
   fs.mkdirSync('.cache', { recursive: true });
-  const root = fs.mkdtempSync(path.resolve('.cache/transcription-api-'));
+  const fixture = createTestFixture('.cache/transcription-api-');
+  const { root } = fixture;
+  t.after(() => fixture.cleanup());
   const bin = path.join(root, 'runtime/bin');
   fs.mkdirSync(bin, { recursive: true });
   for (const name of ['ffmpeg', 'ffprobe']) {
@@ -33,6 +36,8 @@ test('HTTP transcription rerun retains cache; beam invalidates; lead-in and mode
     "    else if (args[1].includes(\"cfg = json.loads\")) {",
     "      const c=JSON.parse(args[2]); process.stderr.write('TRANSCRIPTION_RUN\\n');",
     "      value={engine:c.engine,model:c.model,device:c.device,computeType:c.compute_type,batchSize:c.batch_size,beamSize:c.beam_size,language:c.language,segments:[{id:0,start:2,end:3,text:'Chapter One.',words:[{word:'Chapter',start:2,end:2.5},{word:'One.',start:2.5,end:3}]}]};",
+    "      value.segments.push({id:1,start:3,end:4,text:'Untimed passage.',words:[]});",
+    "      if(fs.statSync(c.audio).size>1000000){ const groups=[['Chapter One.',2],...['One.','Two.','Three.'].flatMap((n,i)=>[['Earlier narration ends.',96+i*150],[n,100+i*150],['The story resumes across the valley.',103+i*150]])]; value.segments=groups.map(([text,start],id)=>({id,start,end:start+text.split(' ').length*.35,text,words:text.split(' ').map((word,i)=>({word,start:start+i*.35,end:start+(i+1)*.35,probability:.95}))})); }",
     "      fs.writeFileSync(c.output,JSON.stringify(value)); value={};",
     "    } else throw Error('Unexpected Python call');",
     "    process.nextTick(()=>callback(null, JSON.stringify(value), ''));",
@@ -72,13 +77,20 @@ test('HTTP transcription rerun retains cache; beam invalidates; lead-in and mode
     await full();
     assert.equal(runs(), 1);
     let saved = await request(route);
+    assert.equal(saved.waveformReady,false,'transcription can run with waveform generation off');
+    assert.equal(fs.existsSync(saved.previewPath+'.analysis.json'),false,'default detection does not build acoustic features');
     assert.ok(saved.transcription.requestKey && saved.transcriptKey);
+    assert.equal(saved.transcriptSegments[1].text, 'Untimed passage.');
+    assert.deepEqual(saved.transcriptSegments[1].words, []);
+    assert.equal(saved.transcriptWords.length, 2);
+    assert.match(logs, /WARNING: 1 speech segments have no word timestamps/);
+    assert.match(logs, /Missing word timestamps.*00:00:03.000.*Untimed passage/);
     const firstKey = saved.transcriptKey;
     await full();
     assert.equal(runs(), 1);
-    assert.equal((await request('/api/config')).detect_musical_transitions, true, 'acoustic evidence is enabled for books without chapter numbers');
+    assert.equal((await request('/api/config')).detect_musical_transitions, false, 'experimental detection is off by default');
     const originalDetectionKey = saved.chapterDetectionKey;
-    await request('/api/config', { detect_musical_transitions: false });
+    await request('/api/config', { detect_musical_transitions: true });
     await full();
     saved = await request(route);
     assert.notEqual(saved.chapterDetectionKey, originalDetectionKey);
@@ -87,7 +99,7 @@ test('HTTP transcription rerun retains cache; beam invalidates; lead-in and mode
     await request(route + '/rerun/detecting_chapters', {}); await wait();
     assert.equal(runs(), 1, 'music-aware detection rerun does not transcribe');
     assert.equal((await request(route)).chapterDetectionKey, saved.chapterDetectionKey);
-    await request('/api/config', { detect_musical_transitions: true });
+    await request('/api/config', { detect_musical_transitions: false });
     await full();
     assert.equal((await request(route)).chapterDetectionKey, originalDetectionKey);
     assert.equal(runs(), 1);
@@ -108,12 +120,53 @@ test('HTTP transcription rerun retains cache; beam invalidates; lead-in and mode
     await full();
     assert.equal(runs(), 3, 'changing chapter workflow reuses retained transcript');
     assert.equal((await request(route)).candidates[0].chapterNumber, 1);
+    await request(route + '/step1-settings', {chapterSource:'manual',mergeMethod:'skip',generateTranscript:true});
+    const reviewedChapters = (await request(route)).chapters;
+    await full({chapterSource:'manual',mergeMethod:'skip',generateTranscript:true});
+    let independent = await request(route);
+    assert.deepEqual(independent.chapters, reviewedChapters, 'transcription-only processing preserves chapter names and timing');
+    assert.deepEqual(independent.candidates, []);
+    assert.ok(independent.transcriptWords.length);
+    assert.equal(independent.mergedMp3.fullPath, audio, 'skip mode reads the original recording directly');
+    const beforeTranscript = independent.chapters;
+    await request(route + '/rerun/transcribing_whisper', {}); await wait();
+    independent = await request(route);
+    assert.deepEqual(independent.chapters, beforeTranscript, 'standalone transcription never replaces chapter markers');
+    assert.ok(!independent.staleSteps.includes('chapter_review'), 'a new transcript does not invalidate independent chapters');
     const invalid = await fetch(base+route+'/step1-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({transcriptionSettings:{'openai-whisper':{beamSize:5}}})});
     assert.equal(invalid.status, 400);
     assert.match(logs, /Transcript cache: Hit/);
     assert.match(logs, /Transcription completed.*Device: CPU.*Batching: Off.*Beam: 2.*Fallback used: No/);
+
+    // Both the full-processing and detection-only paths must keep suggestions
+    // out of the saved/exportable list and protect an accepted manual review.
+    const longAudio = path.join(root, 'experimental.wav');
+    execFileSync(path.join(bin, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'), ['-v', 'error', '-f', 'lavfi', '-i', 'anullsrc=r=16000:cl=mono', '-t', '600', longAudio], { windowsHide: true });
+    const experimental = await request('/api/jobs', {name:'Experimental review test',parts:[{name:longAudio}]});
+    const experimentalRoute = '/api/jobs/' + experimental.id;
+    await request(experimentalRoute+'/process-step1', {chapterSource:'whisperx'}); await wait();
+    const ordinary = await request(experimentalRoute);
+    assert.equal(ordinary.candidates.length, 1);
+    const originalWords = ordinary.transcriptWords;
+    await request('/api/config', {detect_musical_transitions:true});
+    await request(experimentalRoute+'/rerun/detecting_chapters', {}); await wait();
+    const enhanced = await request(experimentalRoute);
+    assert.equal(enhanced.candidates.filter(candidate=>candidate.suggestionOnly).length, 3);
+    assert.deepEqual(enhanced.transcriptWords, originalWords);
+    assert.deepEqual(enhanced.chapters, enhanced.chapterReviewBaseline);
+    assert.equal(enhanced.chapters.length, 2);
+    const suggestion = enhanced.candidates.find(candidate=>candidate.suggestionOnly);
+    const accepted = [...enhanced.chapters, {id:'accepted',start:suggestion.candidate_start,title:suggestion.proposed_title,headingType:suggestion.headingType,
+      parentChapterStart:suggestion.parentChapterStart,manuallyInserted:true}];
+    await request(experimentalRoute+'/chapters', {chapters:accepted});
+    const protectedRerun = await fetch(base+experimentalRoute+'/rerun/detecting_chapters',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    assert.equal(protectedRerun.status,409);
+    assert.equal((await request(experimentalRoute)).chapters.length,3);
+    await request(experimentalRoute+'/rerun/detecting_chapters',{confirmReplaceManualChapters:true}); await wait();
+    assert.equal((await request(experimentalRoute)).chapters.length,2);
+    await request(experimentalRoute+'/process-step1',{chapterSource:'whisperx'}); await wait();
+    assert.equal((await request(experimentalRoute)).chapters.length,2);
   } finally {
-    server.kill();
-    await new Promise(resolve => server.once('exit', resolve));
+    await stopTestServer(server);
   }
 });

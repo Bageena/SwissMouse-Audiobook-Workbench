@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const BUILT_IN_THEME_IDS = ['light', 'parchment', 'blue', 'slate', 'forest', 'dark'] as const;
+export const BUILT_IN_THEME_IDS = ['light', 'parchment', 'blue', 'slate', 'forest', 'dark', 'cheese'] as const;
 
 export const CUSTOM_THEME_TOKENS = new Set([
-  '--sm-app-bg', '--sm-app-bg-top', '--sm-app-background-image',
+  '--sm-app-bg', '--sm-app-bg-top', '--sm-app-background-image', '--sm-theme-logo', '--sm-idle-player-art',
   '--sm-surface', '--sm-surface-elevated', '--sm-surface-subtle', '--sm-input', '--sm-hover',
   '--sm-ink', '--sm-text-secondary', '--sm-muted', '--sm-border', '--sm-border-soft',
   '--sm-accent', '--sm-accent-hover', '--sm-accent-soft', '--sm-accent-text', '--sm-secondary-accent',
@@ -15,6 +15,10 @@ export const CUSTOM_THEME_TOKENS = new Set([
   '--sm-waveform-baseline', '--sm-waveform', '--sm-waveform-playhead',
   '--sm-chapter-marker', '--sm-chapter-marker-selected',
   '--sm-transcript-highlight', '--sm-transcript-highlight-text',
+  '--sm-cover-frame-bg', '--sm-cover-frame-border', '--sm-cover-mat', '--sm-cover-frame-shadow',
+  '--sm-cover-frame-padding', '--sm-cover-frame-radius',
+  '--sm-loading-lift', '--sm-loading-scale', '--sm-loading-duration', '--sm-loading-spin-duration', '--sm-loading-shadow',
+  '--sm-panel-header-bg', '--sm-panel-title-bg', '--sm-panel-title-border',
 ]);
 
 export interface CustomThemeDefinition {
@@ -77,7 +81,7 @@ function parseThemeCss(css: string, themeDirectory: string, themeId: string): Re
     if (value.length > 300 || /[{};@]|expression\s*\(|javascript:|data:/i.test(value)) {
       throw new Error(`Unsafe or invalid value for ${token}`);
     }
-    if (token === '--sm-app-background-image') {
+    if (token === '--sm-app-background-image' || token === '--sm-theme-logo' || token === '--sm-idle-player-art') {
       if (value === 'none') { tokens[token] = value; continue; }
       const assetMatch = value.match(/^url\(\s*["']?\.\/assets\/([^"')/\\]+)["']?\s*\)$/i);
       const assetName = assetMatch?.[1];
@@ -87,6 +91,23 @@ function parseThemeCss(css: string, themeDirectory: string, themeId: string): Re
       const assetVersion = Math.round(fs.statSync(assetPath).mtimeMs);
       tokens[token] = `url("/api/themes/assets/${encodeURIComponent(themeId)}/${encodeURIComponent(assetName)}?v=${assetVersion}")`;
       continue;
+    }
+    if (token === '--sm-cover-frame-padding' || token === '--sm-cover-frame-radius') {
+      if (!/^\d+(?:\.\d+)?px$/.test(value) || parseFloat(value) > 32) throw new Error(`${token} must be between 0px and 32px`);
+      tokens[token] = value;
+      continue;
+    }
+    if (token === '--sm-loading-lift') {
+      if (!/^\d+(?:\.\d+)?px$/.test(value) || parseFloat(value)>24) throw new Error('Loading lift must be between 0px and 24px');
+      tokens[token]=value; continue;
+    }
+    if (token === '--sm-loading-scale') {
+      if (!/^\d+(?:\.\d+)?$/.test(value) || Number(value)<1 || Number(value)>2) throw new Error('Loading scale must be between 1 and 2');
+      tokens[token]=value; continue;
+    }
+    if (token === '--sm-loading-duration' || token === '--sm-loading-spin-duration') {
+      if (!/^\d+(?:\.\d+)?ms$/.test(value) || parseFloat(value)<50 || parseFloat(value)>5000) throw new Error('Loading duration must be between 50ms and 5000ms');
+      tokens[token]=value; continue;
     }
     if (!validColor(value)) throw new Error(`Invalid color for ${token}; use a hex color, rgb(a), hsl(a), or a basic named color`);
     tokens[token] = value;

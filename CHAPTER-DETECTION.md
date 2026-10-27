@@ -41,13 +41,58 @@ headings are not subject to a global minimum chapter spacing rule.
 
 ## Acoustic evidence for chapters
 
-**Detect Musical Chapter Transitions — Experimental** is on by default in
-Step 1's collapsed **Transcription & model settings**. Explicitly saved opt-outs
-are respected. The option supplements spoken-heading detection with the two
-paths below, using either transcription engine. File/folder-derived chapters
-are unchanged. To update an existing transcript, rerun **Detect chapter
-candidates**; it does not repeat transcription, merging, or model inference.
-The existing manual-edit confirmation still applies.
+**Improved Chapter Detection — Experimental** is off by default in Step 1's
+collapsed **Transcription & model settings**. Explicitly saved choices are
+respected. The existing `detect_musical_transitions` configuration key now
+controls all the supplemental methods below. Neither TensorFlow/YAMNet nor a
+separate speech model is installed. Ordinary spoken-heading detection and
+file/folder chapter workflows retain their behavior when the option is off.
+
+All experimental results are **suggestions**, separate from the chapter list.
+Open **Experimental suggestions** above the transcript to inspect the evidence,
+listen to a bounded audio clip, and accept a marker. Acceptance changes the draft;
+the normal **Save chapter list** action persists it. Export uses only that list.
+Reset to default chapters excludes unaccepted suggestions. Hide is temporary
+within the open review screen; Show hidden suggestions restores those rows.
+
+### Numbered sections, titles and source evidence
+
+The structural pass recognizes isolated numbers without the word "Chapter" when
+at least three consecutive announcements occur at least 30 seconds apart within
+the same parent chapter. Numbering may restart after a parent chapter boundary.
+Suggestions retain their parent timestamp and use `Section N` labels, avoiding
+the ordinary numbered-chapter missing-marker and title-renumbering rules.
+
+Three distinct short isolated title phrases at least 60 seconds apart can supply
+title suggestions without music. Conservative wording rules reject common
+narrative clauses, dialogue, credits and bare count phrases. These are English
+heuristics; their suggestions still require listening and acceptance.
+
+Embedded chapters and already-matched chapter files corroborate nearby headings
+or appear as explicitly labelled source-only suggestions when they disagree.
+Meaningfully named source files can contribute cumulative boundaries when their
+durations are known. Generic CD/track names never establish chapter evidence.
+Matching source titles can also support a single isolated spoken title.
+
+### Bounded heading recheck
+
+Unresolved sequence gaps and source boundaries can trigger up to eight 24-second
+audio windows. These are packed into one temporary WAV and transcribed with the
+book's already-installed engine/model, batching off and downloads disabled.
+Results must agree with nearby saved transcript words and have credible timed
+heading words. Recovered starts retain the actual clip-to-book timestamp offset;
+they never replace the original transcript or pretend to have an original-word
+index. Results remain suggestions, even after a successful recheck.
+
+Recheck results are cached by preview signature, requested windows, original
+transcript, engine/model/settings and runtime version. Temporary clips are
+removed on success, failure or cancellation. An unavailable model or failed
+optional recheck is logged; structural detection remains available.
+
+Rerun **Detect chapter candidates** to use these changes on an existing book.
+It reuses prepared audio and the full transcript; only the bounded recheck may
+invoke the existing transcription model. The manual-edit confirmation still
+protects accepted/saved chapter work.
 
 ### Recurring musical cues
 
@@ -78,6 +123,14 @@ Accepted cue starts use the first resumed word's saved timestamp, retaining
 music in the preceding chapter. Untitled cues use normal `Chapter N` placeholders.
 Confidence is an evidence score, not a calibrated music probability.
 
+Before recurrence is scored, each gap's interior is compared with three seconds
+of context on either side. It must rise at least 6 dB above the quiet fifth
+percentile of surrounding frames and cannot be more than 20 dB below surrounding
+audio RMS. A PCM floor also rejects effectively empty windows. These conservative
+checks suppress quiet recurring recording noise; they can miss very quiet cues.
+The suggestions UI describes acoustic evidence without presenting it as a music
+probability or confirming that music is present.
+
 ### Spoken titles without chapter numbers
 
 `tools/title-boundaries.ts` recognizes a second pattern: tonal transition,
@@ -105,6 +158,12 @@ spoken title.
 
 Explicit heading detection supports digit ordinals (`21st`), `Chapter the First`,
 Roman numerals, written numbers, structural headings, and front/back matter.
+Numbered recording-side announcements such as `Side two` and `Side 3` are
+structural dividers, with starts anchored to the saved `Side` word. Side labels
+need a complete announcement boundary; ordinary uses such as “on the other side,
+two people waited” are excluded. Side numbering does not create missing chapter
+placeholders. If transcription omits an announcement, rerunning detection alone
+cannot recover it: that section needs transcription recovery or a manual marker.
 A real word-timed pause can establish a heading boundary even when punctuation
 is missing. An arbitrary ASR segment boundary cannot turn a continued narrative
 reference into a heading. Number parsing respects punctuation and pauses, so
@@ -128,7 +187,8 @@ incomplete feature records are rebuilt. Cancellation is checked between windows
 and only complete results are published. No new full-source hash is added.
 
 The detection-result cache includes all detector versions, actual transcript
-segments/words, acoustic setting, and preview signature. Updates to parsing or
+segments/words, experimental setting, preview signature, source chapter/part
+information and recheck settings. Updates to parsing or
 the saved timeline invalidate decisions while retaining the transcription cache.
 Unchanged runs reuse reviewed chapters. Logs report accepted/rejected counts,
 evidence, timestamps, and rejection reasons with bounded per-candidate detail.

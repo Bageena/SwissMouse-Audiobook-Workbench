@@ -5,12 +5,18 @@ release/
 
 # Application-generated data and downloaded runtime components
 .cache/
+.tmp/
+.swissmouse-transfer-*/
 logs/
 inputs/
+inbox/
 output/
 runtime/
 models/
 jobs.json
+jobs.json.bak
+jobs.json.assets/
+listening/
 config.json
 
 # Local-only configuration and publishing-audit output
@@ -21,7 +27,22 @@ config.json
 
 # Generated test projects and manually downloaded tools
 audio-test-*/
+/catalog-api-test-*/
+/identity-upgrade-*/
+/import-workflow-test-*/
+/inbox-test-*/
+/library-test-*/
+/transfer-test-*/
+/library-safety-*/
+/repair-test-*/
 tools/yt-dlp
 
 # Personal convenience scripts. Keep public automation outside this directory.
 scripts/local/
+ui-preferences.json
+catalog.sqlite*
+jobs.json.sqlite*
+directories.sqlite*
+
+# Local UI review captures; public screenshots live in docs/screenshots/.
+/*.png

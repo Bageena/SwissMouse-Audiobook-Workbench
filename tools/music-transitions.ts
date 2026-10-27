@@ -4,8 +4,9 @@ import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import type { AlignedWord, ChapterCandidate } from '../src/types';
 import { formatTimestampMs, parseChapterTimestamp, formatChapterTitle } from '../src/utils/chapters';
 import { ensureAnalysis, pcmDataRange } from './audio-analysis';
+import { addGapAudioContext } from './chapter-audio-context';
 
-export const MUSIC_DETECTOR_VERSION = 2;
+export const MUSIC_DETECTOR_VERSION = 3;
 const MIN_SPACING = 120;
 const EDGE_MARGIN = 60;
 const MIN_GAP = 1.5;
@@ -15,6 +16,9 @@ const BANDS = 24;
 const TIME_BINS = 8;
 export interface MusicGap { start: number; end: number; wordIndex: number }
 export interface MusicEvidence extends MusicGap {
+  speechContrastDb?: number;
+  backgroundContrastDb?: number;
+  backgroundRejection?: string;
   duration: number;
   tonalFraction: number;
   variation: number;
@@ -171,7 +175,7 @@ function similarity(a: number[], b: number[]) {
   return dot / (Math.sqrt(aa * bb) || 1);
 }
 function plausible(cue: MusicEvidence) {
-  return cue.duration >= 1.5 && cue.duration <= 18 && cue.tonalFraction >= 0.65 && cue.variation >= 0.008;
+  return !cue.backgroundRejection && cue.duration >= 1.5 && cue.duration <= 18 && cue.tonalFraction >= 0.65 && cue.variation >= 0.008;
 }
 
 export function scoreMusicTransitions(features: MusicEvidence[], spokenStarts: number[], duration: number): MusicDecision[] {
@@ -210,7 +214,8 @@ export function scoreMusicTransitions(features: MusicEvidence[], spokenStarts: n
     const silencePeer = group.slice(1).some(peer => hasSilence(features[peer]));
     const confidence = plausible(cue) ? Math.min(0.95, 0.45 + Math.min(group.length - 1, 2) * 0.18 + (silence ? 0.1 : 0)) : 0;
     let reason = acceptedReason;
-    if (cue.duration < 1.5) reason = 'Active audio is shorter than the 1.5 second cue minimum';
+    if (cue.backgroundRejection) reason = cue.backgroundRejection;
+    else if (cue.duration < 1.5) reason = 'Active audio is shorter than the 1.5 second cue minimum';
     else if (cue.duration > 18) reason = 'Active audio exceeds the 18 second recurring-sting limit';
     else if (cue.tonalFraction < 0.65) reason = 'Insufficient tonal content';
     else if (cue.variation < 0.008) reason = 'Steady tone or ambient audio lacks musical change';
@@ -241,7 +246,7 @@ interface MusicAnalysisOptions {
 export async function analyzeMusicGaps(audio: string, gaps: MusicGap[], options: MusicAnalysisOptions = {}): Promise<MusicEvidence[]> {
   options.signal?.throwIfAborted();
   if (!gaps.length) return [];
-  const manifest = await ensureAnalysis(audio);
+  const manifest = await ensureAnalysis(audio, false);
   if (gaps.some(gap => !Number.isFinite(gap.start) || !Number.isFinite(gap.end) || gap.start < 0
     || gap.end <= gap.start || gap.end > manifest.duration || gap.end - gap.start > 60
     || !Number.isInteger(gap.wordIndex) || gap.wordIndex < 0)) throw new Error('Invalid acoustic analysis window');
@@ -295,10 +300,10 @@ export async function analyzeMusicGaps(audio: string, gaps: MusicGap[], options:
 
 export async function detectMusicTransitions(audio: string, words: AlignedWord[], spoken: ChapterCandidate[], options: MusicAnalysisOptions = {}): Promise<ChapterCandidate[]> {
   options.signal?.throwIfAborted();
-  const manifest = await ensureAnalysis(audio);
+  const manifest = await ensureAnalysis(audio, false);
   const gaps = musicGaps(words, manifest.duration);
   if (!gaps.length) { options.log?.(`Music transitions: no eligible ${MIN_GAP}–${MAX_GAP} second gaps between speech regions.`); return spoken; }
-  const features = await analyzeMusicGaps(audio, gaps, options);
+  const features = await addGapAudioContext(audio, await analyzeMusicGaps(audio, gaps, options), options.signal);
   const starts = spoken.map(c => (parseChapterTimestamp(c.candidate_start) ?? 0) / 1000);
   const decisions = scoreMusicTransitions(features, starts, manifest.duration);
   // Summary plus bounded detail: avoid one log line for every ordinary pause.
@@ -315,7 +320,8 @@ export async function detectMusicTransitions(audio: string, words: AlignedWord[]
     context_before: words.slice(Math.max(0, cue.wordIndex - 18), cue.wordIndex).map(w => w.word).join(' '),
     context_after: words.slice(cue.wordIndex, cue.wordIndex + 26).map(w => w.word).join(' '),
     transcriptWordIndex: cue.wordIndex, headingType: 'music_transition',
-    confidence: String(cue.confidence), status: 'review',
+    confidence: String(cue.confidence), status: 'review', suggestionOnly: true,
+    evidence: ['Recurring acoustic cue above surrounding background; music is unconfirmed', 'No spoken heading; listen before accepting'],
     notes: `Experimental music boundary: ${cue.duration.toFixed(1)}s cue, ${cue.repeats} similar transitions, heuristic score ${cue.confidence.toFixed(2)}. Start anchored to resumed transcript word; listen to verify.`,
     words: words.slice(Math.max(0, cue.wordIndex - 18), cue.wordIndex + 26),
   }));

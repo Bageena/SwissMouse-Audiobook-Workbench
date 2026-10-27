@@ -8,6 +8,7 @@ export function planChapterExport(chapters: ExportChapter[], durationSeconds: nu
   const durationMs = Math.round(durationSeconds * 1000);
   if (!chapters.length || !Number.isFinite(durationMs) || durationMs <= 0) throw new Error('No valid chapter timeline to export');
   const ranges: { start: number; end: number }[] = [];
+  const cuts: { startMs: number; endMs: number; afterIndex: number; beforeIndex: number }[] = [];
   let elapsed = 0;
   const outputChapters = chapters.map((chapter, index) => {
     const start = parseChapterTimestamp(chapter.start);
@@ -19,15 +20,20 @@ export function planChapterExport(chapters: ExportChapter[], durationSeconds: nu
     const rangeEnd = next - end <= 1 ? next : end;
     const previous = ranges[ranges.length - 1];
     if (previous && start < previous.end) throw new Error(`Overlapping range for ${chapter.title}`);
+    const previousEnd = previous?.end ?? 0;
+    if (start > previousEnd) cuts.push({ startMs: previousEnd, endMs: start, afterIndex: index - 1, beforeIndex: index });
     if (previous && previous.end === start) previous.end = rangeEnd;
     else ranges.push({ start, end: rangeEnd });
     const outputStart = elapsed;
     elapsed += rangeEnd - start;
     return { ...chapter, start: formatTimestampMs(outputStart), end: formatTimestampMs(index + 1 < chapters.length ? elapsed - 1 : elapsed) };
   });
+  const finalEnd = ranges[ranges.length - 1].end;
+  if (finalEnd < durationMs) cuts.push({ startMs: finalEnd, endMs: durationMs, afterIndex: chapters.length - 1, beforeIndex: chapters.length });
   const trimmed = ranges.length !== 1 || ranges[0].start !== 0 || ranges[0].end !== durationMs;
   return {
     ranges,
+    cuts,
     chapters: trimmed ? outputChapters : chapters,
     durationSeconds: elapsed / 1000,
     removedSeconds: (durationMs - elapsed) / 1000,

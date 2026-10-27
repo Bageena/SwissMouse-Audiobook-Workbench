@@ -1,8 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import { X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AudiobookJob } from '../types';
 import { ArchiveX, Check, Database, FileText, FolderX, ShieldAlert, Trash2 } from 'lucide-react';
 
 export type CleanupType =
+  | 'pcm'
+  | 'completed-temp'
+  | 'all-temp'
   | 'cache'
   | 'orphans'
   | 'logs'
@@ -26,6 +30,9 @@ interface CleanupChoice {
 }
 
 const generalChoices: CleanupChoice[] = [
+  { id: 'pcm', title: 'Clear PCM cache', description: 'Removes generated WAV/PCM working audio. Source files, final exports, transcripts, and chapter work stay.', icon: Database },
+  { id: 'completed-temp', title: 'Clear completed-book temp files', description: 'Clears known PCM and interrupted temporary files for books with a successful final check.', icon: Check },
+  { id: 'all-temp', title: 'Clear known temporary files', description: 'Clears SwissMouse PCM and interrupted processing files for every saved book. Reprocessing may be needed for another export.', icon: Trash2 },
   {
     id: 'cache',
     title: 'Clear cache and temporary files',
@@ -54,6 +61,8 @@ const generalChoices: CleanupChoice[] = [
 ];
 
 export const CleanupModal: React.FC<CleanupModalProps> = ({ job, onClose, onCleanup }) => {
+  const [storage, setStorage] = useState<{ pcm: number; transcripts: number; waveform: number; other: number } | null>(null);
+  useEffect(() => { void fetch('/api/storage/processing').then(response => response.ok ? response.json() : null).then(setStorage).catch(() => setStorage(null)); }, []);
   const choices = useMemo<CleanupChoice[]>(() => {
     if (!job) return generalChoices;
     return [
@@ -147,10 +156,11 @@ export const CleanupModal: React.FC<CleanupModalProps> = ({ job, onClose, onClea
             </div>
             <p className="mt-1 text-xs leading-relaxed text-stone-600">Choose one cleanup task. SwissMouse only removes files it manages.</p>
           </div>
-          <button onClick={onClose} className="rounded-lg px-2 py-1 text-lg text-stone-400 hover:bg-stone-100 hover:text-stone-700" aria-label="Close">✕</button>
+          <button onClick={onClose} className="rounded-lg px-2 py-1 text-lg text-stone-400 hover:bg-stone-100 hover:text-stone-700" aria-label="Close"><X className="h-4 w-4" aria-hidden="true" /></button>
         </div>
 
         <div className="mt-5 space-y-5">
+          {storage && <section className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-xs text-stone-700"><h3 className="mb-2 font-semibold text-stone-900">Processing storage</h3><div className="grid grid-cols-2 gap-1 sm:grid-cols-4">{([['PCM cache', storage.pcm], ['Transcripts', storage.transcripts], ['Waveform cache', storage.waveform], ['Other files', storage.other]] as const).map(([label, bytes]) => <div key={label}><span className="block text-stone-500">{label}</span><strong>{(bytes / 1024 ** 3).toFixed(2)} GB</strong></div>)}</div></section>}
           <section>
             <h3 className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-stone-400">General cleanup</h3>
             <div className="grid gap-2 sm:grid-cols-2">{generalChoices.map(renderChoice)}</div>

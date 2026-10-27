@@ -1,30 +1,33 @@
+import {checkSourceAudio} from './audio-integrity';
 import fs from 'node:fs';
 import path from 'node:path';
-import {execFile,spawn} from 'node:child_process';
+import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {inspect} from './audio-engine';
 import {stitchCompatibility} from '../src/audioFormats';
 import {sampleRateFloor} from './audio-sample-rate';
+import {makePreview} from './audio-engine';
+import {rebuildAnalysis} from './audio-analysis';
 const run=promisify(execFile);
 
-// Gapless duration metadata excludes encoder padding. A stream-copy concat must
-// advance by encoded packet span instead, otherwise the next file overlaps it.
-async function encodedSpan(ffprobe:string,file:string, signal?:AbortSignal) {
-  return new Promise<number>((resolve,reject)=>{
-    const child=spawn(ffprobe,['-v','error','-select_streams','a:0','-show_packets','-show_entries','packet=pts_time,dts_time,duration_time','-of','compact=p=0',file],{windowsHide:true, signal});
-    let pending='',error='',invalid='';let first=Infinity,last=-Infinity,previousDts=-Infinity,previousEnd:number|undefined;
-    const read=(line:string)=>{
-      const values=Object.fromEntries(line.trim().split('|').map(part=>part.split('=')));
-      if(!values.pts_time) return;
-      const pts=Number(values.pts_time),dts=Number(values.dts_time),duration=Number(values.duration_time);
-      if(!Number.isFinite(pts)||!Number.isFinite(dts)||!(duration>0)||dts<previousDts || (previousEnd!==undefined && Math.abs(pts-previousEnd)>0.1)) invalid='Packet timestamps are missing, discontinuous or non-monotonic. Use PCM normalization.';
-      first=Math.min(first,pts);last=Math.max(last,pts+duration);previousDts=dts;previousEnd=pts+duration;
-    };
-    child.stdout.on('data',data=>{pending+=data;const lines=pending.split('\n');pending=lines.pop()||'';lines.forEach(read);});
-    child.stderr.on('data',data=>{error=(error+data).slice(-4000);});
-    child.on('error',reject);
-    child.on('close',code=>{if(pending)read(pending);if(code!==0||invalid||!Number.isFinite(last-first)) reject(new Error(invalid||error||'Cannot measure packet timeline'));else resolve(last-first);});
-  });
+/** Review-only PCM; originals remain the eventual export inputs. */
+export async function sourceReviewPreview(ffmpeg: string, sources: string[], output: string, signal?: AbortSignal, log: (message: string) => void = ()=>{}, generateWaveform = true) {
+  fs.mkdirSync(path.dirname(output), { recursive: true });
+  if (sources.length === 1) return makePreview(ffmpeg, sources[0], output, signal, log, generateWaveform, generateWaveform);
+  const temporary = fs.mkdtempSync(path.join(path.dirname(output), 'review-parts-'));
+  try {
+    const files: string[] = [];
+    for (const [index, source] of sources.entries()) {
+      signal?.throwIfAborted();
+      const file = path.join(temporary, `${index}.wav`); files.push(file);
+      log(`Creating review-only preview ${index + 1}/${sources.length}`);
+      await run(ffmpeg, ['-v','error','-y','-i',source,'-map','0:a:0','-map_metadata','-1','-map_chapters','-1','-ac','1','-ar','16000','-c:a','pcm_s16le','-rf64','auto',file], {windowsHide:true,signal});
+    }
+    const manifest = path.join(temporary, 'concat.txt');
+    fs.writeFileSync(manifest, files.map(file => `file '${file.replace(/\\/g,'/').replace(/'/g,"'\\''")}'`).join('\n'));
+    await run(ffmpeg, ['-v','error','-y','-f','concat','-safe','0','-i',manifest,'-map','0:a:0','-c:a','copy','-rf64','auto',output], {windowsHide:true,signal});
+    signal?.throwIfAborted(); if (generateWaveform) await rebuildAnalysis(output);
+  } finally { fs.rmSync(temporary, {recursive:true,force:true}); }
 }
 
 export async function prepareMaster(ffmpeg:string, ffprobe:string, sources:string[], directory:string, method:'standard'|'quick', progress:(message:string)=>void = ()=>{}, signal?:AbortSignal) {
@@ -43,8 +46,9 @@ export async function prepareMaster(ffmpeg:string, ffprobe:string, sources:strin
   for(let i=0;i<sources.length;i++) {
     if(method==='quick') {
       progress(`Checking clean decoding for direct stitching: ${i+1}/${sources.length}`);
-      await run(ffmpeg,['-v','error','-xerror','-err_detect','explode','-i',sources[i],'-map','0:a:0','-f','null','-'],{windowsHide:true, signal});
-      inputs.push(sources[i]);durations.push(await encodedSpan(ffprobe,sources[i],signal));
+      const verification = await checkSourceAudio(ffmpeg, ffprobe, sources[i], signal);
+      if (verification.issues.length) throw new Error(`${sources[i]}: ${verification.issues.join(' ')}`);
+      inputs.push(sources[i]);durations.push(verification.encodedDurationSeconds!);
     } else {
       progress(`Normalizing PCM: ${i+1}/${sources.length}`);
       const normalized=path.join(directory,`part-${i}.wav`);
@@ -63,5 +67,6 @@ export async function prepareMaster(ffmpeg:string, ffprobe:string, sources:strin
   if(masterInfo.sampleRate!==targetRate) throw new Error('Stitched sample rate does not match the selected master rate.');
   const measured=masterInfo.durationSeconds;
   if(Math.abs(measured-durations.reduce((sum,d)=>sum+d,0))>0.15) throw new Error('Stitched duration does not match source coverage. Use PCM normalization or inspect the source timestamps.');
+  if(method==='standard') for(const file of inputs) fs.unlinkSync(file); // The verified master replaces per-part PCM; analysis can still seek the master.
   return {master,media,durations,normalized:method==='standard'};
 }

@@ -49,6 +49,15 @@ if not exist "%NPM_EXE%" (
   exit /b 1
 )
 
+"%NODE_EXE%" -e "const [major,minor]=process.versions.node.split('.').map(Number); process.exit(major>23 || major===23 && minor>=4 || major===22 && minor>=13 ? 0 : 1)"
+if errorlevel 1 (
+  echo.
+  echo SwissMouse requires Node.js 22.13 or newer for the resource catalog.
+  echo Update Node.js, then run this launcher again.
+  pause
+  exit /b 1
+)
+
 if not exist "%APP_ROOT%node_modules" (
   echo.
   echo Installing the locked application dependencies for this first run...
@@ -78,7 +87,8 @@ if not exist "%APP_ROOT%dist\server.cjs" (
   )
 )
 
-start "SwissMouse" "http://127.0.0.1:3000"
+rem The server opens the browser after it can serve the loading page.
+set "SWISSMOUSE_OPEN_BROWSER=1"
 "%NODE_EXE%" "%APP_ROOT%dist\server.cjs"
 set "SERVER_EXIT=%ERRORLEVEL%"
 if not "%SERVER_EXIT%"=="0" (

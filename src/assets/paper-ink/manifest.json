@@ -1,0 +1,1577 @@
+{
+  "version": 1,
+  "theme": "cheese",
+  "viewBox": "Artwork-specific; use contain sizing",
+  "semantic": {
+    "media.audiobook": "Headphones",
+    "media.book": "Book",
+    "media.comic": "PanelsTopLeft",
+    "media.magazine": "Newspaper",
+    "media.research-paper": "GraduationCap",
+    "media.note": "NotebookPen",
+    "media.game": "Gamepad2",
+    "media.television": "Tv",
+    "media.movie": "Clapperboard",
+    "media.music": "Music2",
+    "media.art": "Palette",
+    "media.photo": "Camera",
+    "structure.series": "Library",
+    "structure.volume": "Book",
+    "structure.issue": "Newspaper",
+    "structure.chapter": "BookOpen",
+    "structure.page": "File",
+    "structure.article": "FileText",
+    "structure.season": "Tv",
+    "structure.episode": "Film",
+    "structure.album": "Disc3",
+    "structure.disc": "Disc3",
+    "structure.track": "Music2",
+    "structure.collection": "Layers",
+    "action.play": "Play",
+    "action.pause": "Pause",
+    "action.stop": "Square",
+    "action.import": "Download",
+    "action.export": "Upload",
+    "action.settings": "Settings",
+    "action.search": "Search",
+    "action.add": "Plus",
+    "action.close": "X",
+    "action.delete": "Trash2",
+    "action.refresh": "RefreshCw",
+    "action.edit": "Pencil",
+    "status.queued": "Clock",
+    "status.running": "LoaderCircle",
+    "status.paused": "Pause",
+    "status.completed": "CircleCheck",
+    "status.failed": "CircleX",
+    "status.canceled": "X",
+    "status.missing": "FileQuestion",
+    "status.unavailable": "WifiOff",
+    "status.warning": "TriangleAlert",
+    "status.verified": "ShieldCheck",
+    "status.locked": "Lock"
+  },
+  "icons": [
+    {
+      "name": "Accessibility",
+      "asset": "utility-accessibility.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Activity",
+      "asset": "utility-activity.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "AlertCircle",
+      "asset": "utility-alert-circle.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "AlertTriangle",
+      "asset": "utility-alert-triangle.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Archive",
+      "asset": "utility-archive.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "ArchiveX",
+      "asset": "utility-archive-x.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "ArrowDown",
+      "asset": "utility-arrow-down.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "ArrowDownAZ",
+      "asset": "utility-arrow-down-az.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "ArrowLeft",
+      "asset": "utility-arrow-left.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "ArrowRight",
+      "asset": "utility-arrow-right.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "ArrowRightLeft",
+      "asset": "utility-arrow-right-left.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "ArrowUp",
+      "asset": "utility-arrow-up.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "AudioLines",
+      "asset": "utility-audio-lines.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Bell",
+      "asset": "utility-bell.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "BellOff",
+      "asset": "utility-bell-off.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Book",
+      "asset": "utility-book.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "BookMarked",
+      "asset": "utility-book-marked.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "BookOpen",
+      "asset": "book.svg",
+      "source": "original",
+      "current": true,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "BookPlus",
+      "asset": "utility-book-plus.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Bookmark",
+      "asset": "bookmark.svg",
+      "source": "original",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Calendar",
+      "asset": "utility-calendar.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Camera",
+      "asset": "utility-camera.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "Cast",
+      "asset": "utility-cast.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "Check",
+      "asset": "utility-check.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "CheckCircle2",
+      "asset": "utility-check-circle2.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "ChevronDown",
+      "asset": "utility-chevron-down.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "ChevronRight",
+      "asset": "utility-chevron-right.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "ChevronUp",
+      "asset": "utility-chevron-up.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "CircleAlert",
+      "asset": "utility-alert-circle.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "CircleCheck",
+      "asset": "utility-check-circle2.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "CircleHelp",
+      "asset": "utility-circle-help.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "CircleX",
+      "asset": "utility-circle-x.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Clapperboard",
+      "asset": "utility-clapperboard.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "ClipboardPaste",
+      "asset": "clipboard.svg",
+      "source": "original",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Clock",
+      "asset": "utility-clock.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "CloudDownload",
+      "asset": "utility-cloud-download.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "CloudUpload",
+      "asset": "utility-cloud-upload.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Columns3",
+      "asset": "utility-columns3.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Copy",
+      "asset": "clipboard.svg",
+      "source": "original",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Cpu",
+      "asset": "utility-cpu.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Crop",
+      "asset": "utility-crop.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "Database",
+      "asset": "utility-database.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Disc3",
+      "asset": "utility-disc3.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "Download",
+      "asset": "import.svg",
+      "source": "original",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Ellipsis",
+      "asset": "utility-ellipsis.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "EllipsisVertical",
+      "asset": "utility-ellipsis-vertical.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Expand",
+      "asset": "utility-expand.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "ExternalLink",
+      "asset": "utility-external-link.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Eye",
+      "asset": "utility-eye.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "EyeOff",
+      "asset": "utility-eye-off.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "FastForward",
+      "asset": "utility-fast-forward.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "File",
+      "asset": "file.svg",
+      "source": "original",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "FileAudio",
+      "asset": "audio.svg",
+      "source": "original",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "FileCheck2",
+      "asset": "utility-file-check2.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "FilePlus",
+      "asset": "utility-file-plus.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "FileQuestion",
+      "asset": "utility-file-question.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": []
+    },
+    {
+      "name": "FileText",
+      "asset": "notes.svg",
+      "source": "original",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Files",
+      "asset": "utility-files.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Film",
+      "asset": "utility-film.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "Folder",
+      "asset": "folder.svg",
+      "source": "original",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "FolderCheck",
+      "asset": "utility-folder-check.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "FolderEdit",
+      "asset": "utility-folder-edit.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "FolderOpen",
+      "asset": "folder-open.svg",
+      "source": "original",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "FolderPlus",
+      "asset": "utility-folder-plus.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "FolderSearch",
+      "asset": "utility-folder-search.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "FolderTree",
+      "asset": "utility-folder-tree.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "FolderX",
+      "asset": "utility-folder-x.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Gamepad2",
+      "asset": "utility-gamepad2.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "Gauge",
+      "asset": "utility-gauge.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "GitMerge",
+      "asset": "utility-git-merge.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Globe",
+      "asset": "utility-globe.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "GraduationCap",
+      "asset": "utility-graduation-cap.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "Grid2X2",
+      "asset": "utility-grid2-x2.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "GripVertical",
+      "asset": "utility-grip-vertical.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "HardDrive",
+      "asset": "utility-hard-drive.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Hash",
+      "asset": "utility-hash.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Headphones",
+      "asset": "utility-headphones.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "Heart",
+      "asset": "utility-heart.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "HelpCircle",
+      "asset": "utility-circle-help.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Highlighter",
+      "asset": "utility-highlighter.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "History",
+      "asset": "utility-history.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Image",
+      "asset": "mouse-paper-boat.svg",
+      "source": "original",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Images",
+      "asset": "utility-images.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "Inbox",
+      "asset": "utility-inbox.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Info",
+      "asset": "utility-info.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Keyboard",
+      "asset": "utility-keyboard.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Languages",
+      "asset": "utility-languages.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "Layers",
+      "asset": "layers.svg",
+      "source": "original",
+      "current": true,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Library",
+      "asset": "library.svg",
+      "source": "original",
+      "current": true,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Link",
+      "asset": "utility-link.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Link2",
+      "asset": "utility-link2.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "List",
+      "asset": "utility-list.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "ListFilter",
+      "asset": "utility-list-filter.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "ListMusic",
+      "asset": "utility-list-music.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "ListOrdered",
+      "asset": "utility-list-ordered.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Loader2",
+      "asset": "utility-loader2.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "LoaderCircle",
+      "asset": "utility-loader2.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Lock",
+      "asset": "utility-lock.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "LockKeyhole",
+      "asset": "utility-lock-keyhole.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Magnet",
+      "asset": "utility-magnet.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Maximize",
+      "asset": "utility-maximize.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "MessageSquare",
+      "asset": "utility-message-square.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "Mic",
+      "asset": "utility-mic.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Minimize",
+      "asset": "utility-minimize.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "Minus",
+      "asset": "utility-minus.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Monitor",
+      "asset": "utility-monitor.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Moon",
+      "asset": "utility-moon.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "MoreHorizontal",
+      "asset": "utility-ellipsis.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Mouse",
+      "asset": "utility-mouse.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "MousePointer2",
+      "asset": "utility-mouse-pointer2.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Move",
+      "asset": "utility-move.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Music",
+      "asset": "audio.svg",
+      "source": "original",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Music2",
+      "asset": "utility-music2.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "Newspaper",
+      "asset": "utility-newspaper.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "NotebookPen",
+      "asset": "utility-notebook-pen.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "Paintbrush",
+      "asset": "utility-paintbrush.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Palette",
+      "asset": "utility-palette.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "PanelLeft",
+      "asset": "utility-panel-left.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "PanelRight",
+      "asset": "utility-panel-right.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "PanelsTopLeft",
+      "asset": "utility-panels-top-left.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "Pause",
+      "asset": "pause.svg",
+      "source": "original",
+      "current": true,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "Pencil",
+      "asset": "pencil.svg",
+      "source": "original",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "PictureInPicture2",
+      "asset": "utility-picture-in-picture2.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "Pin",
+      "asset": "utility-pin.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Play",
+      "asset": "play.svg",
+      "source": "original",
+      "current": true,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "Plus",
+      "asset": "utility-plus.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Quote",
+      "asset": "utility-quote.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "Radio",
+      "asset": "utility-radio.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Redo2",
+      "asset": "utility-redo2.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "RefreshCw",
+      "asset": "utility-refresh-cw.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Repeat",
+      "asset": "utility-repeat.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "Repeat1",
+      "asset": "utility-repeat1.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "Rewind",
+      "asset": "utility-rewind.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "RotateCcw",
+      "asset": "utility-rotate-ccw.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "RotateCw",
+      "asset": "utility-rotate-cw.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "Rows3",
+      "asset": "utility-rows3.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Save",
+      "asset": "utility-save.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Scaling",
+      "asset": "utility-scaling.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "ScanText",
+      "asset": "utility-scan-text.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "Scissors",
+      "asset": "utility-scissors.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Search",
+      "asset": "search.svg",
+      "source": "original",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Settings",
+      "asset": "settings.svg",
+      "source": "original",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Settings2",
+      "asset": "settings.svg",
+      "source": "original",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "ShieldAlert",
+      "asset": "utility-shield-alert.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "ShieldCheck",
+      "asset": "utility-shield-check.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Shrink",
+      "asset": "utility-shrink.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "Shuffle",
+      "asset": "utility-shuffle.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "SkipBack",
+      "asset": "utility-skip-back.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "SkipForward",
+      "asset": "utility-skip-forward.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "Sliders",
+      "asset": "utility-sliders.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "SlidersHorizontal",
+      "asset": "utility-sliders-horizontal.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Sparkles",
+      "asset": "cheese-moon-stars.svg",
+      "source": "original",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Square",
+      "asset": "stop.svg",
+      "source": "original",
+      "current": true,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "Star",
+      "asset": "utility-star.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "StickyNote",
+      "asset": "utility-sticky-note.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "Subtitles",
+      "asset": "utility-subtitles.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "Sun",
+      "asset": "utility-sun.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Table2",
+      "asset": "utility-table2.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Tag",
+      "asset": "utility-tag.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Tags",
+      "asset": "utility-tags.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Terminal",
+      "asset": "utility-terminal.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "TextCursorInput",
+      "asset": "utility-text-cursor-input.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "TextSearch",
+      "asset": "utility-text-search.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "Trash2",
+      "asset": "utility-trash2.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "TriangleAlert",
+      "asset": "utility-alert-triangle.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Tv",
+      "asset": "utility-tv.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "media"
+      ]
+    },
+    {
+      "name": "Undo2",
+      "asset": "utility-undo2.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Unlink",
+      "asset": "utility-unlink.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "organization"
+      ]
+    },
+    {
+      "name": "Unlock",
+      "asset": "utility-unlock.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Upload",
+      "asset": "export.svg",
+      "source": "original",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "User",
+      "asset": "utility-user.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Video",
+      "asset": "utility-video.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Volume2",
+      "asset": "utility-volume2.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "VolumeX",
+      "asset": "utility-volume-x.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "playback"
+      ]
+    },
+    {
+      "name": "WifiOff",
+      "asset": "utility-wifi-off.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "Wrench",
+      "asset": "utility-wrench.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "X",
+      "asset": "utility-x.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": [
+        "actions"
+      ]
+    },
+    {
+      "name": "XCircle",
+      "asset": "utility-circle-x.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "Zap",
+      "asset": "utility-zap.svg",
+      "source": "lucide-derived",
+      "current": true,
+      "categories": []
+    },
+    {
+      "name": "ZoomIn",
+      "asset": "utility-zoom-in.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    },
+    {
+      "name": "ZoomOut",
+      "asset": "utility-zoom-out.svg",
+      "source": "lucide-derived",
+      "current": false,
+      "categories": [
+        "reading"
+      ]
+    }
+  ]
+}

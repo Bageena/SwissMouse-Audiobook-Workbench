@@ -1,4 +1,6 @@
-import { test } from 'node:test';
+import { readProjectState } from './project-store-fixture';
+import { after, test } from 'node:test';
+import { createTestFixture, stopTestServer } from './test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,13 +11,16 @@ import { outputFormats } from '../src/audioFormats';
 import {defaultBitrate, stitchCompatibility} from '../src/audioFormats';
 import {audiobookTags} from './audiobook-metadata';
 import {naturalPathCompare, sourceChapterGroups} from '../src/utils/sourceStructure';
+import { applyChapterNumberFormat } from '../src/utils/chapters';
 import vm from 'node:vm';
 import {downloadYoutubeAudio, youtubeUrl} from './youtube-audio';
 import metadataFixture from './fixtures/audiobook-metadata.json';
 const ff = process.env.TEST_FFMPEG || 'ffmpeg';
 const fp = process.env.TEST_FFPROBE || 'ffprobe';
 const binaryName = (name: string) => process.platform === 'win32' ? name + '.exe' : name;
-const root = fs.mkdtempSync(path.resolve('audio-test-'));
+const fixture = createTestFixture('audio-test-');
+const { root } = fixture;
+after(() => fixture.cleanup());
 const run = (args: string[]) => execFileSync(ff, ['-v', 'error', '-y', ...args], {windowsHide: true});
 const chapters = [{start: '00:00:00.000', title: 'Opening'}, {start: '00:00:01.250', title: 'Chapter One'}, {start: '00:00:04.500', title: 'Two = # ; \\ café'}];
 const master = path.join(root, 'master.wav');
@@ -105,13 +110,36 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
   let logs='';child.stdout.on('data',b=>logs+=b);child.stderr.on('data',b=>logs+=b);
   const base='http://127.0.0.1:'+port;
   const request=async(url:string,body?:unknown)=>{const response=await fetch(base+url,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const bodyText=await response.text();let data:any;try{data=JSON.parse(bodyText);}catch{throw new Error(url+' returned '+response.status+': '+bodyText+'\n'+logs);}assert.ok(response.ok,JSON.stringify(data));return data;};
+  const requestExport=async(jobId:string,body:any)=>{
+    const url=base+'/api/jobs/'+jobId+'/build-m4b';
+    const post=async(payload:any)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    let response=await post(body);
+    let data:any=await response.json();
+    if(data.requiresOverwriteConfirmation){
+      assert.equal(response.status,409);
+      assert.ok(data.existingFiles.every((file:string)=>fs.existsSync(file)));
+      response=await post({...body,overwriteExisting:true,confirmedOverwritePaths:data.existingFiles});
+      data=await response.json();
+    }
+    assert.ok(response.ok,JSON.stringify(data));
+    return data;
+  };
   try {
     let ready=false;for(let i=0;i<80;i++){try{await request('/api/jobs');ready=true;break;}catch{await new Promise(r=>setTimeout(r,100));}}
     assert.ok(ready,logs);
     const source=path.join(root,'export.m4b');const original=await fingerprint([source],{});
     const job=await request('/api/jobs',{name:'API fixture',author:'Project author',narrator:'Project narrator',parts:[{name:source}]});
     assert.equal((await fetch(base+'/api/jobs/'+job.id+'/export/open-folder',{method:'POST'})).status,400,'unfinished projects cannot open an export folder');
-    await request('/api/jobs/'+job.id+'/process-step1',{chapterSource:'existing_files'});
+    let mediaReady=false;
+    for(let attempt=0;attempt<3;attempt++){
+      const status=await request('/api/requirements/status?refresh=true');
+      mediaReady=['ffmpeg','ffprobe'].every(id=>status.components.some((item:any)=>item.id===id&&item.status==='ready'));
+      if(mediaReady)break;
+      await new Promise(resolve=>setTimeout(resolve,1000));
+    }
+    assert.ok(mediaReady,'managed media tools are ready before processing the fixture');
+    await request('/api/config',{audiobookshelf_metadata:true});
+    await request('/api/jobs/'+job.id+'/process-step1',{chapterSource:'existing_files',generateWaveform:true});
     let updated:any;
     for(let i=0;i<100;i++){updated=await request('/api/jobs/'+job.id);if(updated.status==='transcribed')break;await new Promise(r=>setTimeout(r,100));}
     assert.equal(updated.status,'transcribed',logs);
@@ -137,14 +165,90 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     assert.deepEqual(fs.readFileSync(exportedCover),Buffer.from(updated.metadata.cover.url.split(',')[1],'base64'));
     assert.ok(exports.exports.every((e:any)=>e.coverPath===exportedCover));
     assert.equal(await fingerprint([source],{}),original);
-    const validation=await request('/api/jobs/'+job.id+'/validate',{});assert.equal(validation.validation.status,'PASS');
+    const pendingCheck=fetch(base+'/api/jobs/'+job.id+'/validate',{method:'POST'});
+    let checkRunning=false;
+    for(let attempt=0;attempt<40;attempt++){
+      if((await request('/api/jobs/'+job.id+'/final-check')).running){checkRunning=true;break;}
+      await new Promise(resolve=>setTimeout(resolve,5));
+    }
+    assert.ok(checkRunning,'long audio checks expose progress');
+    await request('/api/jobs/'+job.id+'/final-check/cancel',{});
+    assert.equal((await (await pendingCheck).json()).status,'cancelled');
+    assert.equal((await request('/api/jobs/'+job.id+'/final-check')).report.state,'cancelled');
+    const validation=await request('/api/jobs/'+job.id+'/validate',{});assert.equal(validation.validation.status,'PASS',JSON.stringify(validation.finalCheck?.items.filter((item:any)=>item.status==='failed')));
+    assert.equal(validation.finalCheck.state,'complete');
+    assert.equal(validation.finalCheck.files.length,7);
+    assert.ok(validation.finalCheck.items.some((item:any)=>item.id==='file-0-decode'&&item.status==='passed'));
+    assert.equal((await request('/api/jobs/'+job.id+'/final-check')).outdated,false);
+    const extendedSidecar=path.join(path.dirname(exports.exports[0].fullPath),'exmetadata.json');
+    fs.unlinkSync(extendedSidecar);
+    assert.equal((await request('/api/jobs/'+job.id+'/final-check')).outdated,true);
+    assert.equal((await request('/api/jobs/'+job.id+'/validate',{})).validation.status,'FAIL');
+    await request('/api/jobs/'+job.id+'/final-check/repair',{kind:'sidecar'});
+    assert.ok(fs.existsSync(extendedSidecar));
+    fs.unlinkSync(exportedCover);
+    await request('/api/jobs/'+job.id+'/final-check/repair',{kind:'cover'});
+    assert.ok(fs.existsSync(exportedCover));
+    assert.equal((await request('/api/jobs/'+job.id+'/validate',{})).validation.status,'PASS');
+    const firstPath=exports.exports.find((item:any)=>item.format==='m4b').fullPath;
+    const sidecar=path.join(path.dirname(firstPath),'metadata.json');
+    assert.ok(fs.existsSync(sidecar),'export writes Audiobookshelf metadata.json beside the audiobook');
+    assert.ok(!fs.existsSync(firstPath+'.ffmeta'),'working FFmetadata is not left beside the audiobook');
+    const initialJson=JSON.parse(fs.readFileSync(sidecar,'utf8'));
+    assert.equal(initialJson.title,'API fixture');
+    assert.deepEqual(initialJson.authors,['Project author']);
+    assert.deepEqual(initialJson.narrators,['Project narrator']);
+    assert.ok(Array.isArray(initialJson.genres) && Array.isArray(initialJson.tags));
+    const firstHash=await fingerprint([firstPath],{});
+    const declined=await fetch(base+'/api/jobs/'+job.id+'/build-m4b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({outputFormats:['m4b']})});
+    assert.equal(declined.status,409);
+    assert.deepEqual((await declined.json()).existingFiles,[firstPath]);
+    assert.equal(await fingerprint([firstPath],{}),firstHash,'unconfirmed export leaves the audiobook intact');
+    const staleApproval=await fetch(base+'/api/jobs/'+job.id+'/build-m4b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({outputFormats:['m4b'],overwriteExisting:true,confirmedOverwritePaths:['a different file']})});
+    assert.equal(staleApproval.status,409,'approval must identify the exact file being replaced');
     await request('/api/jobs/'+job.id+'/metadata',{metadata:{...updated.metadata,title:'Edited book',narrator:'Edited narrator',series:'Edited series',cover:null}});
-    const edited=await request('/api/jobs/'+job.id+'/build-m4b',{outputFormats:['m4b']});
+    assert.equal(JSON.parse(fs.readFileSync(sidecar,'utf8')).title,'Edited book','Save Metadata updates the adjacent JSON');
+    fs.writeFileSync(sidecar,'{}');
+    const refreshedJson=await request('/api/jobs/'+job.id+'/metadata-json',{});
+    assert.ok(refreshedJson.written.includes(sidecar));
+    assert.ok(refreshedJson.written.includes(path.join(path.dirname(sidecar),'exmetadata.json')));
+    assert.equal(JSON.parse(fs.readFileSync(sidecar,'utf8')).title,'Edited book','Update JSON repairs a stale sidecar');
+    assert.equal(await fingerprint([firstPath],{}),firstHash,'Update JSON does not rewrite audio');
+    const edited=await requestExport(job.id,{outputFormats:['m4b']});
+    assert.equal(edited.exports[0].fullPath,firstPath,'confirmed export replaces the existing file');
     assert.equal(edited.exports[0].status,'success',JSON.stringify(edited));
     assert.equal(edited.exports[0].coverPath,undefined);
     const editedFile=inspect(fp,edited.exports[0].fullPath);
     assert.equal(editedFile.tags.title,'Edited book');assert.equal(editedFile.tags.composer,'Edited narrator');assert.equal(editedFile.tags.series,'Edited series');assert.equal(editedFile.artwork,undefined);
-    const partial=await request('/api/jobs/'+job.id+'/build-m4b',{outputFormats:['mp3','wav'],bitrate:'invalid'});
+    const sourceChapterNames = [
+      {id:'opening',title:'Prologue',start:'00:00:00.000'},
+      {id:'three',title:'chapter three',start:'00:00:01.000'},
+      {id:'seven',title:'CHAPTER SEVEN',start:'00:00:02.000'},
+      {id:'eight',title:'Chapter Eight',start:'00:00:03.000'},
+      {id:'corrected-placeholder',title:'CHAPTER XIII',start:'00:00:04.000',isMissing:false},
+      {id:'manually-added',title:'Closing Notes',start:'00:00:05.000',manuallyInserted:true,titleManuallyEdited:true},
+    ];
+    const finalizedChapters = applyChapterNumberFormat(sourceChapterNames, 'numerical');
+    const finalizedTitles = ['Prologue','Chapter 3','Chapter 7','Chapter 8','Chapter 13','Closing Notes'];
+    assert.deepEqual(finalizedChapters.map(chapter=>chapter.title),finalizedTitles);
+    await request('/api/jobs/'+job.id+'/chapters',{chapters:finalizedChapters});
+    const reopened = await request('/api/jobs/'+job.id);
+    assert.deepEqual(reopened.chapters.map((chapter:any)=>chapter.title),finalizedTitles,'reopened editor gets the saved titles');
+    assert.deepEqual(readProjectState(appRoot).find((saved:any)=>saved.id===job.id).chapters.map((chapter:any)=>chapter.title),finalizedTitles,'project state persists finalized titles');
+    const finalizedExport = await requestExport(job.id,{outputFormats:['m4b']});
+    assert.equal(finalizedExport.exports[0].status,'success',JSON.stringify(finalizedExport));
+    const embeddedChapters = inspect(fp,finalizedExport.exports[0].fullPath).chapters;
+    assert.deepEqual(embeddedChapters.map((chapter:any)=>chapter.title),finalizedTitles,'embedded M4B titles match the editor exactly');
+    assert.deepEqual(JSON.parse(fs.readFileSync(sidecar,'utf8')).chapters.map((chapter:any)=>chapter.title),finalizedTitles,'sidecar chapter titles match the editor');
+    assert.deepEqual(embeddedChapters.map((chapter:any)=>chapter.start),reopened.chapters.map((chapter:any)=>chapter.start),'embedded chapter order and starts match');
+    await request('/api/library/metadata',{changes:[{id:job.id,fields:{genres:['Science Fiction'],tags:['Aliens','Space Opera']}}]});
+    assert.deepEqual(JSON.parse(fs.readFileSync(sidecar,'utf8')).tags,['Aliens','Space Opera'],'bulk save refreshes the adjacent JSON by default');
+    fs.writeFileSync(sidecar,'{}');
+    await request('/api/jobs/'+job.id+'/metadata-json',{});
+    const bulkJson=JSON.parse(fs.readFileSync(sidecar,'utf8'));
+    assert.deepEqual(bulkJson.genres,['Science Fiction']);
+    assert.deepEqual(bulkJson.tags,['Aliens','Space Opera']);
+    const partial=await requestExport(job.id,{outputFormats:['mp3','wav'],bitrate:'invalid'});
     assert.deepEqual(partial.exports.map((e:any)=>e.status),['failed','success']);
 
     // Final validation must compare the compact exported timeline, not source duration.
@@ -153,27 +257,64 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
       {id:'cut-2',title:'Chapter 2',start:'00:00:03.000',end:'00:00:04.000',endManuallyEdited:true},
       {id:'cut-3',title:'Chapter 3',start:'00:00:05.000',end:'00:00:08.000',endManuallyEdited:true},
     ]});
-    const compact = await request('/api/jobs/'+job.id+'/build-m4b',{outputFormats:['m4b']});
+    const compact = await requestExport(job.id,{outputFormats:['m4b']});
     assert.equal(compact.exports[0].status,'success',JSON.stringify(compact));
     const compactInfo = inspect(fp,compact.exports[0].fullPath);
     assert.ok(Math.abs(compactInfo.durationSeconds - 6) < 0.15);
     assert.deepEqual(compactInfo.chapters.map(chapter=>chapter.start),['00:00:00.000','00:00:02.000','00:00:03.000']);
+    assert.equal((await request('/api/jobs/'+job.id+'/validate',{})).validation.status,'FAIL','older alternate formats must match the current chapter review too');
+    const webpCover = path.join(root,'selected-cover.webp');
+    run(['-f','lavfi','-i','color=c=green:s=32x32','-frames:v','1',webpCover]);
+    const currentJob = await request('/api/jobs/'+job.id);
+    await request('/api/jobs/'+job.id+'/metadata',{metadata:{...currentJob.metadata,cover:{source:'upload',url:'data:image/webp;base64,'+fs.readFileSync(webpCover).toString('base64')}}});
+    const currentFormats = await requestExport(job.id,{outputFormats});
+    assert.ok(currentFormats.exports.every((item:any)=>item.status==='success'),JSON.stringify(currentFormats));
+    const normalizedCover = currentFormats.exports[0].coverPath;
+    assert.equal(path.extname(normalizedCover),'.png');
+    const pixels = (file:string) => run(['-i',file,'-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','pipe:1']);
+    assert.deepEqual(pixels(normalizedCover),pixels(webpCover),'exported cover pixels match the selected WebP image');
     assert.equal((await request('/api/jobs/'+job.id+'/validate',{})).validation.status,'PASS');
     assert.equal(await fingerprint([source],{}),original);
 
+    // Disabling the cover sidecar must preserve embedding and existing user files.
+    assert.equal((await request('/api/config')).save_cover_beside_audio,true,'cover sidecars default on');
+    const existingCoverHash = fs.readFileSync(normalizedCover);
+    await request('/api/config',{save_cover_beside_audio:false});
+    assert.equal((await request('/api/config')).save_cover_beside_audio,false);
+    const withoutCoverSidecar = await requestExport(job.id,{outputFormats:['m4b']});
+    assert.equal(withoutCoverSidecar.exports[0].status,'success',JSON.stringify(withoutCoverSidecar));
+    assert.equal(withoutCoverSidecar.exports[0].coverPath,undefined);
+    assert.ok(inspect(fp,withoutCoverSidecar.exports[0].fullPath).artwork,'selected artwork is still embedded');
+    assert.deepEqual(fs.readFileSync(normalizedCover),existingCoverHash,'existing cover is left untouched');
+    assert.ok(!fs.readdirSync(appRoot,{recursive:true}).some(name=>String(name).includes('export-cover-')),'temporary embedding artwork is cleaned up');
+    const invalidCoverSetting = await fetch(base+'/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({save_cover_beside_audio:'false'})});
+    assert.equal(invalidCoverSetting.status,400);
+    await request('/api/config',{save_cover_beside_audio:true});
+
     const loose=path.join(root,'loose');fs.mkdirSync(loose);
     for(const [name,freq] of [['10',900],['2',600],['1',300]] as const) run(['-f','lavfi','-i',`sine=frequency=${freq}:sample_rate=44100:duration=3`,'-c:a','libmp3lame','-b:a','128k',path.join(loose,name+'.mp3')]);
+    const tagged=path.join(root,'tagged');fs.mkdirSync(tagged);
+    for(const [name,disc,track] of [['A',2,1],['B',1,10],['C',1,2]] as const)
+      run(['-i',path.join(loose,'1.mp3'),'-c:a','copy','-metadata',`disc=${disc}`,'-metadata',`track=${track}`,path.join(tagged,name+'.mp3')]);
+    const taggedScan=await request('/api/system/scan-folder',{folderPath:tagged});
+    assert.deepEqual(taggedScan.files.map((file:any)=>file.fileName),['C.mp3','B.mp3','A.mp3']);
+    fs.copyFileSync(cover,path.join(loose,'cover.png'));
+    await request('/api/config',{audiobookshelf_metadata:true});
     const processBook=async(name:string,folder:string,mergeMethod='standard',chapterSource='existing_files', supplied?:any[])=>{
       const scan=await request('/api/system/scan-folder',{folderPath:folder});
       const parts=supplied || scan.files.map((f:any)=>({name:f.relativePath,sourceRelativePath:f.relativePath}));
       const book=await request('/api/jobs',{name,parts});
-      await request('/api/jobs/'+book.id+'/process-step1',{sourceFolderPath:folder,mergeMethod,chapterSource,selectedModelId:'small',parts});
+      await request('/api/jobs/'+book.id+'/process-step1',{sourceFolderPath:folder,mergeMethod,chapterSource,selectedModelId:'small',parts,generateWaveform:true});
       let progress:any;
       for(let i=0;i<200;i++){progress=await request('/api/step1/progress');if(!progress.isActive)break;await new Promise(r=>setTimeout(r,100));}
       assert.equal(progress.isActive,false,'Processing timed out');
       return {book:await request('/api/jobs/'+book.id),progress,scan};
     };
     const pcm=await processBook('Loose PCM',loose);
+    const pathCover=await request('/api/jobs/'+pcm.book.id+'/scan-cover',{});
+    assert.equal(pathCover.found,true,'path import scans its original source folder');
+    assert.equal(pathCover.cover.filename,'cover.png');
+    assert.equal((await request('/api/jobs/'+pcm.book.id)).metadata?.cover?.url,undefined,'scanning does not overwrite saved metadata');
     assert.equal(pcm.progress.stage,'completed',JSON.stringify(pcm.progress));
     assert.equal(pcm.book.sourceBitrate,128);
     assert.equal(pcm.book.sourceCodec,'pcm_s24le');
@@ -207,9 +348,13 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     assert.ok(rerunProgress.logs.some((line:string)=>line.includes('Reusing prepared master audio')));
     const encoded=await request('/api/jobs/'+pcm.book.id+'/build-m4b',{outputFormats:['mp3']});
     assert.equal(encoded.exports[0].status,'success',JSON.stringify(encoded));
+    assert.equal(fs.existsSync(preparedMasterPath),false,'verified export clears the disposable PCM master by default');
+    assert.equal(fs.existsSync(pcm.book.previewPath),false,'verified export clears review PCM while preserving book state');
     assert.equal(inspect(fp,encoded.exports[0].fullPath).bitrate,128);
-    const manual=await request('/api/jobs/'+pcm.book.id+'/build-m4b',{outputFormats:['mp3'],bitrates:{mp3:64}});
+    assert.ok((await request('/api/jobs/'+pcm.book.id)).logs.some((entry:any)=>entry.message.includes('MP3 export: Starting FFmpeg audio conversion')),'conversion stages reach project logs');
+    const manual=await requestExport(pcm.book.id,{outputFormats:['mp3'],bitrates:{mp3:64}});
     assert.equal(inspect(fp,manual.exports[0].fullPath).bitrate,64);
+    assert.equal(fs.existsSync(preparedMasterPath),false,'another export rebuilds and then clears PCM');
 
     const quick=await processBook('Loose Direct',loose,'quick');
     assert.equal(quick.scan.isStreamCopyCompatible,true);
@@ -221,7 +366,7 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     assert.deepEqual(packets(quick.book.mergedMp3.fullPath),['1','2','10'].flatMap(n=>packets(path.join(loose,n+'.mp3'))));
     const remux=await request('/api/jobs/'+quick.book.id+'/build-m4b',{outputFormats:['mp3'],bitrates:{mp3:320}});
     assert.equal(remux.exports[0].mode,'copy');
-    const higher=await request('/api/jobs/'+quick.book.id+'/build-m4b',{outputFormats:['mp3'],convert:true,bitrates:{mp3:192}});
+    const higher=await requestExport(quick.book.id,{outputFormats:['mp3'],convert:true,bitrates:{mp3:192}});
     assert.equal(inspect(fp,higher.exports[0].fullPath).bitrate,192);
 
     const incompatible=path.join(root,'incompatible');fs.mkdirSync(incompatible);
@@ -274,15 +419,20 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     const youtubeExport=await request('/api/jobs/'+youtube.book.id+'/build-m4b',{outputFormats:['m4b']});
     assert.equal(youtubeExport.exports[0].status,'success',JSON.stringify(youtubeExport));
     assert.equal(inspect(fp,youtubeExport.exports[0].fullPath).tags.title,'YouTube conversion test');
-    assert.equal((await request('/api/jobs/'+youtube.book.id+'/validate',{})).validation.status,'PASS');
+    {const checked=await request('/api/jobs/'+youtube.book.id+'/validate',{});assert.equal(checked.validation.status,'PASS',JSON.stringify(checked.finalCheck?.items.filter((item:any)=>item.status==='failed')));}
     assert.equal(await fingerprint([youtubeSource],{}),youtubeHash);
-    const failed=await fetch(base+'/api/jobs/'+youtube.book.id+'/build-m4b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({outputFormats:['m4b'],bitrate:'invalid'})});
+    const beforeFailedRetry=await fingerprint([youtubeExport.exports[0].fullPath],{});
+    fs.writeFileSync(youtube.book.previewPath,'keep-on-failure');
+    const failed=await fetch(base+'/api/jobs/'+youtube.book.id+'/build-m4b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({outputFormats:['m4b'],bitrate:'invalid',overwriteExisting:true,confirmedOverwritePaths:[youtubeExport.exports[0].fullPath]})});
     assert.equal(failed.status,500);
-    assert.equal((await request('/api/jobs/'+youtube.book.id)).outputM4b,null);
+    assert.equal(fs.readFileSync(youtube.book.previewPath,'utf8'),'keep-on-failure','failed export does not clear PCM');
+    assert.equal((await request('/api/jobs/'+youtube.book.id)).outputM4b.fullPath,youtubeExport.exports[0].fullPath,'failed conversion keeps the previous export');
+    assert.equal(await fingerprint([youtubeExport.exports[0].fullPath],{}),beforeFailedRetry,'failed conversion does not alter the existing audiobook');
 
     const uploadedJob=await request('/api/jobs',{name:'Folder upload',parts:[]});
     const form=new FormData();
     for(const name of ['01/1.mp3','01/2.mp3','02/1.mp3'])form.append('files',new Blob([fs.readFileSync(path.join(loose,'1.mp3'))]),name);
+    form.append('cover',new Blob([fs.readFileSync(cover)],{type:'image/png'}),'cover.png');
     const uploadResponse=await fetch(base+'/api/upload-audio?jobId='+uploadedJob.id,{method:'POST',body:form});
     assert.ok(uploadResponse.ok);const upload:any=await uploadResponse.json();
     assert.equal(new Set(upload.files.map((f:any)=>f.filename)).size,3);
@@ -298,6 +448,9 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     assert.ok(masterLogs.some((entry:any)=>entry.message.includes("Job 'API fixture' initialized")));
     const uploadedParts=upload.files.map((f:any)=>({name:f.filename,sourceRelativePath:f.originalName}));
     await request('/api/jobs/'+uploadedJob.id+'/step1-settings',{sourceFolderPath:upload.uploadDir,parts:uploadedParts});
+    const uploadedCover=await request('/api/jobs/'+uploadedJob.id+'/scan-cover',{});
+    assert.equal(uploadedCover.found,true,'browser folder import retains its selected cover');
+    assert.match(uploadedCover.cover.filename,/^cover-[a-f0-9-]+\.png$/);
     assert.deepEqual((await request('/api/jobs/'+uploadedJob.id)).parts.map((p:any)=>p.sourceRelativePath),['01/1.mp3','01/2.mp3','02/1.mp3']);
     const uploadProcessed=await processBook('Uploaded structure',upload.uploadDir,'standard','existing_files',uploadedParts);
     assert.equal(uploadProcessed.progress.stage,'completed',JSON.stringify(uploadProcessed.progress));
@@ -312,6 +465,67 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     const whisper=await request('/api/jobs/'+whisperJob.id);
     assert.ok(!whisper.transcription);assert.ok(!whisper.transcriptWords?.length);
     assert.match(whisper.logs.at(-1).message,/Step 1 processing failed.*Missing requirements/);
+
+    // Folder relocation follows saved metadata without touching the original source audio.
+    fs.writeFileSync(path.join(path.dirname(firstPath),'book-notes.txt'),'Unassociated notes stay in place.');
+    const beforeMove=await request('/api/jobs/'+job.id);
+    await request('/api/jobs/'+job.id+'/metadata',{metadata:{...beforeMove.metadata,title:'Renamed for folder move',author:'Moved Author'}});
+    const preview=await request('/api/jobs/'+job.id+'/export-folder-move');
+    assert.equal(preview.moves.length,1);
+    assert.equal(preview.moves[0].from,path.dirname(firstPath));
+    assert.match(preview.moves[0].to,/Moved Author/);
+    fs.mkdirSync(preview.moves[0].to,{recursive:true});
+    const collision=await fetch(base+'/api/jobs/'+job.id+'/export-folder-move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmedMoves:preview.moves})});
+    assert.equal(collision.status,409,'an existing destination is never overwritten');
+    assert.ok(fs.existsSync(firstPath),'a collision leaves the old audiobook in place');
+    fs.rmdirSync(preview.moves[0].to);
+    const moved=await request('/api/jobs/'+job.id+'/export-folder-move',{confirmedMoves:preview.moves});
+    assert.deepEqual(moved.moved,preview.moves);
+    const relocated=await request('/api/jobs/'+job.id);
+    assert.equal(path.dirname(relocated.outputM4b.fullPath),preview.moves[0].to);
+    assert.ok(Object.values(relocated.exportedFiles).every((file:any)=>path.dirname(file)===preview.moves[0].to));
+    assert.equal(fs.existsSync(path.join(preview.moves[0].to,'book-notes.txt')),false,'unassociated notes are excluded from the transfer');
+    assert.equal(fs.readFileSync(path.join(preview.moves[0].from,'book-notes.txt'),'utf8'),'Unassociated notes stay in place.');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(preview.moves[0].to,'metadata.json'),'utf8')).title,'Renamed for folder move');
+    assert.ok(fs.existsSync(preview.moves[0].from),'nonempty old book folder is retained');
+    assert.ok(fs.existsSync(path.dirname(preview.moves[0].from)),'nonempty old author folder is retained');
+    assert.equal(await fingerprint([source],{}),original,'source audio remains unchanged');
+    const afterMoveExport=await requestExport(job.id,{outputFormats:['m4b']});
+    assert.equal(path.dirname(afterMoveExport.exports[0].fullPath),preview.moves[0].to,'the next export reuses the moved audiobook path');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(preview.moves[0].to,'metadata.json'),'utf8')).title,'Renamed for folder move');
+    const oldAuthorFolder=path.dirname(preview.moves[0].to);
+    fs.writeFileSync(path.join(oldAuthorFolder,'keep.txt'),'another file');
+    await request('/api/jobs/'+job.id+'/metadata',{metadata:{...(await request('/api/jobs/'+job.id)).metadata,author:'Another Author'}});
+    const secondMove=await request('/api/jobs/'+job.id+'/export-folder-move');
+    await request('/api/jobs/'+job.id+'/export-folder-move',{confirmedMoves:secondMove.moves});
+    assert.ok(!fs.existsSync(secondMove.moves[0].from));
+    assert.ok(fs.existsSync(path.join(oldAuthorFolder,'keep.txt')),'nonempty old parent folders are preserved');
+
+    // Moving a series from either book includes its exported siblings, while
+    // leaving unrelated files in the old parent directory alone.
+    const series="The Hitchhiker's Guide to the Galaxy";
+    const firstSeriesMetadata=(await request('/api/jobs/'+job.id)).metadata;
+    const quickSeriesMetadata=(await request('/api/jobs/'+quick.book.id)).metadata;
+    await request('/api/jobs/'+job.id+'/metadata',{metadata:{...firstSeriesMetadata,author:'Series Author',series}});
+    await request('/api/jobs/'+quick.book.id+'/metadata',{metadata:{...quickSeriesMetadata,author:'Series Author',series}});
+    const seriesPreview=await request('/api/jobs/'+quick.book.id+'/export-folder-move');
+    assert.equal(seriesPreview.moves.length,2,'a series move includes both exported books');
+    assert.deepEqual(new Set(seriesPreview.moves.map((move:any)=>move.jobId)),new Set([job.id,quick.book.id]));
+    const samePreview=await request('/api/jobs/'+job.id+'/export-folder-move');
+    assert.deepEqual(samePreview.moves,seriesPreview.moves,'the series has one stable move plan from either book');
+    const existingSeriesFolder=path.dirname(seriesPreview.moves[0].to);
+    fs.mkdirSync(existingSeriesFolder,{recursive:true});
+    fs.writeFileSync(path.join(existingSeriesFolder,'existing-book.txt'),'Keep existing series contents.');
+    const seriesMoved=await request('/api/jobs/'+quick.book.id+'/export-folder-move',{confirmedMoves:seriesPreview.moves});
+    assert.deepEqual(seriesMoved.moved,seriesPreview.moves);
+    assert.ok(fs.existsSync(path.join(existingSeriesFolder,'existing-book.txt')),'existing series contents remain in place');
+    for (const bookId of [job.id,quick.book.id]) {
+      const updated=await request('/api/jobs/'+bookId);
+      assert.ok(fs.existsSync(updated.exports.find((item:any)=>item.status==='success').fullPath));
+      assert.match(updated.outputM4b?.fullPath || updated.exports.find((item:any)=>item.status==='success').fullPath,/Series Author/);
+      assert.ok(Object.values(updated.exportedFiles).every((file:any)=>fs.existsSync(file)));
+    }
+    assert.equal((await request('/api/jobs/'+job.id+'/export-folder-move')).moves.length,0);
 
     // Dependency validation runs before Multer writes any staged upload files.
     const ffprobeBinary=path.join(bin,binaryName('ffprobe'));
@@ -328,7 +542,7 @@ test('HTTP single-book repair, range preview and seven selected outputs', async 
     assert.deepEqual(fs.readdirSync(inputsRoot,{recursive:true}).map(String).sort(),inputsBefore,'blocked imports must not stage or move files');
     assert.match((await request('/api/jobs/'+blockedImportJob.id)).logs.at(-1).message,/Import failed.*No files were copied or modified/);
     console.log('API fixtures: '+appRoot);
-  } finally {child.kill();}
+  } finally { await stopTestServer(child); }
 });
 
 test('YouTube wrapper preserves native audio, handles exact Unicode paths, and rejects invalid inputs',async()=>{

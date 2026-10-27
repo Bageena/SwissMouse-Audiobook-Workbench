@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none">
+  <title>Paper boat with mouse ears — Polaroid image icon</title>
+  <g stroke="#494236" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="1" width="30" height="34" rx=".6" fill="#fff9ed" stroke-width="1.3"/>
+    <path d="M6 4h24v22H6Z" fill="#dce4d3" stroke="#7e806e" stroke-width=".9"/>
+    <g transform="translate(2.2 1.5) scale(.88)">
+    <!-- A quiet strip of water grounds the folded-paper silhouette. -->
+    <path d="M5.8 23q6-1.5 12 0t12.4 0v4.2H5.8Z" fill="#b6ccc8" stroke="none"/>
+    <!-- Just ears and the top of a head peek above the boat's far edge. -->
+    <circle cx="19.9" cy="12.8" r="2.7" fill="#8d877c" stroke-width=".9"/>
+    <circle cx="25" cy="12.5" r="2.7" fill="#8d877c" stroke-width=".9"/>
+    <path d="M19.3 17.9v-2.2a3.4 3.4 0 0 1 6.8 0v2.2Z" fill="#8d877c" stroke-width=".9"/>
+    <!-- Broad folds stay legible when the icon is small. -->
+    <path d="m8 18.1 8.3-8.7 4.4 8.7Z" fill="#fffbef" stroke-width="1"/>
+    <path d="m16.3 9.4.3 8.7h4.1Z" fill="#dfcda6" stroke-width=".7"/>
+    <path d="m7.5 17.4 10.4 2.5 10.6-2.5-4.9 7.1H12.4Z" fill="#fff5dd" stroke-width="1.1"/>
+    <path d="m17.9 19.9 5.7 4.6 4.9-7.1Z" fill="#e4cea3" stroke-width=".7"/>
+    <path d="m12.4 24.5 5.5-4.6" stroke="#a79575" stroke-width=".7"/>
+    <path d="M9 26h5m9 0h3" stroke="#7e9e9a" stroke-width=".7"/>
+    </g>
+  </g>
+</svg>

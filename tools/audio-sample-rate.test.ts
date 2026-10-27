@@ -1,4 +1,5 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
+import { createTestFixture } from './test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,8 +39,9 @@ test('new normalization policy invalidates old prepared masters but leaves quick
 });
 
 const ff=process.env.TEST_FFMPEG || 'ffmpeg', fp=process.env.TEST_FFPROBE || 'ffprobe';
-fs.mkdirSync('.cache',{recursive:true});
-const root=fs.mkdtempSync(path.resolve('.cache/sample-rate-test-'));
+const fixture = createTestFixture('.cache/sample-rate-test-');
+const { root } = fixture;
+after(() => fixture.cleanup());
 function source(rate:number) {
   const file=path.join(root,`input-${rate}.wav`);
   if(!fs.existsSync(file)) execFileSync(ff,['-v','error','-f','lavfi','-i',`sine=frequency=440:sample_rate=${rate}:duration=1`,'-c:a','pcm_s16le',file],{windowsHide:true});

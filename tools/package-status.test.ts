@@ -4,10 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { PACKAGE_STATUS_SCRIPT } from './package-status';
+import { createTestFixture } from './test-fixtures.mjs';
 
 const python = path.resolve(process.platform === 'win32' ? 'runtime/venv/Scripts/python.exe' : 'runtime/venv/bin/python');
-test('package discovery bypasses legacy startup hooks and never imports transcription packages', {skip: !fs.existsSync(python)}, () => {
-  const root = fs.mkdtempSync(path.resolve('.cache/package-probe-'));
+test('package discovery bypasses legacy startup hooks and never imports transcription packages', {skip: !fs.existsSync(python)}, t => {
+  const fixture = createTestFixture(path.resolve('.cache/package-probe-'));
+  const { root } = fixture;
+  t.after(() => fixture.cleanup());
   const packages = path.join(root, process.platform === 'win32' ? 'Lib/site-packages' : 'lib/python3.10/site-packages');
   const metadata = path.join(packages, 'torch-1.2.3.dist-info');
   fs.mkdirSync(metadata, {recursive:true});

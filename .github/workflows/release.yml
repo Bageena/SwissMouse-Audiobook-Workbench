@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to create (for example, v0.1.0-alpha.2)
+        description: Release tag matching package.json (v0.1.0-alpha.5)
         required: true
         type: string
 
@@ -30,6 +30,17 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Check release version
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const p=JSON.parse(fs.readFileSync("package.json")); const l=JSON.parse(fs.readFileSync("package-lock.json")); if(process.env.RELEASE_TAG!==`v${p.version}` || l.version!==p.version || l.packages[""].version!==p.version) throw new Error("Release tag, package version and lockfile must match");'
+          EXISTING=$(git ls-remote origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}")
+          if [ -n "$EXISTING" ]; then
+            TARGET=$(printf '%s\n' "$EXISTING" | tail -1 | cut -f1)
+            test "$TARGET" = "$GITHUB_SHA" || { echo 'Existing tag points to a different commit'; exit 1; }
+          fi
+
       - name: Prepare audio test dependencies
         run: |
           sudo apt-get update
@@ -40,6 +51,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Audit public source files
+        run: node scripts/audit-release.mjs
 
       - name: Type-check
         run: npm run lint
@@ -57,6 +71,7 @@ jobs:
         run: |
           npx tsx scripts/build-release.ts
           VERSION=$(node -p "require('./package.json').version")
+          node scripts/audit-release.mjs "release/SwissMouse-${VERSION}"
           cd release
           zip -r "../SwissMouse-${VERSION}.zip" "SwissMouse-${VERSION}"
 
@@ -78,5 +93,5 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ASSET" --clobber
           else
-            gh release create "$TAG" "$ASSET" --target "$GITHUB_SHA" --title "SwissMouse $VERSION" --prerelease --generate-notes
+            gh release create "$TAG" "$ASSET" --target "$GITHUB_SHA" --title "SwissMouse $VERSION" --prerelease --notes-file docs/releases/alpha5.md
           fi

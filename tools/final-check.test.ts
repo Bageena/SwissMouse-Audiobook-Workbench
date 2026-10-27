@@ -1,0 +1,70 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { runFinalCheck, finalCheckSignature, metadataTagMismatches } from './final-check';
+import { exportAudio } from './audio-engine';
+import { audiobookTags } from './audiobook-metadata';
+import { extendedMetadata } from '../src/utils/extendedMetadata';
+import { audiobookshelfMetadata } from '../src/utils/audiobookshelfMetadata';
+import { planChapterExport } from '../src/utils/chapterExport';
+import type { AudiobookJob, ChapterEntry, WorkbenchConfig } from '../src/types';
+const ffmpeg=process.env.TEST_FFMPEG||path.resolve('runtime/bin/ffmpeg'+(process.platform==='win32'?'.exe':''));
+const ffprobe=process.env.TEST_FFPROBE||path.resolve('runtime/bin/ffprobe'+(process.platform==='win32'?'.exe':''));
+const metadata={title:'Fixture',author:'Writer',narrator:'Reader',genres:['Fiction'],language:'eng',abridged:false,explicit:false};
+const config={save_cover_beside_audio:true,audiobookshelf_metadata:true} as WorkbenchConfig;
+
+test('Final Check signature survives equivalent sidecar normalization but rejects changed contributors', () => {
+  const job = { metadata, parts: [], chapters: [] } as unknown as AudiobookJob;
+  const before = finalCheckSignature(job, config, [], [], []);
+  job.metadata = { ...metadata, authors: ['Writer'], narrators: ['Reader'], collections: [], additionalSeries: [] };
+  assert.equal(finalCheckSignature(job, config, [], [], []), before);
+  job.metadata = { ...job.metadata, author: 'Another writer', authors: ['Another writer'] };
+  assert.notEqual(finalCheckSignature(job, config, [], [], []), before);
+});
+test('metadata comparison handles aliases, cleared false flags and unsupported WAV fields',()=>{
+  const tags=audiobookTags(metadata,undefined,{},'m4b');
+  assert.deepEqual(metadataTagMismatches(metadata,tags,'m4b').mismatches,[]);
+  assert.ok(metadataTagMismatches(metadata,{...tags,composer:'Wrong'},'m4b').mismatches.includes('composer'));
+  const wav=metadataTagMismatches(metadata,{title:'Fixture',album:'Fixture',artist:'Writer',genre:'Fiction'},'wav');
+  assert.ok(!wav.mismatches.includes('composer'));assert.ok(wav.unsupported.includes('composer'));
+});
+test('Final Check verifies cut coverage, metadata, optional artifacts, sidecars, cancellation and source preservation',async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'swissmouse-final-check-'));
+  try {
+    const source=path.join(root,'source.wav'),folder=path.join(root,'output');fs.mkdirSync(folder);
+    execFileSync(ffmpeg,['-v','error','-f','lavfi','-i','sine=duration=3:sample_rate=44100',source],{windowsHide:true});
+    const original=createHash('sha256').update(fs.readFileSync(source)).digest('hex');
+    const chapters=[{id:'a',title:'First',start:'00:00:00.000',end:'00:00:01.000',endManuallyEdited:true},{id:'b',title:'Second',start:'00:00:02.000',end:'00:00:03.000',endManuallyEdited:true}];
+    const output=path.join(folder,'Fixture.m4b');
+    await exportAudio({ffmpeg,ffprobe,source,output,format:'m4b',chapters,tags:audiobookTags(metadata,undefined,{},'m4b'),cue:true});
+    const job={id:'fixture',name:'Fixture',metadata,chapters,totalDurationSeconds:3,parts:[{id:'source',name:source}],outputM4b:{fullPath:output},transcriptWords:[],candidates:[],logs:[]} as unknown as AudiobookJob;
+    const timeline=planChapterExport(chapters,3).chapters as ChapterEntry[];
+    const ex=path.join(folder,'exmetadata.json'),abs=path.join(folder,'metadata.json');
+    fs.writeFileSync(ex,JSON.stringify(extendedMetadata(metadata,timeline,job.id)));
+    fs.writeFileSync(abs,JSON.stringify(audiobookshelfMetadata(metadata,timeline)));
+    const run=(signal=new AbortController().signal,progress=()=>{})=>runFinalCheck({job,config,files:[output],originals:[source],artifacts:{},ffmpeg,ffprobe,signal,progress});
+    const report=await run();
+    assert.deepEqual(report.items.filter(item=>item.status==='failed'),[]);
+    assert.equal(report.removedSeconds,1);assert.equal(report.expectedDuration,2);
+    assert.match(report.items.find(item=>item.id==='cuts')!.detail,/1.000 seconds intentionally removed/);
+    assert.equal(report.files[0].chapters,2);
+    assert.equal(report.items.find(item=>item.id==='waveform')!.status,'optional');
+    const before=finalCheckSignature(job,config,[output],[source],[]);
+    fs.writeFileSync(ex,'{}');
+    assert.notEqual(finalCheckSignature(job,config,[output],[source],[]),before);
+    const stale=await run();assert.equal(stale.items.find(item=>item.id==='sidecar-0-extended')!.status,'failed');
+    fs.unlinkSync(abs);config.audiobookshelf_metadata=false;
+    assert.equal((await run()).items.find(item=>item.id==='sidecar-0-audiobookshelf')!.status,'optional');
+    const controller=new AbortController();
+    await assert.rejects(run(controller.signal,()=>controller.abort()),/abort/i);
+    job.metadata={...metadata,narrator:'Another reader'};
+    assert.equal((await run()).items.find(item=>item.id==='file-0-metadata')!.status,'failed');
+    fs.writeFileSync(output,'corrupt file');
+    assert.equal((await run()).items.find(item=>item.id==='file-0-read')!.status,'failed');
+    assert.equal(createHash('sha256').update(fs.readFileSync(source)).digest('hex'),original);
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { createTestFixture } from './test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -140,8 +141,9 @@ test('PyTorch build selection checks driver/architecture and requires replacemen
 
 const python = path.resolve(process.platform === 'win32' ? 'runtime/venv/Scripts/python.exe' : 'runtime/venv/bin/python');
 test('full backend error reaches terminal while the progress error remains compact', { skip: !fs.existsSync(python) }, async t => {
-  fs.mkdirSync(path.resolve('.cache'), { recursive: true });
-  const root = fs.mkdtempSync(path.resolve('.cache/transcription-error-'));
+  const fixture = createTestFixture(path.resolve('.cache/transcription-error-'));
+  const { root } = fixture;
+  t.after(() => fixture.cleanup());
   fs.writeFileSync(path.join(root, 'faster_whisper.py'), [
     'import sys',
     'class WhisperModel:',
@@ -202,9 +204,10 @@ test('CTranslate2 capability script never consults PyTorch', { skip: !fs.existsS
   assert.equal(output.initialization, 'not-tested');
   assert.deepEqual(output.gpuComputeTypes, ['float16', 'int8_float16']);
 });
-test('Python runner passes beam and actual batching pipeline with word timestamps', { skip: !fs.existsSync(python) }, async () => {
-  fs.mkdirSync(path.resolve('.cache'), { recursive: true });
-  const root = fs.mkdtempSync(path.resolve('.cache/batching-test-'));
+test('Python runner passes beam and actual batching pipeline with word timestamps', { skip: !fs.existsSync(python) }, async t => {
+  const fixture = createTestFixture(path.resolve('.cache/batching-test-'));
+  const { root } = fixture;
+  t.after(() => fixture.cleanup());
   fs.writeFileSync(path.join(root, 'faster_whisper.py'), [
     'from types import SimpleNamespace',
     'def answer(kwargs):',

@@ -1,23 +1,6 @@
 import { YouTubeIcon } from './YouTubeIcon';
 import React, { useState, useEffect } from 'react';
-import {
-  Download,
-  AlertTriangle,
-  CheckCircle2,
-  XCircle,
-  RefreshCw,
-  Trash2,
-  ExternalLink,
-  ShieldCheck,
-  Film,
-  Music,
-  Clock,
-  HardDrive,
-  Info,
-  Terminal,
-  Layers,
-  ArrowRight
-} from 'lucide-react';
+import { Download, AlertTriangle, CheckCircle2, XCircle, RefreshCw, Trash2, ShieldCheck, Film, Music, Clock, Info, Terminal } from 'lucide-react';
 import {
   YouTubeVideoInfo,
   YtDlpStatusInfo,
@@ -29,13 +12,11 @@ import { useDependencyStatus } from '../dependency-status';
 interface YouTubeAudioImportProps {
   job: AudiobookJob;
   onAudioImported: (updatedJob: AudiobookJob) => void;
-  onCancel?: () => void;
 }
 
 export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
   job,
   onAudioImported,
-  onCancel,
 }) => {
   const { feature, refresh: refreshDependencies } = useDependencyStatus();
   // Input URL
@@ -60,7 +41,6 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
-  const [showOverwriteConfirm, setShowOverwriteConfirm] = useState<boolean>(false);
 
   // Fetch yt-dlp status on mount
   const checkStatus = async () => {
@@ -202,7 +182,6 @@ export const YouTubeAudioImport: React.FC<YouTubeAudioImportProps> = ({
     setDownloadProgress(20);
     setDownloadError(null);
     setDownloadSuccess(null);
-    setShowOverwriteConfirm(false);
 
     // Simulate progress animation while server downloads
     const progressInterval = setInterval(() => {

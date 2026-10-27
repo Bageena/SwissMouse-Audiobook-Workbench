@@ -1,11 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { AudiobookJob } from '../src/types';
-import { beginStepRerun, canRerunStep, completeStepRerun, failStepRerun, hasManualChapterWork, markDependentResultsStale } from '../src/utils/pipelineRerun';
+import { beginStepRerun, canRerunStep, canReviewChapters, completeStepRerun, failStepRerun, hasManualChapterWork, markDependentResultsStale } from '../src/utils/pipelineRerun';
 
 const job = (overrides: Partial<AudiobookJob> = {}): AudiobookJob => ({
   id: 'job', name: 'Book', createdAt: '', parts: [], totalDurationSeconds: 100, totalSizeBytes: 1,
   status: 'transcribed', candidates: [], chapters: [], logs: [], chapterSource: 'whisperx', ...overrides,
+});
+
+test('completed individual chapter preparation unlocks review for a saved draft', () => {
+  for (const chapterSource of ['whisperx', 'existing_files', 'grouped_files', 'existing_chapters'] as const) {
+    const step = chapterSource === 'whisperx' ? 'detecting_chapters' : 'extracting_chapters';
+    const draft = job({ status: 'draft', chapterSource, sourceKey: 'source',
+      chapters: [{ id: 'opening', title: 'Opening', start: '00:00:00.000' }],
+      pipelineSteps: completeStepRerun(undefined, step, 'now'), staleSteps: ['chapter_review'] });
+    assert.equal(canReviewChapters(draft), true);
+    assert.equal(canReviewChapters({ ...draft, sourceKey: undefined }), false);
+    assert.equal(canReviewChapters({ ...draft, sourceFilesChanged: true }), false);
+    assert.equal(canReviewChapters({ ...draft, chapters: [] }), false);
+    for (const status of ['running', 'failed', 'stale'] as const) {
+      assert.equal(canReviewChapters({ ...draft, pipelineSteps: { [step]: { status, hasOutput: true } } }), false);
+    }
+    assert.equal(canReviewChapters({ ...draft, pipelineSteps: completeStepRerun(undefined, 'transcribing_whisper', 'now') }), false);
+  }
+});
+
+test('review remains available for previously completed workflows', () => {
+  assert.equal(canReviewChapters(job({ sourceKey: 'source', chapterSource: 'manual' })), true);
+  assert.equal(canReviewChapters(job({ sourceKey: 'source', status: 'validated' })), true);
+  assert.equal(canReviewChapters(job({ sourceKey: 'source', status: 'draft' })), false);
 });
 
 test('rerunning Chapter Detection does not rerun Transcription', () => {

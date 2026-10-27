@@ -1,6 +1,12 @@
 import { AlignedWord } from '../types';
 import { formatTimestampMs } from './chapters';
 
+/** Retain untimed speech for review without manufacturing word boundaries. */
+export function missingWordTimestampSegments<T extends { text: string; words?: { word: string; start: number; end: number }[] }>(segments: T[]) {
+  return segments.filter(segment => segment.text.trim() && !segment.words?.some(word =>
+    word.word.trim() && Number.isFinite(word.start) && Number.isFinite(word.end)));
+}
+
 // The persisted timeline used by both clickable transcript words and detection.
 // Preserve engine timestamps; this is formatting/filtering, not alignment.
 export function buildTranscriptWords(segments: { words?: { word: string; start: number; end: number; probability?: number }[] }[]): AlignedWord[] {
@@ -37,6 +43,40 @@ export function findClosestTranscriptWordIndex(words: AlignedWord[], seconds: nu
 export function transcriptPageOffset(wordIndex: number, pageSize: number): number {
   if (wordIndex < 0 || pageSize <= 0) return 0;
   return Math.floor(wordIndex / pageSize) * pageSize;
+}
+
+const searchText = (value: string) => value.normalize('NFKC').toLowerCase()
+  .replace(/[‘’]/g, "'").replace(/[^\p{L}\p{N}']/gu, ' ').replace(/\s+/g, ' ').trim();
+
+/** Search across saved words without changing their text, indexes or timestamps. */
+export function buildTranscriptSearchIndex(words: AlignedWord[]) {
+  let text = '';
+  const entries = words.map((word, transcriptWordIndex) => {
+    const normalized = searchText(word.word);
+    if (text && normalized) text += ' ';
+    const start = text.length;
+    text += normalized;
+    return { word, transcriptWordIndex, start, end: text.length };
+  });
+  return { text, entries };
+}
+
+export function searchTranscriptWords(index: ReturnType<typeof buildTranscriptSearchIndex>, query: string) {
+  if (!query.trim()) return index.entries;
+  const normalized = searchText(query);
+  if (!normalized) return [];
+  const ranges: { start: number; end: number }[] = [];
+  for (let start = index.text.indexOf(normalized); start >= 0; start = index.text.indexOf(normalized, start + 1)) {
+    const end = start + normalized.length;
+    const previous = ranges.at(-1);
+    if (previous && start <= previous.end) previous.end = end;
+    else ranges.push({ start, end });
+  }
+  let range = 0;
+  return index.entries.filter(entry => {
+    while (range < ranges.length && ranges[range].end <= entry.start) range++;
+    return range < ranges.length && entry.end > ranges[range].start && entry.start < ranges[range].end;
+  });
 }
 
 /**

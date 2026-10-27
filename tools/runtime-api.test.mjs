@@ -1,13 +1,16 @@
 import test from 'node:test';
+import { createTestFixture, stopTestServer } from './test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { buildSync } from 'esbuild';
 
-test('hybrid HTTP reports active paths, routes model downloads and safely removes only private copies', {timeout:60000}, async () => {
+test('hybrid HTTP reports active paths, routes model downloads and safely removes only private copies', {timeout:60000}, async t => {
   fs.mkdirSync('.cache',{recursive:true});
-  const root = fs.mkdtempSync(path.resolve('.cache/runtime-api-'));
+  const fixture = createTestFixture('.cache/runtime-api-');
+  const { root } = fixture;
+  t.after(() => fixture.cleanup());
   const system = path.join(root,'system');
   const suffix = process.platform === 'win32' ? '.exe' : '';
   const placeholder = (relative) => { const file = path.join(root,relative); fs.mkdirSync(path.dirname(file),{recursive:true}); fs.writeFileSync(file,'fixture placeholder'); return file; };
@@ -16,8 +19,8 @@ test('hybrid HTTP reports active paths, routes model downloads and safely remove
   const localYt = placeholder('runtime/bin/yt-dlp'+suffix);
   const model = placeholder('models/keep-me');
   const book = placeholder('inputs/keep-me');
-  const entry = path.join(root,'server.cjs');
-  buildSync({entryPoints:['server.ts'],bundle:true,platform:'node',format:'cjs',packages:'external',outfile:entry});
+  const entry = process.env.TEST_PACKAGE_ROOT ? path.resolve(process.env.TEST_PACKAGE_ROOT, 'dist/server.cjs') : path.join(root,'server.cjs');
+  if (!process.env.TEST_PACKAGE_ROOT) buildSync({entryPoints:['server.ts'],bundle:true,platform:'node',format:'cjs',packages:'external',outfile:entry});
   const port = 31000+Math.floor(Math.random()*5000);
   const server=spawn(process.execPath,['--require',path.resolve('tools/fixtures/runtime-requirements.cjs'),entry],{env:{...process.env,PATH:system,APP_ROOT:root,PORT:String(port),NODE_ENV:'production',SWISSMOUSE_RUNTIME_MODE:'hybrid'},windowsHide:true,stdio:['ignore','pipe','pipe']});
   let logs=''; server.stdout.on('data',data=>logs+=data); server.stderr.on('data',data=>logs+=data);
@@ -64,5 +67,5 @@ test('hybrid HTTP reports active paths, routes model downloads and safely remove
     assert.ok(logs.includes(JSON.stringify(path.join(system,'python'+suffix))));
     const download=logs.split('\n').filter(line=>line.startsWith('FIXTURE_SPAWN:')).map(line=>JSON.parse(line.slice(14))).find(call=>call.args[1]?.includes('snapshot_download'));
     assert.equal(download.file,path.join(system,'python'+suffix));
-  } finally { server.kill(); await new Promise(resolve=>server.once('exit',resolve)); }
+  } finally { await stopTestServer(server); }
 });

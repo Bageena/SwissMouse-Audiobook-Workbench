@@ -10,6 +10,7 @@ const releaseDirectory = resolve(releaseRoot, `SwissMouse-${packageJson.version}
 
 // Refuse older builds that omitted bundled dependency licenses.
 await readFile(resolve(projectRoot, 'dist/THIRD_PARTY_NOTICES.txt'), 'utf8');
+await readFile(resolve(projectRoot, 'dist/catalog-worker.cjs'));
 
 if (!releaseDirectory.startsWith(`${releaseRoot}${sep}`)) {
   throw new Error('Refusing to write a release outside the release directory.');
@@ -31,11 +32,12 @@ const releaseFiles = [
   'CHAPTER-DETECTION.md',
   'REQUIREMENTS.md',
   'LIBRIVOX.md',
-  'metadata.json',
   'package-lock.json',
   'package.json',
   'README.md',
   'PERFORMANCE.md',
+  'ROADMAP.md',
+  'docs',
   'Start Audiobook Workbench.bat',
   'themes/_template',
   'themes/example-theme',
@@ -47,10 +49,12 @@ const releaseFiles = [
   'tsconfig.json',
   'vite.config.ts',
   'scripts/build-release.ts',
+  'scripts/audit-release.mjs',
   'scripts/build-release.bat',
   'scripts/third-party-notices.ts',
   'scripts/prepare-public-release.ps1',
   'scripts/smoke-release.mjs',
+  'scripts/verify-release-runtime.mjs',
   'dist',
 ];
 
@@ -69,7 +73,7 @@ for (const source of releaseFiles) {
       if (/(^|\/)(runtime|models|node_modules|\.cache|\.git|local)(\/|$)/i.test(name) || name === 'tools/yt-dlp') return false;
       if (info.isDirectory()) return true;
       // New asset types need review; never copy executables, archives or models.
-      const allowed = ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.json', '.css', '.html', '.md', '.txt', '.map', '.png', '.svg', '.bat', '.ps1', '.yml'];
+      const allowed = ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.json', '.css', '.html', '.md', '.txt', '.map', '.png', '.jpg', '.jpeg', '.svg', '.bat', '.ps1', '.yml'];
       if (!allowed.includes(extname(name)) && !['LICENSE', '.env.example', '.gitignore', '.gitkeep'].includes(name.split('/').pop()!)) {
         throw new Error(`Unexpected release input; review before distributing: ${name}`);
       }

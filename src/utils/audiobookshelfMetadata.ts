@@ -1,7 +1,6 @@
 import type { AudiobookMetadata, ChapterEntry } from '../types';
 import { alphabetical } from './metadataQuickAdd';
-
-const names = (value: string) => value.split(',').map(name => name.trim()).filter(Boolean);
+import { metadataPeople } from './metadataPeople';
 const seconds = (timestamp: string) => {
   const match = /^(\d+):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/.exec(timestamp);
   if (!match) return NaN;
@@ -21,8 +20,8 @@ export function audiobookshelfMetadata(metadata: AudiobookMetadata, chapters: Ch
     }) } : {}),
     title: metadata.title,
     subtitle: metadata.subtitle || null,
-    authors: names(metadata.author),
-    narrators: names(metadata.narrator),
+    authors: metadataPeople(metadata, 'author'),
+    narrators: metadataPeople(metadata, 'narrator'),
     series: metadata.series?.trim() ? [`${metadata.series.trim()}${metadata.seriesSequence?.trim() ? ` #${metadata.seriesSequence.trim()}` : ''}`] : [],
     genres: metadata.genres.filter(Boolean),
     publishedYear: metadata.publishedYear || null,

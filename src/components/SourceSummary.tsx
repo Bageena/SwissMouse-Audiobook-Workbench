@@ -1,17 +1,5 @@
 import React from 'react';
-import {
-  Folder,
-  BookOpen,
-  Video,
-  Clock,
-  HardDrive,
-  FileAudio,
-  Layers,
-  Sparkles,
-  CheckCircle2,
-  ExternalLink,
-  RefreshCw
-} from 'lucide-react';
+import { Folder, BookOpen, Video, Clock, FileAudio, Layers, Sparkles, CheckCircle2, RefreshCw } from 'lucide-react';
 import { SourceSummaryData } from '../types';
 
 interface SourceSummaryProps {
@@ -122,8 +110,8 @@ export const SourceSummary: React.FC<SourceSummaryProps> = ({
             <Sparkles className="w-3.5 h-3.5 text-amber-600" />
             <span>Chapter method</span>
           </div>
-          <div className="text-xs font-semibold text-stone-900 mt-1 truncate" title={summary.chapterWorkflow === 'existing_files' ? 'Pre-split files as chapters' : 'Whisper AI detection'}>
-            {summary.chapterWorkflow === 'existing_files' ? 'Files and folders' : 'AI speech detection'}
+          <div className="text-xs font-semibold text-stone-900 mt-1 truncate" title={summary.chapterWorkflow === 'grouped_files' ? 'Named groups as chapters' : summary.chapterWorkflow === 'existing_files' ? 'Pre-split files as chapters' : 'Whisper AI detection'}>
+            {summary.chapterWorkflow === 'grouped_files' ? 'Grouped files' : summary.chapterWorkflow === 'existing_files' ? 'Files and folders' : 'AI speech detection'}
           </div>
         </div>
       </div>

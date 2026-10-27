@@ -52,6 +52,7 @@ The npm lockfile records exact package versions, registry URLs, integrity hashes
 | [Tailwind CSS](https://github.com/tailwindlabs/tailwindcss) | UI styles; MIT. | Generated CSS and preflight styles included; notice preserved. Compiler installed by npm for builds. |
 | [Vite](https://github.com/vitejs/vite) | Build/dev server and small browser helpers; MIT with additional upstream third-party notices. | Compiler not shipped; browser helpers included. Full Vite notice file preserved conservatively. |
 | [Express](https://expressjs.com/), [cors](https://github.com/expressjs/cors), [Multer](https://github.com/expressjs/multer), [adm-zip](https://github.com/cthackers/adm-zip) | Server, HTTP/CORS, uploads, ZIP extraction; MIT. | External to compiled server; acquired through locked npm installation with their dependency notices. |
+| [saxes](https://github.com/lddubeau/saxes) and [xmlchars](https://github.com/lddubeau/xmlchars) | Local playlist/chapter XML parsing; ISC and MIT respectively. | External to compiled server; installed through locked npm dependencies with their upstream license files. |
 | [Node.js](https://nodejs.org/) / npm | Application runtime/package installation; Node.js MIT plus bundled component licenses; npm Artistic-2.0 plus dependency licenses. | Installed separately by the user. Launcher recognizes `runtime/node` if manually provided, but SwissMouse has no Node downloader and excludes this directory from releases. |
 | [TypeScript](https://github.com/microsoft/TypeScript), [esbuild](https://github.com/evanw/esbuild), [tsx](https://github.com/privatenumber/tsx), Vite/React/Tailwind plugins and type packages | Build/development tools; TypeScript Apache-2.0; esbuild/tsx and most plugins/types MIT. Transitive build dependencies also include ISC, BSD-3-Clause, MPL-2.0 (Lightning CSS), CC-BY-4.0 (caniuse-lite), and Apache-2.0. | npm installs them for development/builds; their executables and package trees are not copied into the release. Generated output does not automatically inherit compiler licenses. Review copied code/data on build changes. |
 | [Audiobookshelf](https://github.com/advplyr/audiobookshelf) | Independent metadata compatibility reference in CI; GPL-3.0 project. | Workflow downloads one hash-verified `prober.js` at commit `64e9ac9d8f27353f9f588cb4c70cb5b0b6b2989c` into `audio-test-reference`. Test-only, excluded from the package. |
@@ -59,6 +60,20 @@ The npm lockfile records exact package versions, registry URLs, integrity hashes
 The current lockfile omits license fields for `busboy` and `streamsearch`; their installed upstream LICENSE files specify MIT. No dependency license fields were rewritten to SwissMouse's license. For shipping additional modules, offline packages, custom themes/assets, or models, review that exact artifact rather than assuming this table covers it.
 
 ## Rebuilding and publishing
+
+### Theme artwork and adapted icons
+
+The Paper & Ink utility SVGs adapt Lucide geometry. Their provenance is recorded in
+`src/assets/paper-ink/manifest.json`; the full Lucide/Feather notice is retained in
+`src/assets/paper-ink/LUCIDE-LICENSE.txt`, in addition to the browser build notices.
+These are intentional licensed assets, not a copied dependency installation.
+
+Forest photographs use the [Unsplash license](https://unsplash.com/license).
+Patrick Hendry's snowy pines photo and the moss image have source records beside
+the files in `src/assets/textures/forest-snow-pines-source.md` and
+`forest-moss-source.md`. They retain their own license rather than the source-code
+AGPL. The generated oak desktop has its creation record in
+`src/assets/textures/Cheese/old-oak-desk-v1.md`. No font binaries are shipped.
 
 From the included source root with Node.js 22 and npm, run `npm ci --include=dev`, then `npm run build`. The Vite notice generator fails when a bundled package has no recognized license text; review new packages rather than bypassing the failure. `npx tsx scripts/build-release.ts` assembles the release and requires generated notices. Both the Windows build script and GitHub workflow use this assembler.
 

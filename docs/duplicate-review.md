@@ -1,0 +1,13 @@
+# Duplicate review in the Library Manager
+
+Inbox and Library entries become review candidates through matching titles, compatible naming variants, identifiers, or matching file counts and sizes. Matching handles collection/order prefixes, format annotations, series suffixes, punctuation, and author-list differences. Distinct numbered books and generic chapter/disc labels are protected from broad title matching. Author, narrator, runtime, chapter count, series, and edition explain each candidate. A matching title never establishes that two recordings contain the same audio; a different narrator remains a book match.
+
+Open **Potential Duplicates** from either Inbox or Library. **Compare** reads technical details on demand. It checks SHA-256 hashes when source files have compatible counts and sizes. For single-file recordings with similar runtimes and compatible narrator metadata, it can compare sampled audio activity across formats. A strong activity match is a suggestion, not proof of identity or quality. File hashes and sampled results are cached against the source path, size, and modification time.
+
+The duplicate count is checked even while the panel is closed. Loading and failed checks have explicit states; a failed check does not mean zero matches. Previous/Next controls page through candidates. Detection is bounded to 2,000 pairs per check, shared across title groups so one common title does not consume the entire list.
+
+Discovery keeps standalone M4Bs separate even when they share album/series tags or a collection-level metadata sidecar. Consistent multipart names and matching named disc folders can identify one book. Refresh replaces untouched automatic disc entries with a complete book entry while retaining the old records; explicit membership, saved drafts, and processed work remain protected. Scans use bounded concurrent file/header reads and reuse unchanged observations; hashing and audio comparison remain on demand.
+
+**Merge under A/B** groups existing records into one Library card. Each source, export, sidecar, and project record stays at its current physical path. **Keep Entry A/B**, **Keep Both**, **Different Recording / Edition**, and **Ignore Match** save a review choice without deleting audio. Reviewed choices can be reopened. Format badges show the formats currently referenced by the grouped records.
+
+Current limits: Merge does not reorganize folders, choose a superior encode, delete files, or compare multipart audio against a single-file encode by acoustic fingerprint. Existing explicit Inbox finalization and Library copy actions still govern physical placement. Do not point automated cleanup at alternate representations on the assumption that a merge copied them.

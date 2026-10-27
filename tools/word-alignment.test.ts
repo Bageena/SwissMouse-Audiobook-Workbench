@@ -6,7 +6,29 @@ import type { NormalizedSegment } from './transcription-engine';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { transformSync } from 'esbuild';
-import { playbackTranscriptWindow, revealTranscriptWord } from '../src/utils/wordAlignment';
+import { buildTranscriptSearchIndex, searchTranscriptWords, playbackTranscriptWindow, revealTranscriptWord } from '../src/utils/wordAlignment';
+
+test('transcript search matches multiword phrases across saved words and punctuation with exact indexes', () => {
+  const words = buildTranscriptWords([{ words: ['Side', 'two.', 'The', 'giant', 'said,', '“Good', 'morning!”', 'Side', 'two.']
+    .map((word, index) => ({ word, start: index + 0.123, end: index + 0.7 })) }]);
+  const index = buildTranscriptSearchIndex(words);
+  assert.deepEqual(searchTranscriptWords(index, ' SIDE   TWO ').map(entry => entry.transcriptWordIndex), [0, 1, 7, 8]);
+  assert.deepEqual(searchTranscriptWords(index, 'said good morning').map(entry => entry.transcriptWordIndex), [4, 5, 6]);
+  const results = searchTranscriptWords(index, 'morning');
+  assert.equal(results[0].word, words[6]);
+  assert.equal(results[0].word.startSeconds, 6.123);
+  assert.equal(searchTranscriptWords(index, '').length, words.length);
+  assert.equal(searchTranscriptWords(index, '!!!').length, 0);
+  assert.equal(searchTranscriptWords(index, 'side three').length, 0);
+});
+
+test('phrase search handles split hyphens, apostrophes, overlapping matches and original page boundaries', () => {
+  const words = Array.from({ length: 1205 }, (_, i) => ({ word: 'narration', start: '', startSeconds: i, endSeconds: i + 0.5 }));
+  ['Frob', '-scottle', 'isn’t', 'a', 'a', 'a'].forEach((word, i) => { words[1198 + i].word = word; });
+  const index = buildTranscriptSearchIndex(words);
+  assert.deepEqual(searchTranscriptWords(index, "frob scottle isn't").map(entry => entry.transcriptWordIndex), [1198, 1199, 1200]);
+  assert.deepEqual(searchTranscriptWords(index, 'a a').map(entry => entry.transcriptWordIndex), [1201, 1202, 1203]);
+});
 
 test('transcript context follows a changed chapter timestamp', () => {
   const words = [
@@ -54,7 +76,7 @@ function spokenHeading(title: string, mismatchedText = false): NormalizedSegment
 }
 
 for (const title of ['Chapter Twelve', 'Introduction', 'Foreword', 'Preface', 'Prologue', 'Epilogue',
-  'Afterword', 'Part Two', 'Book I', 'Section One', 'Conclusion', 'Interlude', 'Prelude', 'Coda',
+  'Afterword', 'Part Two', 'Book I', 'Section One', 'Side Two', 'Side 3', 'Conclusion', 'Interlude', 'Prelude', 'Coda',
   'Appendix', 'Appendices', 'Notes', 'Acknowledgments', 'Acknowledgements']) {
   test(`${title} uses its first word timestamp even when segment text differs`, () => {
     for (const mismatch of [false, true]) {

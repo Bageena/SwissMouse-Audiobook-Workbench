@@ -1,40 +1,37 @@
+import { createPortal } from 'react-dom';
+import { MetadataMemberships } from './MetadataMemberships';
+import { extendedMetadata } from '../utils/extendedMetadata';
+import { ResizableRegion } from './ResizableRegion';
+import { DesktopWindow } from './DesktopWorkspace';
+import { AdaptiveButton } from './AdaptiveButton';
+import { CoverFrame } from './CoverFrame';
+import { ResizableColumns } from './ResizableColumns';
+import { X, ChevronDown, ChevronRight } from 'lucide-react';
 import React, { useState, useEffect, useRef } from 'react';
 import { AudiobookJob, AudiobookMetadata, CoverArtInfo } from '../types';
 import { CoverGenerator } from './CoverGenerator';
-import { QUICK_ADD_CATEGORIES, alphabetical, quickAddCategory, selectedCategory } from '../utils/metadataQuickAdd';
-import { audiobookshelfMetadata } from '../utils/audiobookshelfMetadata';
+import { alphabetical, quickAddCategory, normalizeQuickTag, quickTagKey, type QuickAddTarget } from '../utils/metadataQuickAdd';
+import { metadataPeople } from '../utils/metadataPeople';
 import { planChapterExport } from '../utils/chapterExport';
-import {
-  Image,
-  Upload,
-  Link2,
-  FolderSearch,
-  CheckCircle2,
-  AlertCircle,
-  Save,
-  ArrowRight,
-  Sparkles,
-  Info,
-  Trash2,
-  BookOpen,
-  Mic,
-  User,
-  Library,
-  Tag,
-  Calendar,
-  Building,
-  Globe,
-  Hash,
-  FileText,
-  ShieldAlert,
-  HelpCircle,
-  RotateCcw,
-  Play,
-} from 'lucide-react';
+import { Image, Upload, Link2, FolderSearch, CheckCircle2, AlertCircle, Save, FileDown, ArrowRight, Sparkles, Info, Trash2, BookOpen, Mic, User, Library, Tag, Calendar, Globe, Hash, RotateCcw, Play, FilePenLine } from 'lucide-react';
 
 interface Step3MetadataProps {
+  actionHost?: HTMLElement | null;
+  quickTags: string[];
+  onAddQuickTag: (tag: string) => Promise<void>;
+  mode?: 'import' | 'review' | 'file-review';
+  onImportAction?: (metadata: AudiobookMetadata, process: boolean, writeSource: boolean) => Promise<void>;
+  onCancelImport?: () => Promise<void>;
+  onFinishFileReview?: (metadata: AudiobookMetadata) => Promise<void>;
+  onOrganizeLibrary?: (metadata: AudiobookMetadata) => Promise<string>;
   job: AudiobookJob;
   onSaveMetadata: (metadata: AudiobookMetadata) => Promise<void>;
+  onWriteAudioMetadata?: (metadata: AudiobookMetadata) => Promise<string>;
+  onUpdateJson: (metadata: AudiobookMetadata) => Promise<string[]>;
+  onMoveExportFolder: (metadata: AudiobookMetadata) => Promise<string>;
+  onPersistDraft: (jobId: string, metadata: AudiobookMetadata) => Promise<void>;
+  draftMetadata?: AudiobookMetadata;
+  onDraftChange?: (jobId: string, metadata: AudiobookMetadata) => void;
   onNextStep: () => void;
   onRerunMetadata?: () => Promise<void>;
   isRerunning?: boolean;
@@ -51,16 +48,29 @@ const COMMON_LANGUAGES = [
 ];
 
 export const Step3Metadata: React.FC<Step3MetadataProps> = ({
+  actionHost,
+  quickTags,
+  onAddQuickTag,
+  mode = 'review',
+  onImportAction,
+  onCancelImport,
+  onFinishFileReview,
+  onOrganizeLibrary,
   job,
   onSaveMetadata,
+  onUpdateJson,
+  onWriteAudioMetadata,
+  onPersistDraft,
+  draftMetadata,
+  onDraftChange,
   onNextStep,
   onRerunMetadata,
   isRerunning = false,
 }) => {
   // Initialize state from existing job metadata or fallback to job fields
   const [formData, setFormData] = useState<AudiobookMetadata>(() => {
-    if (job.metadataDraft || job.metadata) {
-      return { ...(job.metadataDraft || job.metadata)! };
+    if (draftMetadata || job.metadataDraft || job.metadata) {
+      return { ...(draftMetadata || job.metadataDraft || job.metadata)! };
     }
     return {
       title: job.name || '',
@@ -89,13 +99,25 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
   const [scanMessage, setScanMessage] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
   const [isLoadingUrl, setIsLoadingUrl] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [writeSource, setWriteSource] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
+  const [jsonMessage, setJsonMessage] = useState('');
+  const [folderMessage, setFolderMessage] = useState('');
   const [tagInput, setTagInput] = useState<string>('');
+  const [tagSuggestionIndex, setTagSuggestionIndex] = useState(0);
+  const [showTagSuggestions, setShowTagSuggestions] = useState(false);
+  const [tagError, setTagError] = useState('');
   const [genreInput, setGenreInput] = useState<string>('');
+  const [quickAddTarget, setQuickAddTarget] = useState<QuickAddTarget>('genres');
   const [tagFilter, setTagFilter] = useState<string>('');
   const [authorInput, setAuthorInput] = useState<string>('');
   const [narratorInput, setNarratorInput] = useState<string>('');
-  const lastSavedDraft = useRef(JSON.stringify(formData));
+  const lastSavedDraft = useRef(JSON.stringify(job.metadataDraft || job.metadata || (draftMetadata ? null : formData)));
+  const latestFormData = useRef(formData);
+  latestFormData.current = formData;
+  useEffect(() => { onDraftChange?.(job.id, formData); }, [job.id, formData, onDraftChange]);
+  const [metadataExpanded, setMetadataExpanded] = useState(true);
+  const [coverSourceTab, setCoverSourceTab] = useState<'upload' | 'web'>('upload');
   const [showCoverGenerator, setShowCoverGenerator] = useState(false);
   const draftTimer = useRef<number>();
   const draftWrite = useRef<Promise<void>>(Promise.resolve());
@@ -107,10 +129,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
 
   const persistDraft = (metadata: AudiobookMetadata) => {
     const write = draftWrite.current.catch(() => {}).then(async () => {
-      const response = await fetch(`/api/jobs/${job.id}/metadata-draft`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ metadata }),
-      });
-      if (!response.ok) throw new Error('Could not save the cover draft. Please try again.');
+      await onPersistDraft(job.id, metadata);
       lastSavedDraft.current = JSON.stringify(metadata);
     });
     draftWrite.current = write;
@@ -128,8 +147,8 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
     setScanMessage({ type: 'success', text: 'Generated cover saved to your draft. Save book details to include it in your next export.' });
   };
 
-  const authorsList = formData.author ? formData.author.split(',').map((s) => s.trim()).filter(Boolean) : [];
-  const narratorsList = formData.narrator ? formData.narrator.split(',').map((s) => s.trim()).filter(Boolean) : [];
+  const authorsList = metadataPeople(formData, 'author');
+  const narratorsList = metadataPeople(formData, 'narrator');
 
   const handleAddAuthor = (name: string) => {
     const trimmed = name.trim();
@@ -137,14 +156,14 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
     const current = authorsList;
     if (!current.includes(trimmed)) {
       const updated = [...current, trimmed].join(', ');
-      setFormData((prev) => ({ ...prev, author: updated }));
+      setFormData((prev) => ({ ...prev, author: updated, authors: [...current, trimmed] }));
     }
     setAuthorInput('');
   };
 
   const handleRemoveAuthor = (name: string) => {
     const updated = authorsList.filter((a) => a !== name).join(', ');
-    setFormData((prev) => ({ ...prev, author: updated }));
+    setFormData((prev) => ({ ...prev, author: updated, authors: authorsList.filter(author => author !== name) }));
   };
 
   const handleAddNarrator = (name: string) => {
@@ -153,20 +172,20 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
     const current = narratorsList;
     if (!current.includes(trimmed)) {
       const updated = [...current, trimmed].join(', ');
-      setFormData((prev) => ({ ...prev, narrator: updated }));
+      setFormData((prev) => ({ ...prev, narrator: updated, narrators: [...current, trimmed] }));
     }
     setNarratorInput('');
   };
 
   const handleRemoveNarrator = (name: string) => {
     const updated = narratorsList.filter((n) => n !== name).join(', ');
-    setFormData((prev) => ({ ...prev, narrator: updated }));
+    setFormData((prev) => ({ ...prev, narrator: updated, narrators: narratorsList.filter(narrator => narrator !== name) }));
   };
 
   // Keep synced if job changes
   useEffect(() => {
     const storedMetadata = job.metadataDraft || job.metadata;
-    if (storedMetadata) {
+    if (storedMetadata && (!draftMetadata || JSON.stringify(draftMetadata) === JSON.stringify(storedMetadata)) && JSON.stringify(latestFormData.current) === lastSavedDraft.current) {
       setFormData({ ...storedMetadata });
       lastSavedDraft.current = JSON.stringify(storedMetadata);
     }
@@ -185,6 +204,14 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
     }, 750);
     return () => window.clearTimeout(draftTimer.current);
   }, [formData, job.id]);
+
+  // Switching screens unmounts this editor before the debounce can fire.
+  // Flush the latest value, while the parent keeps it available immediately.
+  useEffect(() => () => {
+    window.clearTimeout(draftTimer.current);
+    const latest = latestFormData.current;
+    if (JSON.stringify(latest) !== lastSavedDraft.current) void persistDraft(latest).catch(() => {});
+  }, [job.id]);
 
   // Scan local folder for cover image (cover.jpg, cover.png, etc.)
   const handleScanLocalFolder = async () => {
@@ -221,7 +248,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
 
   // Automatically check for local cover on mount if none is set
   useEffect(() => {
-    if (!formData.cover && job.id) {
+    if (formData.cover === undefined && job.id) {
       handleScanLocalFolder();
     }
   }, [job.id]);
@@ -246,11 +273,17 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
       const img = new window.Image();
       img.onload = () => {
         if (request !== coverReadRequest.current) return;
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+        const context = canvas.getContext('2d');
+        if (!context || canvas.width * canvas.height > 40000000) { setScanMessage({ type: 'error', text: 'Cover image is too large to export. Choose a smaller image.' }); return; }
+        context.drawImage(img, 0, 0);
+        const normalized = /^image\/(png|jpeg)$/.test(file.type) ? result : canvas.toDataURL('image/png');
         const newCover: CoverArtInfo = {
           source: 'upload',
-          url: result,
-          filename: file.name,
-          mimeType: file.type,
+          url: normalized,
+          filename: normalized === result ? file.name : file.name.replace(/\.[^.]+$/, '') + '.png',
+          mimeType: normalized === result ? file.type : 'image/png',
           width: img.naturalWidth,
           height: img.naturalHeight,
           sizeBytes: file.size,
@@ -323,19 +356,29 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
     img.src = trimmed;
   };
 
-  // Manual fields stay independent; quick add uses the first free genre slot.
+  // Manual fields and quick add use the field the user chose.
   const handleAddGenre = (genreToAdd: string) => {
     const trimmed = genreToAdd.trim();
     if (!trimmed) return;
-    setFormData(prev => selectedCategory(prev, trimmed) ? prev : { ...prev, genres: [...prev.genres, trimmed] });
+    setFormData(prev => quickAddCategory(prev, trimmed, 'genres'));
     setGenreInput('');
   };
 
+  const tagSuggestions = tagInput.trim()
+    ? quickTags.filter(tag => quickTagKey(tag).includes(quickTagKey(tagInput)) && !(formData.tags || []).some(selected => quickTagKey(selected) === quickTagKey(tag)))
+      .sort((a, b) => Number(!quickTagKey(a).startsWith(quickTagKey(tagInput))) - Number(!quickTagKey(b).startsWith(quickTagKey(tagInput))) || a.localeCompare(b)).slice(0, 8)
+    : [];
+
   const handleAddTag = (value: string) => {
-    const trimmed = value.trim();
+    const trimmed = normalizeQuickTag(value);
     if (!trimmed) return;
-    setFormData(prev => selectedCategory(prev, trimmed) ? prev : { ...prev, tags: alphabetical([...(prev.tags || []), trimmed]) });
+    setTagError('');
+    const existing = quickTags.find(tag => quickTagKey(tag) === quickTagKey(trimmed));
+    const display = existing || trimmed;
+    setFormData(prev => quickAddCategory(prev, display, 'tags'));
+    if (!existing) void onAddQuickTag(display).catch(error => setTagError(error instanceof Error ? error.message : 'Could not save Quick Tag.'));
     setTagInput('');
+    setShowTagSuggestions(false);
   };
 
   const handleRemoveGenre = (genreToRemove: string) => {
@@ -351,11 +394,11 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
     let chapters = job.chapters;
     try { chapters = planChapterExport(job.chapters, job.totalDurationSeconds).chapters as typeof job.chapters; }
     catch { chapters = []; }
-    const blob = new Blob([JSON.stringify(audiobookshelfMetadata(formData, chapters), null, 2) + '\n'], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(extendedMetadata(formData, chapters, job.id), null, 2) + '\n'], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'metadata.json';
+    link.download = 'exmetadata.json';
     document.body.append(link);
     link.click();
     link.remove();
@@ -381,68 +424,159 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
     }
   };
 
-  return (
-    <div className="space-y-6">
-      {showCoverGenerator && <CoverGenerator metadata={formData} onCancel={() => setShowCoverGenerator(false)} onUse={handleGeneratedCover} />}
-      {/* Step Header Banner */}
-      <div className={`relative bg-white rounded-xl p-5 pb-12 border shadow-xs ${job.pipelineSteps?.metadata_processing?.status === 'stale' ? 'border-orange-300' : job.pipelineSteps?.metadata_processing?.status === 'failed' ? 'border-red-300' : 'border-stone-200/80'}`}>
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center space-x-2">
-              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold">
-                3
-              </span>
-              <h2 className="text-lg font-bold text-stone-900">
-                Add book details and cover art
-              </h2>
-            </div>
-            <p className="text-sm text-stone-600 mt-1 max-w-3xl">
-              Add the information players and library apps use to identify your book. Fields are optional unless marked required. SwissMouse uses common Audiobookshelf-compatible tags and checks them after export.
-            </p>
-          </div>
+  const handleImportAction = async (process: boolean) => {
+    if (!onImportAction) return;
+    setIsSaving(true);
+    const savedBeforeAction = lastSavedDraft.current;
+    try {
+      window.clearTimeout(draftTimer.current);
+      await draftWrite.current.catch(() => {});
+      lastSavedDraft.current = JSON.stringify(formData);
+      await onImportAction(formData, process, writeSource);
+    } catch (error: any) { lastSavedDraft.current = savedBeforeAction; alert(error.message || 'Could not finish import.'); }
+    finally { setIsSaving(false); }
+  };
 
-          <div className="flex items-center space-x-3">
-            <button
+  const handleWriteAudioMetadata = async () => {
+    if (!onWriteAudioMetadata) return;
+    setIsSaving(true); setFolderMessage('');
+    try {
+      window.clearTimeout(draftTimer.current);
+      await draftWrite.current.catch(() => {});
+      setFolderMessage(await onWriteAudioMetadata(formData));
+      lastSavedDraft.current = JSON.stringify(formData);
+    } catch (error) { setFolderMessage(error instanceof Error ? error.message : 'Could not write metadata to audio.'); }
+    finally { setIsSaving(false); }
+  };
+
+  const handleUpdateJson = async () => {
+    setIsSaving(true);
+    setJsonMessage('');
+    try {
+      window.clearTimeout(draftTimer.current);
+      await draftWrite.current.catch(() => {});
+      const paths = await onUpdateJson(formData);
+      lastSavedDraft.current = JSON.stringify(formData);
+      setJsonMessage(`Updated exmetadata.json beside ${paths.length} audiobook folder${paths.length === 1 ? '' : 's'}.`);
+    } catch (error: any) { setJsonMessage(error.message || 'Could not update exmetadata.json.'); }
+    finally { setIsSaving(false); }
+  };
+
+  const handleFileReviewAction = async (organize: boolean) => {
+    setIsSaving(true);
+    setFolderMessage('');
+    try {
+      window.clearTimeout(draftTimer.current);
+      await draftWrite.current.catch(() => {});
+      if (organize) setFolderMessage(await onOrganizeLibrary?.(formData) || 'Library folder is already organized.');
+      else await onFinishFileReview?.(formData);
+      lastSavedDraft.current = JSON.stringify(formData);
+    } catch (error: any) { setFolderMessage(error.message || 'Could not save the project.'); }
+    finally { setIsSaving(false); }
+  };
+
+  const unifiedLayout = mode !== 'import';
+
+  const nextAction = mode === 'review' ? <div className="flex justify-end">
+    <button id="btn-proceed-to-step4" type="button" onClick={onNextStep}
+      className="paper-action-dark inline-flex items-center gap-2 rounded-lg bg-amber-800 px-3 py-2 text-xs font-semibold text-white shadow-sm">
+      Continue to export<ArrowRight className="h-4 w-4" aria-hidden="true" />
+    </button>
+  </div> : null;
+
+  return (<>
+    {nextAction && (actionHost ? createPortal(nextAction, actionHost) : nextAction)}
+    <DesktopWindow id="metadata" title="Metadata" kind="group"><div data-collapsed={unifiedLayout && !metadataExpanded} className={unifiedLayout ? 'metadata-unified workspace-panel processing-panel processing-metadata min-w-0 rounded-xl border border-stone-200 bg-white shadow-sm' : 'processing-stage processing-metadata space-y-6'}>
+      {showCoverGenerator && <CoverGenerator metadata={formData} onCancel={() => setShowCoverGenerator(false)} onUse={handleGeneratedCover} />}
+      {unifiedLayout && <header className={`workspace-panel-header workspace-toolbar flex flex-wrap items-center justify-between gap-3 px-4 py-3 ${metadataExpanded ? 'border-b border-stone-200' : 'workspace-panel-header-collapsed'}`}><button type="button" aria-expanded={metadataExpanded} aria-controls="metadata-fields" onClick={() => setMetadataExpanded(value => !value)} className="workspace-header-toggle flex items-center gap-3"><h2 className={`workspace-panel-title text-sm font-bold ${metadataExpanded ? '' : 'workspace-panel-title-flat'}`}>Metadata</h2></button>{metadataExpanded && <div className="processing-actions adaptive-actions ml-auto flex flex-wrap items-center gap-3">
+            <AdaptiveButton
               type="button"
               id="btn-save-metadata"
+              icon={<Save />} label={isSaving ? 'Saving Metadata...' : 'Save book details'} slotClassName="metadata-icon-action" tone="primary"
               onClick={() => handleSubmit()}
               disabled={isSaving}
               className="flex items-center space-x-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-amber-600 hover:bg-amber-500 shadow-sm transition-all cursor-pointer active:scale-98 disabled:bg-stone-400"
-            >
-              {isSaving ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Saving Metadata...</span>
-                </>
-              ) : (
-                <>
-                  <Save className="w-4 h-4" />
-                  <span>Save book details</span>
-                </>
-              )}
-            </button>
+            />
 
-            <button
+
+            <AdaptiveButton
+              icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2H5a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h5M13 2l6 6v2M13 2v6h6" /><path d="M13 12h7l2 2v8H12V12Z" /><path d="M15 12v4h4v-4M15 22v-4h4v4" /></svg>}
+              label="Rebuild exmetadata.json"
+              description="Rebuild exmetadata.json from these book details. Existing metadata.json is preserved when Audiobookshelf compatibility is off."
+              slotClassName="metadata-icon-action"
+              onClick={() => void handleUpdateJson()}
+              disabled={isSaving || !((job.exports || []).some(item => item.status === 'success') || job.outputM4b?.fullPath || Object.keys(job.exportedFiles || {}).length || job.parts.length)}
+            />
+
+
+
+
+            {onWriteAudioMetadata && <AdaptiveButton type="button" icon={<FilePenLine />} label="Write metadata to file"
+              description="Save these details and write tags and selected artwork to the audio files without re-encoding."
+              slotClassName="metadata-icon-action" disabled={isSaving || !formData.title.trim() || !job.parts.length}
+              onClick={() => void handleWriteAudioMetadata()} />}
+
+            <AdaptiveButton
+              icon={<FileDown />}
+              label="Download exmetadata.json"
+              description="SwissMouse saves exmetadata.json beside the audiobook. Download an additional copy here."
+              slotClassName="metadata-icon-action"
+              onClick={downloadAudiobookshelfMetadata}
+            />
+
+              <AdaptiveButton
+                type="button"
+                icon={<RotateCcw />} label="Discard unsaved changes" slotClassName="metadata-icon-action"
+                onClick={() => {
+                  if (job.metadata) setFormData({ ...job.metadata });
+                }}
+                className="px-4 py-2 text-xs font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-200/60 rounded-lg transition cursor-pointer"
+              />
+
+
+          </div>}<button type="button" aria-label={metadataExpanded ? 'Collapse metadata' : 'Expand metadata'} aria-expanded={metadataExpanded} aria-controls="metadata-fields" onClick={() => setMetadataExpanded(value => !value)} className={`workspace-header-toggle inline-flex h-8 w-8 shrink-0 items-center justify-center ${metadataExpanded ? '' : 'ml-auto'}`}>{metadataExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button></header>}
+      {unifiedLayout && <div className="px-4">{saveSuccess && <p role="status" className="py-2 text-xs text-emerald-800">Book details saved.</p>}{jsonMessage && <p role="status" className="py-2 text-xs">{jsonMessage}</p>}{folderMessage && <p role="status" className="py-2 text-xs">{folderMessage}</p>}</div>}
+      {!unifiedLayout && <>
+      <div className="relative pb-12">
+        <div className="flex justify-end">
+          {mode !== 'import' && <div className="processing-actions adaptive-actions flex flex-wrap items-center gap-3">
+            <AdaptiveButton
               type="button"
-              id="btn-proceed-to-step4"
-              onClick={onNextStep}
-              className="flex items-center space-x-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold bg-stone-900 hover:bg-stone-800 text-stone-100 transition-colors cursor-pointer"
-            >
-              <span>Choose export options</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
+              id="btn-save-metadata"
+              icon={<Save />} label={isSaving ? 'Saving Metadata...' : 'Save book details'} slotClassName="metadata-icon-action" tone="primary"
+              onClick={() => handleSubmit()}
+              disabled={isSaving}
+              className="flex items-center space-x-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-amber-600 hover:bg-amber-500 shadow-sm transition-all cursor-pointer active:scale-98 disabled:bg-stone-400"
+            />
+
+
+            <AdaptiveButton
+              icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2H5a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h5M13 2l6 6v2M13 2v6h6" /><path d="M13 12h7l2 2v8H12V12Z" /><path d="M15 12v4h4v-4M15 22v-4h4v4" /></svg>}
+              label="Rebuild exmetadata.json"
+              description="Rebuild exmetadata.json from these book details. Existing metadata.json is preserved when Audiobookshelf compatibility is off."
+              slotClassName="metadata-icon-action"
+              onClick={() => void handleUpdateJson()}
+              disabled={isSaving || !((job.exports || []).some(item => item.status === 'success') || job.outputM4b?.fullPath || Object.keys(job.exportedFiles || {}).length || job.parts.length)}
+            />
+
+
+
+
+
+          </div>}
         </div>
 
         {saveSuccess && (
           <div className="mt-3 p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center space-x-2 text-emerald-800 text-xs font-medium">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
             <span>
-              Book details saved. They will be included in your next export.
+              Book details saved. The SwissMouse exmetadata.json was updated, and the details will be included in the next export.
             </span>
           </div>
         )}
-        {onRerunMetadata && (
+        {jsonMessage && <p role="status" className="mt-3 text-xs text-stone-700">{jsonMessage}</p>}
+        {folderMessage && <p role="status" className="mt-3 text-xs text-stone-700">{folderMessage}</p>}
+        {['review'].includes(mode) && onRerunMetadata && (
           <button
             type="button"
             onClick={onRerunMetadata}
@@ -456,26 +590,24 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
         )}
       </div>
 
+      </>}
       {/* Main Grid: Cover Art Left, Metadata Fields Right */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column (5 Cols): Cover Art Management */}
-        <div className="lg:col-span-5 space-y-5">
-          <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs space-y-5">
-            <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+      <form id="metadata-fields" hidden={unifiedLayout && !metadataExpanded} onSubmit={handleSubmit} className={`space-y-4 ${unifiedLayout ? 'p-4' : ''}`}>
+      <ResizableColumns storageKey="metadata" initialRatio={42} label="Resize cover art and metadata fields">
+        {/* Left Column: Cover art and publication details */}
+        <div className="metadata-cover-column min-w-0 space-y-5">
+          <DesktopWindow id="metadata-cover" title="Cover art" homeWindow="metadata"><ResizableRegion enabled={unifiedLayout} storageKey="metadata-cover" label="cover art"><div className={unifiedLayout ? 'metadata-section cover-controls p-3 space-y-5' : 'metadata-section cover-controls bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs space-y-5'}>
+            <div className="workspace-panel-header flex items-center justify-between border-b border-stone-100 pb-3">
               <div className="flex items-center space-x-2">
                 <Image className="w-4 h-4 text-amber-700" />
-                <h3 className="font-bold text-sm text-stone-900">Cover art</h3>
+                <h3 className="workspace-panel-title font-bold text-sm text-stone-900">Cover art</h3>
               </div>
-              {formData.cover && (
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
-                  {formData.cover.source} source
-                </span>
-              )}
             </div>
 
             {/* Visual Cover Preview Display */}
             <div className="flex flex-col items-center">
-              <div className="relative w-56 h-56 rounded-lg overflow-hidden border-2 border-stone-200 bg-stone-100 shadow-md group">
+              <CoverFrame>
+              <div className="cover-art-frame-content relative w-56 h-56 overflow-hidden group">
                 {formData.cover?.url ? (
                   <img
                     src={formData.cover.url}
@@ -506,6 +638,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                   </button>
                 )}
               </div>
+              </CoverFrame>
 
               {formData.cover && (
                 <div className="mt-3 text-center space-y-0.5">
@@ -537,10 +670,6 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
               )}
             </div>
 
-            <button type="button" onClick={() => setShowCoverGenerator(true)} className="flex w-full items-center justify-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-800 hover:bg-amber-100">
-              <Sparkles className="h-4 w-4" />Generate Cover
-            </button>
-
             {/* Notification messages */}
             {scanMessage && (
               <div
@@ -564,74 +693,37 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
             )}
 
             {/* Cover Sources */}
-            <div className="space-y-4 pt-2 border-t border-stone-100">
-              {/* Option 1: Local Folder Detection */}
-              <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-1.5 text-xs font-bold text-stone-800">
-                    <FolderSearch className="w-3.5 h-3.5 text-amber-700" />
-                    <span>Find a cover in the source folder</span>
-                  </div>
-                  <span className="text-[10px] text-stone-400 font-mono">
-                    cover.jpg / cover.png
-                  </span>
-                </div>
-                <p className="text-[11px] text-stone-500">
-                  Search the selected audio folder for an image named{' '}
-                  <code className="font-mono text-stone-700 bg-stone-200/70 px-1 py-0.5 rounded">
-                    cover.*
-                  </code>{' '}
-                  in the audiobook source folder.
-                </p>
+            <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 space-y-3">
+              <div className="flex flex-wrap items-center gap-2 border-b border-stone-200 pb-2">
+              <div role="tablist" aria-label="Cover image source" className="flex flex-wrap gap-2">
+                {(['upload', 'web'] as const).map((tab, index) => <button key={tab} type="button" role="tab" id={`cover-source-tab-${tab}`} aria-controls={`cover-source-panel-${tab}`} aria-selected={coverSourceTab === tab} tabIndex={coverSourceTab === tab ? 0 : -1}
+                  onClick={() => setCoverSourceTab(tab)}
+                  onKeyDown={event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? 1 : 1 - index; setCoverSourceTab(next ? 'web' : 'upload'); (event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next])?.focus(); } }}
+                  aria-label={tab === 'upload' ? 'Browse or drop cover' : 'Web link'} title={tab === 'upload' ? 'Browse or drop cover' : 'Web link'} className="cover-action inline-flex items-center gap-1.5 rounded border border-stone-300 px-3 py-2 text-xs font-semibold" aria-pressed={coverSourceTab === tab}>
+                  {tab === 'upload' ? <Upload className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />}<span className="cover-action-label">{tab === 'upload' ? 'Browse or drop cover' : 'Web link'}</span>
+                </button>)}
+              </div>
                 <button
                   type="button"
                   id="btn-scan-local-cover"
+                  aria-label={isScanningLocal ? 'Looking for cover art...' : 'Scan folder'}
+                  title="Search the selected audio folder for an image named cover.* in the audiobook source folder."
                   onClick={handleScanLocalFolder}
                   disabled={isScanningLocal}
-                  className="w-full flex items-center justify-center space-x-1.5 py-1.5 px-3 rounded bg-white border border-stone-300 hover:bg-stone-100 text-stone-700 text-xs font-semibold shadow-2xs transition cursor-pointer disabled:opacity-60"
+                  className="cover-action inline-flex items-center justify-center space-x-1.5 py-1.5 px-3 rounded bg-white border border-stone-300 hover:bg-stone-100 text-stone-700 text-xs font-semibold shadow-2xs transition cursor-pointer disabled:opacity-60"
                 >
                   <FolderSearch className={`w-3.5 h-3.5 ${isScanningLocal ? 'animate-spin' : ''}`} />
-                  <span>
-                    {isScanningLocal ? 'Looking for cover art...' : 'Find cover art in folder'}
+                  <span className="cover-action-label">
+                    {isScanningLocal ? 'Looking for cover art...' : 'Scan folder'}
                   </span>
                 </button>
-              </div>
 
-              {/* Option 2: Web Link */}
-              <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 space-y-2">
-                <div className="flex items-center space-x-1.5 text-xs font-bold text-stone-800">
-                  <Link2 className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Use an image web link</span>
-                </div>
-                <div className="flex space-x-2">
-                  <input
-                    type="url"
-                    id="input-cover-weblink"
-                    value={coverUrlInput}
-                    onChange={(e) => setCoverUrlInput(e.target.value)}
-                    placeholder="https://example.com/cover.jpg"
-                    className="flex-1 bg-white border border-stone-300 rounded px-2.5 py-1.5 text-xs text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleFetchCoverUrl}
-                    disabled={isLoadingUrl || !coverUrlInput.trim()}
-                    className="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 text-white rounded text-xs font-semibold transition cursor-pointer disabled:bg-stone-300"
-                  >
-                    {isLoadingUrl ? 'Loading...' : 'Use image'}
-                  </button>
-                </div>
-                <p className="text-[10px] text-stone-400">
-                  Paste a direct image link, for example from Audible, Goodreads, or Open Library.
-                </p>
-              </div>
+            <button type="button" onClick={() => setShowCoverGenerator(true)} aria-label="Generate Cover" title="Generate Cover" className="cover-action inline-flex items-center justify-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100">
+              <Sparkles className="h-4 w-4" /><span className="cover-action-label">Generate Cover</span>
+            </button>
 
-              {/* Option 3: File Upload */}
-              <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 space-y-2">
-                <div className="flex items-center space-x-1.5 text-xs font-bold text-stone-800">
-                  <Upload className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Upload a cover image</span>
-                </div>
+              </div>
+              <div role="tabpanel" id="cover-source-panel-upload" aria-labelledby="cover-source-tab-upload" hidden={coverSourceTab !== 'upload'}>
                 <label
                   onDragEnter={event => { event.preventDefault(); dragDepth.current++; setIsDraggingCover(true); }}
                   onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }}
@@ -646,7 +738,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                   <span className="text-[10px] text-stone-400 mt-0.5">
                     JPG, PNG, WEBP (Minimum recommended 600×600)
                   </span>
-                  <input
+                  <input form="metadata-fields"
                     type="file"
                     id="input-cover-upload"
                     accept="image/jpeg,image/png,image/webp"
@@ -655,23 +747,225 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                   />
                 </label>
               </div>
+              <div role="tabpanel" id="cover-source-panel-web" aria-labelledby="cover-source-tab-web" hidden={coverSourceTab !== 'web'}>
+                <div className="flex space-x-2">
+                  <input form="metadata-fields"
+                    type="url"
+                    id="input-cover-weblink"
+                    aria-label="Cover image web link"
+                    value={coverUrlInput}
+                    onChange={(e) => setCoverUrlInput(e.target.value)}
+                    placeholder="https://example.com/cover.jpg"
+                    className="min-w-0 flex-1 bg-white border border-stone-300 rounded px-2.5 py-1.5 text-xs text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleFetchCoverUrl}
+                    disabled={isLoadingUrl || !coverUrlInput.trim()}
+                    className="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 text-white rounded text-xs font-semibold transition cursor-pointer disabled:bg-stone-300"
+                  >
+                    {isLoadingUrl ? 'Loading...' : 'Use image'}
+                  </button>
+                </div>
+                <p className="text-[10px] text-stone-400">
+                  Paste a direct link to an image file.
+                </p>
+
+              </div>
+            </div>
+          </div></ResizableRegion></DesktopWindow>
+
+          <div className="metadata-publication-layout">
+        <DesktopWindow id="metadata-publication" variant="compact" title="Publication" homeWindow="metadata"><div className="metadata-section p-3 space-y-4">
+          <header className="workspace-panel-header"><h4 className="workspace-panel-title text-xs font-bold text-stone-800">Publication</h4></header>
+          <div className="metadata-publication-fields grid grid-cols-1 gap-4">
+{/* Publisher */}
+                <div>
+                  <label
+                    htmlFor="meta-publisher"
+                    className="block text-xs font-bold text-stone-700 mb-1"
+                  >
+                    Publisher
+                  </label>
+                  <input form="metadata-fields"
+                    id="meta-publisher"
+                    type="text"
+                    value={formData.publisher || ''}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, publisher: e.target.value }))
+                    }
+                    placeholder="e.g. Macmillan Audio"
+                    className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+
+                {/* Publication Year */}
+                <div>
+                  <label
+                    htmlFor="meta-year"
+                    className="flex items-center space-x-1.5 text-xs font-bold text-stone-700 mb-1"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-stone-400" />
+                    <span>Publication Year</span>
+                  </label>
+                  <input form="metadata-fields"
+                    id="meta-year"
+                    type="text"
+                    value={formData.publishedYear || ''}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        publishedYear: e.target.value,
+                      }))
+                    }
+                    placeholder="e.g. 1965"
+                    className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+
+                {/* Language */}
+                <div>
+                  <label
+                    htmlFor="meta-language"
+                    className="flex items-center space-x-1.5 text-xs font-bold text-stone-700 mb-1"
+                  >
+                    <Globe className="w-3.5 h-3.5 text-stone-400" />
+                    <span>Language</span>
+                  </label>
+                  <select form="metadata-fields"
+                    id="meta-language"
+                    value={formData.language}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, language: e.target.value }))
+                    }
+                    className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  >
+                    {COMMON_LANGUAGES.map((lang) => (
+                      <option key={lang.code} value={lang.code}>
+                        {lang.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                          </div>
+              <div className="pt-2 border-t border-stone-100 flex flex-col sm:flex-row sm:items-center gap-4">
+                <div className="flex flex-col items-start gap-2">
+                  <span className="text-xs font-bold text-stone-700">Work Edition:</span>
+                  <label className="flex items-center space-x-2 text-xs text-stone-700 cursor-pointer">
+                    <input form="metadata-fields"
+                      type="radio"
+                      name="abridged"
+                      checked={!formData.abridged}
+                      onChange={() =>
+                        setFormData((prev) => ({ ...prev, abridged: false }))
+                      }
+                      className="text-amber-600 focus:ring-amber-500"
+                    />
+                    <span className="font-medium">Unabridged</span>
+                  </label>
+                  <label className="flex items-center space-x-2 text-xs text-stone-700 cursor-pointer">
+                    <input form="metadata-fields"
+                      type="radio"
+                      name="abridged"
+                      checked={formData.abridged}
+                      onChange={() =>
+                        setFormData((prev) => ({ ...prev, abridged: true }))
+                      }
+                      className="text-amber-600 focus:ring-amber-500"
+                    />
+                    <span>Abridged</span>
+                  </label>
+                </div>
+
+
+              </div>
+{/* Copyright info */}
+                <div>
+                  <label
+                    htmlFor="meta-copyright"
+                    className="block text-xs font-bold text-stone-700 mb-1"
+                  >
+                    Copyright Notice
+                  </label>
+                  <input form="metadata-fields"
+                    id="meta-copyright"
+                    type="text"
+                    value={formData.copyright || ''}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, copyright: e.target.value }))
+                    }
+                    placeholder="e.g. © 1965 Frank Herbert"
+                    className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+        </div></DesktopWindow>
+            <div className="metadata-identifiers-column min-w-0">
+        <DesktopWindow id="metadata-identifiers" variant="compact" title="Identifiers" homeWindow="metadata"><div className="metadata-section p-3 space-y-4">
+          <header className="workspace-panel-header"><h4 className="workspace-panel-title text-xs font-bold text-stone-800">Identifiers</h4></header>
+          <div className="metadata-identifiers-fields grid grid-cols-1 gap-3">
+{/* ASIN */}
+                <div>
+                  <label
+                    htmlFor="meta-asin"
+                    className="flex items-center space-x-1.5 text-xs font-bold text-stone-700 mb-1"
+                  >
+                    <Hash className="w-3.5 h-3.5 text-stone-400" />
+                    <span>ASIN</span>
+                  </label>
+                  <input form="metadata-fields"
+                    id="meta-asin"
+                    type="text"
+                    value={formData.asin || ''}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, asin: e.target.value }))
+                    }
+                    placeholder="e.g. B000R34YKC"
+                    className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs font-mono text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+
+                {/* ISBN */}
+                <div>
+                  <label
+                    htmlFor="meta-isbn"
+                    className="flex items-center space-x-1.5 text-xs font-bold text-stone-700 mb-1"
+                  >
+                    <Hash className="w-3.5 h-3.5 text-stone-400" />
+                    <span>ISBN</span>
+                  </label>
+                  <input form="metadata-fields"
+                    id="meta-isbn"
+                    type="text"
+                    value={formData.isbn || ''}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, isbn: e.target.value }))
+                    }
+                    placeholder="e.g. 9780441013593"
+                    className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs font-mono text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+
+                          </div>
+        </div></DesktopWindow>
+
             </div>
           </div>
         </div>
 
         {/* Right Column (7 Cols): Standard Audiobookshelf Metadata Fields */}
-        <div className="lg:col-span-7 space-y-5">
-          <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="min-w-0 space-y-5">
+          <div className="space-y-5">
             {/* Section 1: Book & Author Identity */}
-            <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs space-y-4">
-              <div className="flex items-center space-x-2 border-b border-stone-100 pb-3">
+            <DesktopWindow id="metadata-identity" title="Book title and contributors" homeWindow="metadata"><ResizableRegion enabled={unifiedLayout} storageKey="metadata-identity" label="book title and contributors"><div className={unifiedLayout ? 'metadata-section p-3 space-y-4' : 'metadata-section bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs space-y-4'}>
+              <div className="workspace-panel-header flex items-center space-x-2 border-b border-stone-100 pb-3">
                 <BookOpen className="w-4 h-4 text-amber-700" />
-                <h3 className="font-bold text-sm text-stone-900">
+                <h3 className="workspace-panel-title font-bold text-sm text-stone-900">
                   Book title and contributors
                 </h3>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="metadata-field-grid grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Title */}
                 <div className="md:col-span-2">
                   <label
@@ -680,7 +974,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                   >
                     Title <span className="text-rose-500">*</span>
                   </label>
-                  <input
+                  <input form="metadata-fields"
                     id="meta-title"
                     type="text"
                     required
@@ -701,7 +995,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                   >
                     Subtitle
                   </label>
-                  <input
+                  <input form="metadata-fields"
                     id="meta-subtitle"
                     type="text"
                     value={formData.subtitle || ''}
@@ -736,25 +1030,14 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                           onClick={() => handleRemoveAuthor(authorName)}
                           className="text-amber-700 hover:text-rose-700 cursor-pointer ml-0.5 text-xs font-bold"
                           title={`Remove ${authorName}`}
-                        >
-                          ×
-                        </button>
+                        ><X className="h-4 w-4" aria-hidden="true" /></button>
                       </span>
                     ))}
-                    <input
+                    <input form="metadata-fields"
                       id="meta-author"
                       type="text"
                       value={authorInput}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val.includes(',')) {
-                          const parts = val.split(',');
-                          parts.slice(0, -1).forEach((part) => handleAddAuthor(part));
-                          setAuthorInput(parts[parts.length - 1]);
-                        } else {
-                          setAuthorInput(val);
-                        }
-                      }}
+                      onChange={(e) => setAuthorInput(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
@@ -768,7 +1051,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                           handleAddAuthor(authorInput);
                         }
                       }}
-                      placeholder={authorsList.length === 0 ? "Type author name and press Enter or comma..." : "Add another author..."}
+                      placeholder={authorsList.length === 0 ? "Type author name and press Enter..." : "Add another author..."}
                       className="flex-1 min-w-[140px] bg-transparent border-none text-xs text-stone-900 focus:outline-none placeholder:text-stone-400"
                     />
                   </div>
@@ -802,25 +1085,14 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                           onClick={() => handleRemoveNarrator(narratorName)}
                           className="text-amber-700 hover:text-rose-700 cursor-pointer ml-0.5 text-xs font-bold"
                           title={`Remove ${narratorName}`}
-                        >
-                          ×
-                        </button>
+                        ><X className="h-4 w-4" aria-hidden="true" /></button>
                       </span>
                     ))}
-                    <input
+                    <input form="metadata-fields"
                       id="meta-narrator"
                       type="text"
                       value={narratorInput}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val.includes(',')) {
-                          const parts = val.split(',');
-                          parts.slice(0, -1).forEach((part) => handleAddNarrator(part));
-                          setNarratorInput(parts[parts.length - 1]);
-                        } else {
-                          setNarratorInput(val);
-                        }
-                      }}
+                      onChange={(e) => setNarratorInput(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
@@ -834,29 +1106,29 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                           handleAddNarrator(narratorInput);
                         }
                       }}
-                      placeholder={narratorsList.length === 0 ? "Type narrator name and press Enter or comma..." : "Add another narrator..."}
+                      placeholder={narratorsList.length === 0 ? "Type narrator name and press Enter..." : "Add another narrator..."}
                       className="flex-1 min-w-[140px] bg-transparent border-none text-xs text-stone-900 focus:outline-none placeholder:text-stone-400"
                     />
                   </div>
 
                   <div className="pt-1 flex items-center text-[11px] text-stone-500">
-                    <span>💡 Tip: Type a name and press <kbd className="px-1 py-0.5 bg-stone-100 border border-stone-200 rounded text-[10px] font-mono font-semibold text-stone-700">Enter</kbd> or type a comma <code className="px-1 py-0.5 bg-stone-100 border border-stone-200 rounded text-[10px] font-mono text-stone-700">,</code> to add multiple authors or narrators.</span>
+                    <span>Type one name and press <kbd className="px-1 py-0.5 bg-stone-100 border border-stone-200 rounded text-[10px] font-mono font-semibold text-stone-700">Enter</kbd> to add it. Commas within a name are preserved.</span>
                   </div>
 
                 </div>
               </div>
-            </div>
+            </div></ResizableRegion></DesktopWindow>
 
             {/* Section 2: Series & Tagging */}
-            <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs space-y-4">
-              <div className="flex items-center space-x-2 border-b border-stone-100 pb-3">
+            <DesktopWindow id="metadata-taxonomy" title="Series & Taxonomy" homeWindow="metadata"><ResizableRegion enabled={unifiedLayout} storageKey="metadata-taxonomy" label="series and taxonomy"><div className={unifiedLayout ? 'metadata-section p-3 space-y-4' : 'metadata-section bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs space-y-4'}>
+              <div className="workspace-panel-header flex items-center space-x-2 border-b border-stone-100 pb-3">
                 <Library className="w-4 h-4 text-amber-700" />
-                <h3 className="font-bold text-sm text-stone-900">
+                <h3 className="workspace-panel-title font-bold text-sm text-stone-900">
                   Series & Taxonomy
                 </h3>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="metadata-field-grid grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Series Name */}
                 <div className="md:col-span-2">
                   <label
@@ -865,7 +1137,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                   >
                     Series Name
                   </label>
-                  <input
+                  <input form="metadata-fields"
                     id="meta-series"
                     type="text"
                     value={formData.series || ''}
@@ -885,7 +1157,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                   >
                     Volume / Part #
                   </label>
-                  <input
+                  <input form="metadata-fields"
                     id="meta-series-sequence"
                     type="text"
                     value={formData.seriesSequence || ''}
@@ -900,6 +1172,10 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                   />
                 </div>
 
+                <div className="md:col-span-3 space-y-4">
+                  <MetadataMemberships kind="collections" value={formData.collections} author={formData.author} authors={formData.authors} jobId={job.id} onChange={collections=>setFormData(previous=>({...previous,collections}))} />
+                  <MetadataMemberships kind="additionalSeries" value={formData.additionalSeries} author={formData.author} authors={formData.authors} jobId={job.id} onChange={additionalSeries=>setFormData(previous=>({...previous,additionalSeries}))} />
+                </div>
                 {/* Genres and Tags */}
                 <div className="md:col-span-3 space-y-3">
                   <div className="flex items-center justify-between">
@@ -907,13 +1183,14 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                       <Tag className="w-3.5 h-3.5 text-stone-400" />
                       <span>Genres and Tags</span>
                     </label>
-                    <button type="button" onClick={downloadAudiobookshelfMetadata} className="text-[11px] font-semibold text-amber-800 hover:text-amber-950">Download Audiobookshelf metadata.json</button>
                   </div>
-                  <p className="text-[11px] text-stone-500">Save this file beside the audiobook in its Audiobookshelf book folder.</p>
-                  <div>
-                    <label htmlFor="manual-genre" className="mb-1 block text-xs font-semibold text-stone-700">Genre</label>
-                    <div className="flex flex-wrap gap-1.5 min-h-[36px] p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
-                    {formData.genres.map((g) => (
+                  <div data-category="genres" data-active={quickAddTarget === 'genres'} onClick={() => setQuickAddTarget('genres')} className={`metadata-category-target rounded-lg p-2 transition ${quickAddTarget === 'genres' ? 'bg-amber-50 ring-2 ring-amber-400' : 'bg-stone-50 ring-1 ring-stone-200'}`}>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <label htmlFor="manual-genre" className="text-xs font-semibold text-stone-700">Genres</label>
+                      <button type="button" onClick={() => setQuickAddTarget('genres')} aria-pressed={quickAddTarget === 'genres'} className="metadata-quick-add-target text-[11px] font-semibold text-amber-800">{quickAddTarget === 'genres' ? 'Quick Add target' : 'Use Quick Add for Genres'}</button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 min-h-[36px] p-2.5 bg-white border border-amber-200 rounded-lg">
+                    {alphabetical(formData.genres).map((g) => (
                       <span
                         key={g}
                         className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs"
@@ -924,45 +1201,55 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                           onClick={() => handleRemoveGenre(g)}
                           className="text-amber-700 hover:text-rose-700 cursor-pointer ml-1 text-xs font-bold"
                           title={`Remove ${g}`}
-                        >
-                          ×
-                        </button>
+                        ><X className="h-4 w-4" aria-hidden="true" /></button>
                       </span>
                     ))}
                     {formData.genres.length === 0 && (
                       <span className="text-xs text-stone-400 italic py-0.5">
-                        First quick add choice becomes the Genre.
+                        No genres yet. Add a genre or choose one below.
                       </span>
                     )}
                     </div>
                     <div className="mt-2 flex gap-1.5">
-                      <input id="manual-genre" type="text" value={genreInput} onChange={e => setGenreInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddGenre(genreInput); } }} placeholder="Add a genre" className="min-w-0 flex-1 bg-stone-50/50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-xs text-stone-800" />
+                      <input form="metadata-fields" id="manual-genre" type="text" value={genreInput} onFocus={() => setQuickAddTarget('genres')} onChange={e => setGenreInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddGenre(genreInput); } }} placeholder="Add a genre" className="min-w-0 flex-1 bg-stone-50/50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-xs text-stone-800" />
                       <button type="button" onClick={() => handleAddGenre(genreInput)} disabled={!genreInput.trim()} className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-40 text-white rounded-lg text-xs font-semibold">+ Add</button>
                     </div>
                   </div>
-                  <div>
-                    <label htmlFor="manual-tag" className="mb-1 block text-xs font-semibold text-stone-700">Tags</label>
-                    <div className="flex flex-wrap gap-1.5 min-h-[36px] p-2.5 bg-stone-50 border border-stone-200 rounded-lg">
-                      {alphabetical(formData.tags || []).map(tag => <span key={tag} className="inline-flex items-center gap-1 rounded-full border border-stone-300 bg-white px-2.5 py-1 text-xs text-stone-800"><span>{tag}</span><button type="button" onClick={() => handleRemoveTag(tag)} title={`Remove ${tag}`} className="ml-1 font-bold text-stone-500 hover:text-rose-700">×</button></span>)}
-                      {!(formData.tags || []).length && <span className="py-0.5 text-xs italic text-stone-400">Later quick add choices become Tags.</span>}
+                  <div data-category="tags" data-active={quickAddTarget === 'tags'} onClick={() => setQuickAddTarget('tags')} className={`metadata-category-target rounded-lg p-2 transition ${quickAddTarget === 'tags' ? 'bg-sky-50 ring-2 ring-sky-400' : 'bg-stone-50 ring-1 ring-stone-200'}`}>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <label htmlFor="manual-tag" className="text-xs font-semibold text-stone-700">Tags</label>
+                      <button type="button" onClick={() => setQuickAddTarget('tags')} aria-pressed={quickAddTarget === 'tags'} className="metadata-quick-add-target text-[11px] font-semibold text-sky-800">{quickAddTarget === 'tags' ? 'Quick Add target' : 'Use Quick Add for Tags'}</button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 min-h-[36px] p-2.5 bg-white border border-stone-200 rounded-lg">
+                      {alphabetical(formData.tags || []).map(tag => <span key={tag} className="inline-flex items-center gap-1 rounded-full border border-stone-300 bg-white px-2.5 py-1 text-xs text-stone-800"><span>{tag}</span><button type="button" onClick={() => handleRemoveTag(tag)} title={`Remove ${tag}`} className="ml-1 font-bold text-stone-500 hover:text-rose-700"><X className="h-4 w-4" aria-hidden="true" /></button></span>)}
+                      {!(formData.tags || []).length && <span className="py-0.5 text-xs italic text-stone-400">No tags yet. Add a tag or choose one below.</span>}
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <div className="flex space-x-1.5">
-                      <input
+                  <div className="metadata-field-grid grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="relative flex space-x-1.5">
+                      <input form="metadata-fields"
                         id="manual-tag"
                         type="text"
                         value={tagInput}
-                        onChange={(e) => setTagInput(e.target.value)}
+                        onFocus={() => setQuickAddTarget('tags')}
+                        onChange={(e) => { setTagInput(e.target.value); setTagSuggestionIndex(0); setShowTagSuggestions(true); }}
                         onKeyDown={(e) => {
+                          if (e.key === 'ArrowDown' && tagSuggestions.length) { e.preventDefault(); setTagSuggestionIndex(index => (index + 1) % tagSuggestions.length); }
+                          else if (e.key === 'ArrowUp' && tagSuggestions.length) { e.preventDefault(); setTagSuggestionIndex(index => (index - 1 + tagSuggestions.length) % tagSuggestions.length); }
+                          else if (e.key === 'Escape') setShowTagSuggestions(false);
                           if (e.key === 'Enter') {
                             e.preventDefault();
-                            handleAddTag(tagInput);
+                            handleAddTag(showTagSuggestions && tagSuggestions.length ? tagSuggestions[tagSuggestionIndex] : tagInput);
                           }
                         }}
-                        placeholder="Add custom tag (e.g. Space Opera)..."
-                        className="flex-1 bg-stone-50/50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-xs text-stone-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        placeholder="Add a tag..."
+                        role="combobox"
+                        aria-expanded={showTagSuggestions && tagSuggestions.length > 0}
+                        aria-controls="tag-suggestions"
+                        aria-activedescendant={showTagSuggestions && tagSuggestions.length ? `tag-suggestion-${tagSuggestionIndex}` : undefined}
+                        className="min-w-0 flex-1 bg-stone-50/50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-xs text-stone-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
                       />
+                      {showTagSuggestions && tagSuggestions.length > 0 && <div id="tag-suggestions" role="listbox" className="absolute left-0 top-full z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-stone-300 bg-white p-1 shadow-lg">{tagSuggestions.map((tag, index) => <button key={tag} id={`tag-suggestion-${index}`} role="option" aria-selected={index === tagSuggestionIndex} type="button" onMouseDown={event => event.preventDefault()} onClick={() => handleAddTag(tag)} className={`block w-full rounded px-2 py-1.5 text-left text-xs ${index === tagSuggestionIndex ? 'bg-amber-50 text-amber-900' : 'text-stone-800 hover:bg-stone-50'}`}>{tag}</button>)}</div>}
                       <button
                         type="button"
                         onClick={() => handleAddTag(tagInput)}
@@ -972,10 +1259,11 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                         + Add
                       </button>
                     </div>
+                    {tagError && <p role="alert" className="text-xs text-rose-700">{tagError}</p>}
 
-                    {/* Filter Goodreads Tags */}
+                    {/* Filter Quick Add choices */}
                     <div className="relative">
-                      <input
+                      <input form="metadata-fields"
                         type="text"
                         value={tagFilter}
                         onChange={(e) => setTagFilter(e.target.value)}
@@ -987,36 +1275,38 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                           type="button"
                           onClick={() => setTagFilter('')}
                           className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 text-xs"
-                        >
-                          ×
-                        </button>
+                        ><X className="h-4 w-4" aria-hidden="true" /></button>
                       )}
                     </div>
                   </div>
 
                   {/* Alphabetical quick add choices */}
-                  <div className="p-3 bg-stone-50/70 border border-stone-200/80 rounded-lg space-y-2">
-                    <div className="flex items-center justify-between text-[11px] text-stone-500 font-medium">
-                      <span>Quick Add (Goodreads-inspired • {QUICK_ADD_CATEGORIES.length} choices)</span>
-                      <span>First: Genre · Later: Tags</span>
-                    </div>
+                  <details className="p-3 bg-stone-50/70 border border-stone-200/80 rounded-lg space-y-2">
+                    <summary className="cursor-pointer text-[11px] text-stone-500 font-medium">
+                      <span>Quick Add ({quickTags.length} choices)</span>
+                      <span className="float-right">Adding to {quickAddTarget === 'genres' ? 'Genres' : 'Tags'}</span>
+                    </summary>
 
                     <div className="flex flex-wrap gap-1.5">
-                      {QUICK_ADD_CATEGORIES.filter((tg) =>
+                      {quickTags.filter((tg) =>
                         tg.toLowerCase().includes(tagFilter.toLowerCase().trim())
                       ).map((tg) => {
-                        const active = selectedCategory(formData, tg);
                         const isGenre = formData.genres.some(g => g.toLowerCase() === tg.toLowerCase());
+                        const isTag = (formData.tags || []).some(tag => tag.toLowerCase() === tg.toLowerCase());
+                        const active = isGenre || isTag;
+                        const selectedHere = quickAddTarget === 'genres' ? isGenre : isTag;
                         return (
                           <button
                             key={tg}
                             type="button"
-                            onClick={() => setFormData(prev => quickAddCategory(prev, tg))}
-                            aria-pressed={active}
-                            title={active ? `${tg} already selected as ${isGenre ? 'Genre' : 'Tag'}` : `Add ${tg} as ${formData.genres.filter(g => g !== 'Audiobook').length ? 'Tag' : 'Genre'}`}
+                            onClick={() => setFormData(prev => quickAddCategory(prev, tg, quickAddTarget))}
+                            aria-pressed={selectedHere}
+                            title={selectedHere ? `${tg} already selected as ${isGenre ? 'Genre' : 'Tag'}` : active ? `Move ${tg} to ${quickAddTarget === 'genres' ? 'Genres' : 'Tags'}` : `Add ${tg} to ${quickAddTarget === 'genres' ? 'Genres' : 'Tags'}`}
                             className={`text-xs px-2.5 py-1 rounded-full cursor-pointer transition-all border font-medium ${
-                              active
+                              isGenre
                                 ? 'bg-amber-600 border-amber-600 text-white shadow-2xs'
+                                : isTag
+                                ? 'bg-sky-600 border-sky-600 text-white shadow-2xs'
                                 : 'bg-white hover:bg-stone-100 border-stone-300 text-stone-700'
                             }`}
                           >
@@ -1025,187 +1315,14 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                         );
                       })}
                     </div>
-                  </div>
+                  </details>
                 </div>
-              </div>
-            </div>
-
-            {/* Section 3: Publishing, Language & Standard IDs */}
-            <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs space-y-4">
-              <div className="flex items-center space-x-2 border-b border-stone-100 pb-3">
-                <Building className="w-4 h-4 text-amber-700" />
-                <h3 className="font-bold text-sm text-stone-900">
-                  Publication details and identifiers
-                </h3>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Publisher */}
-                <div>
-                  <label
-                    htmlFor="meta-publisher"
-                    className="block text-xs font-bold text-stone-700 mb-1"
-                  >
-                    Publisher
-                  </label>
-                  <input
-                    id="meta-publisher"
-                    type="text"
-                    value={formData.publisher || ''}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, publisher: e.target.value }))
-                    }
-                    placeholder="e.g. Macmillan Audio"
-                    className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  />
-                </div>
-
-                {/* Published Year */}
-                <div>
-                  <label
-                    htmlFor="meta-year"
-                    className="flex items-center space-x-1.5 text-xs font-bold text-stone-700 mb-1"
-                  >
-                    <Calendar className="w-3.5 h-3.5 text-stone-400" />
-                    <span>Published Year</span>
-                  </label>
-                  <input
-                    id="meta-year"
-                    type="text"
-                    value={formData.publishedYear || ''}
-                    onChange={(e) =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        publishedYear: e.target.value,
-                      }))
-                    }
-                    placeholder="e.g. 1965"
-                    className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  />
-                </div>
-
-                {/* Language */}
-                <div>
-                  <label
-                    htmlFor="meta-language"
-                    className="flex items-center space-x-1.5 text-xs font-bold text-stone-700 mb-1"
-                  >
-                    <Globe className="w-3.5 h-3.5 text-stone-400" />
-                    <span>Language</span>
-                  </label>
-                  <select
-                    id="meta-language"
-                    value={formData.language}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, language: e.target.value }))
-                    }
-                    className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  >
-                    {COMMON_LANGUAGES.map((lang) => (
-                      <option key={lang.code} value={lang.code}>
-                        {lang.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* ASIN */}
-                <div>
-                  <label
-                    htmlFor="meta-asin"
-                    className="flex items-center space-x-1.5 text-xs font-bold text-stone-700 mb-1"
-                  >
-                    <Hash className="w-3.5 h-3.5 text-stone-400" />
-                    <span>ASIN (Audible / Amazon)</span>
-                  </label>
-                  <input
-                    id="meta-asin"
-                    type="text"
-                    value={formData.asin || ''}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, asin: e.target.value }))
-                    }
-                    placeholder="e.g. B000R34YKC"
-                    className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs font-mono text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  />
-                </div>
-
-                {/* ISBN */}
-                <div>
-                  <label
-                    htmlFor="meta-isbn"
-                    className="flex items-center space-x-1.5 text-xs font-bold text-stone-700 mb-1"
-                  >
-                    <Hash className="w-3.5 h-3.5 text-stone-400" />
-                    <span>ISBN</span>
-                  </label>
-                  <input
-                    id="meta-isbn"
-                    type="text"
-                    value={formData.isbn || ''}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, isbn: e.target.value }))
-                    }
-                    placeholder="e.g. 9780441013593"
-                    className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs font-mono text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  />
-                </div>
-
-                {/* Copyright info */}
-                <div>
-                  <label
-                    htmlFor="meta-copyright"
-                    className="block text-xs font-bold text-stone-700 mb-1"
-                  >
-                    Copyright Notice
-                  </label>
-                  <input
-                    id="meta-copyright"
-                    type="text"
-                    value={formData.copyright || ''}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, copyright: e.target.value }))
-                    }
-                    placeholder="e.g. © 1965 Frank Herbert"
-                    className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  />
-                </div>
-              </div>
-
-              {/* Classification flags: Abridged & Explicit */}
-              <div className="pt-2 border-t border-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-center space-x-4">
-                  <span className="text-xs font-bold text-stone-700">Work Edition:</span>
-                  <label className="flex items-center space-x-2 text-xs text-stone-700 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="abridged"
-                      checked={!formData.abridged}
-                      onChange={() =>
-                        setFormData((prev) => ({ ...prev, abridged: false }))
-                      }
-                      className="text-amber-600 focus:ring-amber-500"
-                    />
-                    <span className="font-medium">Unabridged</span>
-                  </label>
-                  <label className="flex items-center space-x-2 text-xs text-stone-700 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="abridged"
-                      checked={formData.abridged}
-                      onChange={() =>
-                        setFormData((prev) => ({ ...prev, abridged: true }))
-                      }
-                      className="text-amber-600 focus:ring-amber-500"
-                    />
-                    <span>Abridged</span>
-                  </label>
-                </div>
-
+                <div className="md:col-span-3 border-t border-stone-100 pt-3">
+                  <p className="mb-2 text-xs font-bold text-stone-700">Content Advisory</p>
                 <div className="flex items-center space-x-4">
                   <span className="text-xs font-bold text-stone-700">Advisory:</span>
                   <label className="flex items-center space-x-2 text-xs text-stone-700 cursor-pointer">
-                    <input
+                    <input form="metadata-fields"
                       type="radio"
                       name="explicit"
                       checked={!formData.explicit}
@@ -1217,7 +1334,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                     <span className="font-medium text-emerald-700">Clean</span>
                   </label>
                   <label className="flex items-center space-x-2 text-xs text-stone-700 cursor-pointer">
-                    <input
+                    <input form="metadata-fields"
                       type="radio"
                       name="explicit"
                       checked={formData.explicit}
@@ -1229,25 +1346,24 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                     <span className="text-rose-700 font-medium">Explicit Content</span>
                   </label>
                 </div>
-              </div>
-            </div>
-
-            {/* Section 4: Synopsis / Description */}
-            <div className="bg-white rounded-xl p-5 border border-stone-200/80 shadow-xs space-y-3">
-              <div className="flex items-center justify-between border-b border-stone-100 pb-3">
-                <div className="flex items-center space-x-2">
-                  <FileText className="w-4 h-4 text-amber-700" />
-                  <h3 className="font-bold text-sm text-stone-900">
-                    Book summary
-                  </h3>
                 </div>
+              </div>
+            </div></ResizableRegion></DesktopWindow>
+
+          </div>
+        </div>
+      </ResizableColumns>
+      <ResizableRegion enabled={unifiedLayout} storageKey="metadata-details" label="book details"><section className={unifiedLayout ? 'metadata-section p-3 space-y-6' : 'metadata-section rounded-xl border border-stone-200/80 bg-white p-5 shadow-xs space-y-6'}>
+        <DesktopWindow id="metadata-description" title="Description" homeWindow="metadata"><div className="space-y-3">
+              <div className="workspace-panel-header flex items-center justify-between">
+                <h4 className="workspace-panel-title text-xs font-bold text-stone-800">Description</h4>
                 <span className="text-[11px] text-stone-400 font-mono">
                   {formData.description ? formData.description.length : 0} chars
                 </span>
               </div>
 
               <div>
-                <textarea
+                <textarea form="metadata-fields"
                   id="meta-description"
                   rows={4}
                   value={formData.description || ''}
@@ -1261,32 +1377,37 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                   Saved as the book description in compatible audiobook apps.
                 </p>
               </div>
-            </div>
-
+        </div></DesktopWindow>
+      </section></ResizableRegion>
             {/* Bottom Form Actions */}
-            <div className="flex items-center justify-end space-x-3 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (job.metadata) setFormData({ ...job.metadata });
-                }}
-                className="px-4 py-2 text-xs font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-200/60 rounded-lg transition cursor-pointer"
-              >
-                Discard unsaved changes
-              </button>
-              <button
+            <div className="processing-actions adaptive-actions flex items-center justify-end space-x-3 pt-2">
+
+              {['review'].includes(mode) && <AdaptiveButton
                 type="submit"
                 id="btn-save-metadata-bottom"
+                icon={<Save />} label={isSaving ? 'Saving...' : 'Save book details'} slotClassName="metadata-icon-action" tone="primary"
                 disabled={isSaving}
                 className="flex items-center space-x-2 px-5 py-2.5 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 shadow-sm transition-all cursor-pointer active:scale-98 disabled:bg-stone-400"
-              >
-                <Save className="w-4 h-4" />
-                <span>{isSaving ? 'Saving...' : 'Save book details'}</span>
-              </button>
+              />}
             </div>
-          </form>
+      </form>
+      {mode === 'import' && <div className="rounded-xl border border-stone-200 bg-white p-5 space-y-4">
+        <label className="flex items-center gap-2 text-sm text-stone-700"><input form="metadata-fields" type="checkbox" checked={writeSource} onChange={event => setWriteSource(event.target.checked)} /> Write metadata to source audio file(s)</label>
+        <p className="text-xs text-stone-500">Optional. Supported text tags are updated without re-encoding audio; SwissMouse keeps the full book record separately.</p>
+        <div className="flex flex-wrap justify-end gap-2">
+          <button type="button" onClick={() => void onCancelImport?.()} disabled={isSaving} className="rounded-lg border border-stone-300 px-4 py-2 text-sm">Cancel</button>
+          <button type="button" onClick={() => void handleImportAction(false)} disabled={isSaving || !job.parts.length || !formData.title.trim()} className="rounded-lg bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">Finish</button>
+          <button type="button" onClick={() => void handleImportAction(true)} disabled={isSaving || !job.parts.length || !formData.title.trim()} className="rounded-lg border border-stone-300 px-4 py-2 text-sm font-semibold text-stone-700 disabled:opacity-40">Process Book →</button>
         </div>
-      </div>
+      </div>}
+      {mode === 'file-review' && metadataExpanded && <div className="border-t border-stone-200 p-4 space-y-3">
+        <p className="text-xs text-stone-600">Keep this book without running audio processing, or organize its current folder using the Library pattern in Settings. SwissMouse shows the destination before moving files.</p>
+        <div className="flex flex-wrap justify-end gap-2">
+          <button type="button" onClick={() => void handleFileReviewAction(false)} disabled={isSaving || !formData.title.trim()} className="paper-action-dark rounded-lg bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">Save and close</button>
+          <button type="button" onClick={() => void handleFileReviewAction(true)} disabled={isSaving || !formData.title.trim()} className="rounded-lg border border-amber-600 px-4 py-2 text-sm font-semibold text-amber-900 disabled:opacity-40">Organize Library folder</button>
+        </div>
+      </div>}
     </div>
+    </DesktopWindow></>
   );
 };

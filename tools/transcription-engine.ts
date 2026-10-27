@@ -39,6 +39,8 @@ export interface NormalizedTranscription {
 }
 
 export interface TranscriptionRequest {
+  localFilesOnly?: boolean;
+  localModelFile?: string;
   pythonPath: string;
   audioPath: string;
   outputPath: string;
@@ -91,7 +93,8 @@ def clean_word(w):
 if cfg['engine'] == 'faster-whisper':
     from faster_whisper import WhisperModel
     model = WhisperModel(cfg.get('repository') or cfg['model'], device=cfg['device'],
-                         compute_type=cfg['compute_type'], download_root=cfg['faster_cache'])
+                         compute_type=cfg['compute_type'], download_root=cfg['faster_cache'],
+                         **({'local_files_only': True} if cfg.get('local_files_only') else {}))
     if cfg.get('batch_size') is not None:
         from faster_whisper import BatchedInferencePipeline
         pipeline = BatchedInferencePipeline(model=model)
@@ -117,7 +120,7 @@ if cfg['engine'] == 'faster-whisper':
               'batchSize': cfg.get('batch_size'), 'beamSize': cfg['beam_size']}
 else:
     import whisper
-    model = whisper.load_model(cfg['model'], device=cfg['device'], download_root=cfg['openai_cache'])
+    model = whisper.load_model(cfg.get('local_model_file') or cfg['model'], device=cfg['device'], download_root=cfg['openai_cache'])
     raw = model.transcribe(cfg['audio'], language=cfg.get('language'), word_timestamps=True, verbose=False)
     segments = []
     for i, s in enumerate(raw.get('segments', [])):
@@ -165,6 +168,8 @@ class PythonTranscriptionEngine implements TranscriptionEngine {
       output: request.outputPath,
       model: request.modelId,
       repository: request.fasterModelRepository,
+      local_files_only: request.localFilesOnly === true,
+      local_model_file: request.localModelFile,
       device: request.device,
       compute_type: request.computeType,
       faster_cache: request.fasterCacheDir,

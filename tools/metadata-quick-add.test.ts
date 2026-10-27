@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import type { AudiobookMetadata } from '../src/types';
-import { alphabetical, QUICK_ADD_CATEGORIES, quickAddCategory } from '../src/utils/metadataQuickAdd';
+import { alphabetical, QUICK_ADD_CATEGORIES, cleanQuickTags, quickAddCategory } from '../src/utils/metadataQuickAdd';
 import { audiobookshelfMetadata } from '../src/utils/audiobookshelfMetadata';
 
 const empty: AudiobookMetadata = {
@@ -16,14 +16,33 @@ test('quick add choices are unique, alphabetical, and exclude Audiobook', () => 
   assert.equal(QUICK_ADD_CATEGORIES.includes('Audiobook' as never), false);
 });
 
-test('first quick add fills genre, later choices fill sorted tags without duplicates', () => {
-  let metadata = quickAddCategory(empty, 'Science Fiction');
-  for (const value of ['Space Opera', 'Time Travel', 'Aliens', 'Aliens']) metadata = quickAddCategory(metadata, value);
-  assert.deepEqual(metadata.genres, ['Science Fiction']);
+test('Quick Tags normalize whitespace and case without changing the first display value', () => {
+  assert.deepEqual(cleanQuickTags(['Cosmic Horror', ' cosmic   horror ', 'FANTASY', 'fantasy', '']), ['Cosmic Horror', 'FANTASY']);
+  const metadata = quickAddCategory(empty, ' Cosmic  Horror ', 'tags');
+  assert.equal(quickAddCategory(metadata, 'cosmic horror', 'tags'), metadata);
+  assert.deepEqual(metadata.tags, ['Cosmic Horror']);
+});
+
+test('active field accepts multiple quick add genres and tags without duplicates', () => {
+  let metadata = empty;
+  for (const value of ['Science Fiction', 'Adventure', 'Fantasy']) metadata = quickAddCategory(metadata, value, 'genres');
+  for (const value of ['Space Opera', 'Time Travel', 'Aliens']) metadata = quickAddCategory(metadata, value, 'tags');
+  assert.deepEqual(metadata.genres, ['Adventure', 'Fantasy', 'Science Fiction']);
   assert.deepEqual(metadata.tags, ['Aliens', 'Space Opera', 'Time Travel']);
-  assert.equal(quickAddCategory(metadata, 'science fiction'), metadata);
-  assert.deepEqual(audiobookshelfMetadata(metadata).genres, ['Science Fiction']);
-  assert.deepEqual(audiobookshelfMetadata(metadata).tags, ['Aliens', 'Space Opera', 'Time Travel']);
+  assert.equal(quickAddCategory(metadata, 'fantasy', 'genres'), metadata);
+  assert.equal(quickAddCategory(metadata, 'ALIENS', 'tags'), metadata);
+  assert.deepEqual(audiobookshelfMetadata(metadata).genres, metadata.genres);
+  assert.deepEqual(audiobookshelfMetadata(metadata).tags, metadata.tags);
+});
+
+test('quick add moves an already selected category to the active field', () => {
+  let metadata = quickAddCategory(empty, 'Fantasy', 'tags');
+  metadata = quickAddCategory(metadata, 'fantasy', 'genres');
+  assert.deepEqual(metadata.genres, ['fantasy']);
+  assert.deepEqual(metadata.tags, []);
+  metadata = quickAddCategory(metadata, 'Fantasy', 'tags');
+  assert.deepEqual(metadata.genres, []);
+  assert.deepEqual(metadata.tags, ['Fantasy']);
 });
 
 test('Audiobookshelf sidecar uses its book fields and numeric chapter times', () => {

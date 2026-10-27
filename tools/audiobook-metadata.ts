@@ -1,6 +1,20 @@
 import type { AudiobookMetadata } from '../src/types';
 import type { ExportFormat } from '../src/audioFormats';
 
+export function metadataFromTags(source: Record<string, unknown>, fallback: string, single = true): AudiobookMetadata {
+  const tags = Object.fromEntries(Object.entries(source).map(([key, value]) => [key.toLowerCase(), String(value)]));
+  return {
+    title: tags.album || (single ? tags.title : '') || fallback, author: tags.artist || tags.album_artist || '',
+    narrator: tags.composer || '', subtitle: tags.subtitle || tags.tit3 || '',
+    series: tags.series || '', seriesSequence: tags['series-part'] || '',
+    genres: (tags.genre || '').split(/[;,]/).map(value => value.trim()).filter(Boolean),
+    tags: [], publishedYear: tags.date || '', releaseDate: tags.releasetime || '',
+    publisher: tags.publisher || '', language: tags.language || 'eng', isbn: tags.isbn || '',
+    asin: tags.asin || '', description: tags.description || tags.desc || tags.comment || '',
+    copyright: tags.copyright || '', abridged: tags.abridged === '1', explicit: tags.explicit === '1',
+  };
+}
+
 // FFmpeg translates common semantic keys to native ID3/MP4/Vorbis representations.
 // Custom MP4 keys are written as iTunes freeform atoms by mp4-metadata.ts.
 export function audiobookTags(meta: AudiobookMetadata | undefined, original: AudiobookMetadata | undefined, source: Record<string,string> = {}, format: ExportFormat) {
@@ -27,13 +41,3 @@ export function audiobookTags(meta: AudiobookMetadata | undefined, original: Aud
   if (['flac','ogg','opus'].includes(format)) return Object.fromEntries(Object.entries(tags).map(([k,v])=>[k.toUpperCase(),v]));
   return tags;
 }
-
-export const metadataRepresentations = {
-  m4b: 'MP4 atoms: title/album, artist, composer (Narrator); series and identifiers in iTunes freeform tags.',
-  m4a: 'MP4 atoms: title/album, artist, composer (Narrator); series and identifiers in iTunes freeform tags.',
-  mp3: 'ID3: TIT2/TALB, TPE1, TCOM (Narrator); custom TXXX fields for series and identifiers.',
-  flac: 'Vorbis comments: TITLE/ALBUM, ARTIST, COMPOSER (Narrator), SERIES, SERIES-PART and identifiers.',
-  ogg: 'Vorbis comments: TITLE/ALBUM, ARTIST, COMPOSER (Narrator), SERIES, SERIES-PART and identifiers.',
-  opus: 'Vorbis comments: TITLE/ALBUM, ARTIST, COMPOSER (Narrator), SERIES, SERIES-PART and identifiers.',
-  wav: 'RIFF INFO plus ID3 metadata chunk. Rich metadata requires a reader that supports WAV ID3.',
-};

@@ -54,13 +54,13 @@ export class PcmAnalysis {
     // This directory is created and owned exclusively by this collector.
     fs.rmSync(this.temporary, { recursive: true, force: true });
   }
-  async finish() {
+  async finish(generateWaveform = true) {
     if (this.pending.length || !this.samples) throw new Error('Incomplete or empty PCM analysis');
     if (this.count) this.flushWindow();
     this.flushBuffer(); fs.closeSync(this.fd); this.fd = undefined;
     const levels: { step: number; count: number }[] = [];
     let input = this.temporary + '/features.bin', stride = 20, factor = 1, count = this.records, step = windowSeconds;
-    for (let level = 0; ; level++) {
+    for (let level = 0; generateWaveform; level++) {
       const output = this.temporary + `/level-${level}.bin`;
       const fd = fs.openSync(output, 'w');
       let remainder = Buffer.alloc(0), peak = 0, n = 0;
@@ -93,11 +93,22 @@ export class PcmAnalysis {
     return manifest;
   }
 }
-export function readManifest(audio: string) {
+export function readManifest(audio: string, allowRetained = false) {
   try {
     const m = JSON.parse(fs.readFileSync(audio + '.analysis.json', 'utf8'));
-    return m.version === 1 && m.signature === signature(audio) && fs.existsSync(m.directory + '/features.bin') ? m : null;
+    const matches = fs.existsSync(audio) ? m.signature === signature(audio) : allowRetained && m.retained === true;
+    return m.version === 1 && matches && fs.existsSync(m.directory + '/features.bin') ? m : null;
   } catch { return null; }
+}
+/** Detach only a verified, complete waveform cache before its disposable PCM is removed. */
+export function retainWaveform(audio: string) {
+  const manifest = readManifest(audio);
+  if (!manifest?.levels?.length || !manifest.levels.every((_: unknown, index: number) => fs.existsSync(manifest.directory + `/level-${index}.bin`))) return false;
+  const file = audio + '.analysis.json';
+  const temporary = file + '.retain-' + randomUUID();
+  try { fs.writeFileSync(temporary, JSON.stringify({ ...manifest, retained: true })); fs.renameSync(temporary, file); }
+  finally { fs.rmSync(temporary, { force: true }); }
+  return true;
 }
 const pending = new Map<string, Promise<any>>();
 export function pcmDataRange(audio: string) {
@@ -121,34 +132,34 @@ export function pcmDataRange(audio: string) {
   return { start, length };
 }
 
-async function analyzePcm(audio: string) {
+async function analyzePcm(audio: string, generateWaveform = true) {
   const initial = signature(audio);
   const { start, length } = pcmDataRange(audio);
   const collector = new PcmAnalysis(audio);
   try {
     for await (const chunk of fs.createReadStream(audio, { start, end: start + length - 1 })) collector.push(chunk as Buffer);
     if (signature(audio) !== initial) throw new Error('Preview changed during waveform analysis');
-    return await collector.finish();
+    return await collector.finish(generateWaveform);
   } catch (e) { collector.abort(); throw e; }
 }
 
-export function rebuildAnalysis(audio: string) {
-  if (pending.has(audio)) return pending.get(audio)!;
-  const work = analyzePcm(audio).finally(() => pending.delete(audio));
+export function rebuildAnalysis(audio: string, generateWaveform = true): Promise<any> {
+  if (pending.has(audio)) return pending.get(audio)!.then(()=>ensureAnalysis(audio,generateWaveform));
+  const work = analyzePcm(audio,generateWaveform).finally(() => pending.delete(audio));
   pending.set(audio, work);
   return work;
 }
 
 // Legacy cache backfill reads the existing PCM WAV, never decodes the book again.
-export function ensureAnalysis(audio: string) {
+export function ensureAnalysis(audio: string, generateWaveform = true): Promise<any> {
   const cached = readManifest(audio);
-  if (cached) return Promise.resolve(cached);
-  if (pending.has(audio)) return pending.get(audio)!;
-  const work = analyzePcm(audio).finally(() => pending.delete(audio));
+  if (cached && (!generateWaveform || cached.levels?.length)) return Promise.resolve(cached);
+  if (pending.has(audio)) return pending.get(audio)!.then(()=>ensureAnalysis(audio,generateWaveform));
+  const work = analyzePcm(audio,generateWaveform).finally(() => pending.delete(audio));
   pending.set(audio, work); return work;
 }
-export async function waveformSlice(audio: string, start: number, duration: number, pixels: number) {
-  const m = await ensureAnalysis(audio);
+export async function waveformSlice(audio: string, start: number, duration: number, pixels: number, allowRetained = false) {
+  const m = (allowRetained && readManifest(audio, true)) || await ensureAnalysis(audio);
   let level = 0;
   while (level + 1 < m.levels.length && m.levels[level + 1].step <= duration / pixels) level++;
   const { step, count } = m.levels[level];

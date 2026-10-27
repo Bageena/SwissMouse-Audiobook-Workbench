@@ -7,6 +7,7 @@ import { processingKey } from './transcription-cache';
 import { CHAPTER_DETECTOR_VERSION } from './chapter-detection';
 import { MUSIC_DETECTOR_VERSION } from './music-transitions';
 import { TITLE_DETECTOR_VERSION } from './title-boundaries';
+import { IMPROVED_DETECTOR_VERSION } from './improved-chapter-detection';
 import { buildTranscriptWords } from '../src/utils/wordAlignment';
 import type { AudiobookJob } from '../src/types';
 
@@ -19,7 +20,7 @@ function cachePolicy() {
   assert.ok(start >= 0 && end > start, 'server chapter cache policy must be present');
   const preview = { exists: true, size: 320044, mtimeMs: 1000, ctimeMs: 2000, reads: 0 };
   const context = vm.createContext({
-    CHAPTER_DETECTOR_VERSION, MUSIC_DETECTOR_VERSION, TITLE_DETECTOR_VERSION, processingKey,
+    CHAPTER_DETECTOR_VERSION, MUSIC_DETECTOR_VERSION, TITLE_DETECTOR_VERSION, IMPROVED_DETECTOR_VERSION, processingKey,
     currentConfig: { lead_in_seconds: 1.5 },
     fs: {
       existsSync() { return preview.exists; },
@@ -82,7 +83,7 @@ test('spoken detector version invalidates decisions with music both enabled and 
 });
 
 test('music and named-title detector versions invalidate acoustic decisions only', () => {
-  for (const detector of ['MUSIC_DETECTOR_VERSION', 'TITLE_DETECTOR_VERSION']) {
+  for (const detector of ['MUSIC_DETECTOR_VERSION', 'TITLE_DETECTOR_VERSION', 'IMPROVED_DETECTOR_VERSION']) {
     const { key, context } = cachePolicy();
     const job = savedTranscript();
     const disabled = key(job, false), enabled = key(job, true);

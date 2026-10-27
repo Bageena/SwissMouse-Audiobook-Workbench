@@ -1,4 +1,5 @@
 import { capabilityLabel } from '../transcription';
+import { useDialogFocus } from '../utils/useDialogFocus';
 import { expandRequirementSelection, requirementDependencies } from '../../tools/requirements';
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -6,27 +7,14 @@ import {
   BaseRequirementItem,
   InstallRepairProgress,
 } from '../types';
-import {
-  CheckCircle2,
-  AlertTriangle,
-  XCircle,
-  RefreshCw,
-  Cpu,
-  HardDrive,
-  Wrench,
-  ShieldCheck,
-  Info,
-  Terminal,
-  X,
-  ExternalLink,
-  Zap,
-} from 'lucide-react';
+import { CheckCircle2, AlertTriangle, XCircle, RefreshCw, Cpu, Wrench, ShieldCheck, Terminal, X, ExternalLink, Zap } from 'lucide-react';
 
 interface RequirementsModalProps {
   onClose: () => void;
 }
 
 export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose }) => {
+  const dialogRef = useDialogFocus(onClose);
   const [report, setReport] = useState<RequirementsReport | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -192,7 +180,7 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
 
   return (
     <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-      <div role="dialog" aria-modal="true" aria-label="System setup and tools" className="bg-white rounded-xl max-w-4xl w-full shadow-2xl border border-stone-200 flex flex-col max-h-[90vh] overflow-hidden">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="System setup and tools" className="bg-white rounded-xl max-w-4xl w-full shadow-2xl border border-stone-200 flex flex-col max-h-[90vh] overflow-hidden">
         {/* Header */}
         <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-stone-50">
           <div className="flex items-center space-x-2.5">

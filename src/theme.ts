@@ -1,4 +1,4 @@
-export const themes = ['light', 'parchment', 'blue', 'slate', 'forest', 'dark'] as const;
+export const themes = ['light', 'parchment', 'blue', 'slate', 'forest', 'dark', 'cheese'] as const;
 
 export type AppTheme = (typeof themes)[number];
 
@@ -25,6 +25,7 @@ export const themeLabels: Record<AppTheme, string> = {
   slate: 'Slate',
   forest: 'Forest',
   dark: 'Dark',
+  cheese: 'Cheese · Paper & Ink',
 };
 
 export const THEME_STORAGE_KEY = 'swissmouse_appearance_theme';

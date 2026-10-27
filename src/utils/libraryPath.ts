@@ -1,7 +1,8 @@
 import type { AudiobookMetadata } from '../types';
+import { metadataPeople } from './metadataPeople';
 
 export const DEFAULT_LIBRARY_TEMPLATE = '%Author%/%Series%/%Series Number% %Book Title% [%Narrator%]';
-export const LIBRARY_FIELDS = ['Author', 'Series', 'Series Number', 'Book Title', 'Narrator', 'Subtitle'] as const;
+export const LIBRARY_FIELDS = ['Author', 'Series', 'Series Number', 'Book Title', 'Narrator', 'Subtitle', 'Year', 'Publisher', 'Edition'] as const;
 
 const token = /%([^%]+)%/g;
 const safePart = (value: string) => {
@@ -20,6 +21,19 @@ export function validateLibraryTemplate(template: string): string | null {
 
 function pathIsAbsolute(value: string) { return /^[\\/]/.test(value) || /^[a-zA-Z]:/.test(value); }
 
+/** Short filesystem credit only; never replace the stored narrator credits. */
+export function narratorPathCredit(metadata: AudiobookMetadata): string {
+  const structured = metadata.narrators?.join(', ') === metadata.narrator;
+  const seen = new Set<string>();
+  const names = metadataPeople(metadata, 'narrator').flatMap(value => structured ? [value] : value.split(';'))
+    .map(value => value.trim()).filter(value => {
+      const key = value.toLocaleLowerCase('en');
+      if (!key || seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+  return names.length > 3 ? 'Full Cast' : names.length > 1 ? 'Cast' : names[0] || '';
+}
+
 export function libraryRelativePath(template: string, metadata: AudiobookMetadata): string[] {
   const error = validateLibraryTemplate(template);
   if (error) throw new Error(error);
@@ -29,8 +43,11 @@ export function libraryRelativePath(template: string, metadata: AudiobookMetadat
     Series: metadata.series || '',
     'Series Number': sequence ? /^\d+$/.test(sequence) ? sequence.padStart(3, '0') : sequence : '',
     'Book Title': metadata.title || 'Untitled Audiobook',
-    Narrator: metadata.narrator || '',
+    Narrator: narratorPathCredit(metadata),
     Subtitle: metadata.subtitle || '',
+    Year: metadata.publishedYear || '',
+    Publisher: metadata.publisher || '',
+    Edition: metadata.edition || '',
   };
   const parts = template.split(/[\\/]/).map(segment => {
     // A missing field drops its surrounding brackets and leaves no empty directory.
@@ -40,4 +57,20 @@ export function libraryRelativePath(template: string, metadata: AudiobookMetadat
   }).filter(Boolean);
   if (!parts.length) throw new Error('The folder pattern needs at least one value for this book.');
   return parts;
+}
+
+/** Processing workspaces are never final export destinations. */
+export function finalOutputRoot(configured: string | undefined, libraryRoot: string): string {
+  return configured?.trim() && !configured.split(/[\\/]/).some(part => part.toLowerCase() === '.swissmouse-work') ? configured : libraryRoot;
+}
+
+export function libraryLocationPreview(root: string, template: string, metadata: AudiobookMetadata): string {
+  const sequence = metadata.seriesSequence?.trim();
+  const values: Record<string, string | undefined> = {
+    Author: metadata.author, Series: metadata.series, 'Series Number': sequence && (/^\d+$/.test(sequence) ? sequence.padStart(3, '0') : sequence),
+    'Book Title': metadata.title, Narrator: narratorPathCredit(metadata), Subtitle: metadata.subtitle,
+    Year: metadata.publishedYear, Publisher: metadata.publisher, Edition: metadata.edition,
+  };
+  const folder = root.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || root;
+  return folder + '\\' + template.replace(token, (placeholder, field: string) => values[field]?.trim() ? safePart(values[field]!) : placeholder);
 }

@@ -13,13 +13,26 @@ If a paid Patreon tier isn't within your budget, **free Patreon members are just
 **Nothing related to this project is locked behind a Patreon paywall.** Posts and project updates are available to free members, and the software itself remains free and open source.
 
 If you can support financially, thank you. If you can't, you're still every bit as welcome here.
-<img width="2815" height="1831" alt="Chapter" src="https://github.com/user-attachments/assets/4ef27bce-a542-431c-9bd9-8d221791a5eb" />
-<img width="3046" height="1711" alt="Requirements" src="https://github.com/user-attachments/assets/564e5017-8b6d-4884-9063-e1f51da9a949" />
-<img width="3049" height="1782" alt="Stage1" src="https://github.com/user-attachments/assets/022ff4e1-6917-4d7e-8610-72d246b3afc1" />
 
 # SwissMouse
 
-Current release: `0.1.0-alpha.4`
+Alpha 5 release candidate: `0.1.0-alpha.5`. Final manual testing is still pending.
+
+See the [Alpha 5 release notes](docs/releases/alpha5.md) and [release preparation guide](docs/RELEASING.md).
+
+### Alpha 5 appearance
+
+Screenshots use a separate, empty installation with no personal library data.
+
+**Cheese · Paper & Ink**
+
+![SwissMouse Alpha 5 Library Manager in the Cheese theme](docs/screenshots/alpha5-cheese.jpg)
+
+**Forest**
+
+![SwissMouse Alpha 5 Library Manager in the Forest theme](docs/screenshots/alpha5-forest.jpg)
+
+**Alpha 5 installation:** a fresh installation in a separate folder is recommended. Keep Alpha 4 and its data intact; full workbench-project migration is not a release requirement. See [Windows installation, manual backup and recovery](docs/ALPHA5-INSTALL-AND-RECOVERY.md). Windows is the Alpha 5 verification target; Linux support and testing are deferred until Beta.
 
 The open source audiobook workbench.
 
@@ -31,17 +44,25 @@ The open source audiobook workbench.
 
 ## Overview
 
-**SwissMouse** is an open-source, local web application for preparing, organizing, and preserving audiobooks.
+**SwissMouse** is an open-source, local web application for preparing, organizing, and preserving audiobooks. Its [long-term direction](docs/SWISSMOUSE-VISION.md) is a modular media and knowledge workspace, with books and audiobooks as modules. The [shared resource catalog guide](docs/RESOURCE-CATALOG.md) explains the new identity/query foundation, theme integration, and remaining scale limits.
+
+### Reference-only audiobook import
+
+In **Import Book**, choose **Browse Audio Folder** to select a folder of tracks, or **Browse Audio File** for a single audiobook. SwissMouse scans the chosen folder and shows its tracks in processing order. Both browsing actions reference the original path; **Upload Folder** and **Upload Audio Files** copy files into the import workspace. SwissMouse reads tags, artwork, and chapters from the original path and stores its own book record in `jobs.json.sqlite`. Finishing the import without source writing leaves the audiobook and its folder untouched. Audio processing remains optional. The Library Manager marks referenced books **External**, shows **Source Missing** when a file is unavailable, and offers **Relink** without changing the book ID. **Copy to Library** creates a managed copy under the configured Library folder and switches the active source only after the copy succeeds; the original stays in place. An explicit **Update JSON** action writes Audiobookshelf-compatible `metadata.json` beside an audiobook.
+
+Existing `jobs.json` records migrate automatically on the first upgraded start, one record at a time; the original JSON remains unchanged. Later edits are saved to `jobs.json.sqlite`, so include the database and its referenced assets in backups. Records without the new `source` field keep their current source paths and are classified from their existing location. See the [catalog and storage guide](docs/RESOURCE-CATALOG.md) for backup details, continuous browsing, and theme/plugin contracts. Native file and folder browsing currently use Windows Forms through PowerShell; other systems can still use path-based folder import.
+
+See the [SwissMouse direction statement](ROADMAP.md) for the shared foundation being established in Alpha 5 and the longer-term vision.
 
 Built with **Node.js**, it provides a browser-based interface while processing files locally on your own computer. It is primarily intended for Windows.
 
 SwissMouse began as a collection of practical Windows batch-file workflows for audiobook conversion, merging, chaptering, and metadata work. Those batch files became the functional foundation of the project. With assistance from AI, the workflows were translated and expanded into a Node.js web application with a browser-based interface.
 
-Original source audio files are never intentionally modified, and the application does not automatically delete files.
+Imports preserve original source audio by default. Writing metadata or chapters to source files, moving files, and cleanup require explicit actions; review those actions before applying them.
 
 ## First Run (Windows)
 
-**The only requirement to start SwissMouse for the first time is [Node.js](https://nodejs.org/en/download).** Download and install the current **LTS** version from the official Node.js site, then:
+**The only requirement to start SwissMouse for the first time is [Node.js](https://nodejs.org/en/download).** Use **Node.js 22.13 or newer** (the catalog uses built-in SQLite). Download a supported **LTS** version from the official Node.js site, then:
 
 1. Download and extract SwissMouse, or clone this repository.
 2. Double-click `Start Audiobook Workbench.bat`.
@@ -75,7 +96,7 @@ npm install
 npm run dev
 ```
 
-This uses `tsx` to run the TypeScript server directly without a separate build step. To run the compiled production build instead:
+This builds the catalog worker, then uses `tsx` to run the TypeScript server directly. To run the compiled production build instead:
 
 ```bash
 npm run build
@@ -96,14 +117,14 @@ See [verified format support and chapter repair](FORMAT-SUPPORT.md) for the inpu
 - Edit audiobook metadata, including title, author, narrator, cover art, and other supported fields
 - Generate a 2000 × 2000 cover from Book details using gradients, a solid color, or a local image, with three automatic text layouts. **Use Cover** retains the image and editable design in the project draft; **Save book details** includes it in subsequent exports. **Cancel** keeps the existing artwork.
 - Download the best available YouTube audio stream without re-encoding by default and process it through the same workflow
-- Preserve original audio files; the app is designed not to overwrite, alter, or automatically delete them
+- Preserve original audio files by default, with explicit controls for source writing, moves, and cleanup
 - Run locally as a Node.js web application
-- Choose from six built-in appearance themes or create a safe token-based custom theme
+- Choose from seven built-in appearance themes or create a safe token-based custom theme
 - Open-source code available for inspection, learning, testing, and improvement
 
 ## Themes and customization
 
-Open **Settings > Appearance / Theme** to choose Light, Parchment, Blue, Slate, Forest, Dark, or any valid local custom theme. SwissMouse remembers the selection between launches.
+Open **Settings > Appearance / Theme** to choose Light, Parchment, Blue, Slate, Forest, Dark, Cheese · Paper & Ink, or any valid local custom theme. SwissMouse remembers the selection between launches.
 
 To create a theme, use **Open Themes Folder**, copy the included `_template` folder, and edit its manifest and approved design tokens. Return to Settings and choose **Reload Themes** to apply additions or edits without restarting. Custom themes inherit missing values from a built-in theme and cannot change application layout, processing, or behavior.
 
@@ -125,6 +146,8 @@ The versioned `analysis.wav.analysis.json` manifest references binary files in a
 
 Analysis uses bounded streaming buffers and approximately 0.91 MB of disk per audio hour. Preview size, modification time, change time, and cache version invalidate the manifest. Publication is atomic; earlier generations remain until project intermediate files are purged so active readers can finish. Waveform failures are logged and leave playback available. Run `npm run test:audio` for analysis, cache, navigation math, and existing audio/transcript regression tests.
 
+Audio, transcription, package-probe, Library-summary, and isolated API tests clean up their generated fixtures when they finish, after any test server has stopped. For debugging, set `SWISSMOUSE_KEEP_TEST_FIXTURES=1` to retain these fixtures; each retained path is printed. `npm run lint` rejects unused local declarations and imports.
+
 ## Development Note
 
 SwissMouse is not a professionally engineered commercial application. It is a personal project built through experimentation, iterative testing, trial and error, and a considerable amount of AI-assisted development.
@@ -140,12 +163,6 @@ The code is fully open source. Please feel free to inspect it, learn from it, re
 If you choose to test the application, use copies of your files and verify the finished audiobook before relying on it for a large, valuable, or irreplaceable collection.
 
 ## How It Works
-
-### LibriVox imports
-
-Import Options now offers **Audio Folder**, **From YouTube**, and **LibriVox**. Search the official LibriVox catalog by title, author last name, or genre, review a book's readers and sections, and import it into the normal chapter workflow. Existing metadata is preserved unless you explicitly choose replacement. See the [LibriVox import guide](LIBRIVOX.md) for pagination, API limits, cancellation, metadata mapping, public-domain considerations, and troubleshooting.
-
-### Local processing
 
 ### LibriVox imports
 
@@ -207,11 +224,13 @@ If you use YouTube downloads or other online sources, you are responsible for en
 
 ## Contributing
 
-Chapter editing now includes **Clean Chapter Titles** with undo. Experimental
-acoustic detection is enabled by default and looks for recurring musical cues
-and isolated spoken titles supported by tonal transitions, including books
-without spoken chapter numbers. Its toggle is under Step 1's advanced
-transcription settings. Rerun chapter detection to apply it to a saved transcript.
+Chapter editing includes **Clean Chapter Titles** with undo. **Improved Chapter
+Detection — Experimental** is off by default under Step 1's advanced transcription
+settings. It combines numbered sections, isolated spoken titles, source markers,
+conservative acoustic cues, and bounded heading rechecks using the existing model.
+Suggestions stay outside the exported chapter list until accepted and saved.
+Rerun chapter detection to apply it to a saved transcript; existing saved toggle
+choices are respected, and no additional models are installed.
 See [chapter detection and cleanup](CHAPTER-DETECTION.md)
 for usage, evidence thresholds, caching, and known limitations.
 

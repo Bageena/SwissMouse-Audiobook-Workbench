@@ -1,0 +1,66 @@
+# Alpha 5 release preparation — 2026-10-27
+
+Prepared version: `0.1.0-alpha.5`; intended tag: `v0.1.0-alpha.5`.
+This is preparation evidence on Windows, not final maintainer acceptance.
+Nothing was pushed, tagged, dispatched or published during preparation.
+
+## Checks
+
+| Check | Result |
+| --- | --- |
+| Package/lockfile/header version | Alpha 5; release workflow rejects a mismatched input tag or existing tag at another commit. |
+| Type-check | `npm.cmd run lint` passed. |
+| Production build | Passed; existing large-browser-bundle warning remains. |
+| Foundation suite | 55 passed, no failures or skips. |
+| Workspace suite | 62 passed, no failures or skips. |
+| Audio suite | 403 passed, no failures, 2 optional real-inference tests skipped; 405 total. |
+| Audiobookshelf compatibility reference | Workflow's pinned file and SHA-256 checked; parser compatibility test included in the audio run. Reference stays in ignored `.cache/`. |
+| Metadata regression | M4A/M4B language read-back included in the passing metadata-write test. |
+| Production package | Separate disposable copy installed 93 production packages with `npm ci --omit=dev`; package-local dependency resolution, catalog worker/query, jobs API, webpage and served notices passed the smoke check. |
+| Public input audit | Tracked/staged source and assembled package passed; an injected test runtime payload was rejected. |
+| Gitleaks 8.30.1 | Staged changes, exported public tree, assembled package and Git history passed with no findings. Final outgoing commits are scanned again after commit/merge. Reports stay local and ignored. |
+| Screenshots | Cheese and Forest captured from an isolated empty installation; images visually inspected, with no personal paths, library titles, account data or logs visible. |
+
+The two skipped audio tests require real Whisper/Faster Whisper inference inputs
+or runtime configuration. Online YouTube import, full-book transcription, GPU
+combinations, physical USB/NAS failures, pristine-machine installation and final
+maintainer testing are not established by these checks. CI was prepared but not
+dispatched. See the existing verification guides for earlier, separately dated
+evidence and limits.
+
+## Corrections found during preparation
+
+- Register the waveform and interactive transcript in the shared panel catalog.
+- Preserve the M4A/M4B audio language when remuxing metadata.
+- Keep a current Final Check report associated with verified destination paths
+  after transfer/cleanup and same-file reorganization. Equivalent contributor
+  arrays and empty memberships discovered from sidecars do not stale the check;
+  changed contributors still do.
+- Update old transfer/Inbox fixtures to contain genuinely matching output tags,
+  duration, artwork and sidecars, restore actual source bytes, and recheck after
+  rollback. Move eligibility is tested through its current shared component.
+
+## Public file boundaries
+
+The commits and package exclude local job/config/preferences files and backups,
+SQLite databases/WALs, downloaded tools, models, dependency installations,
+working audio, generated test directories and loose root-level review captures.
+Original local files were preserved. New public screenshots are under
+`docs/screenshots/`; they replace the old remote README captures.
+
+Source tests, `REQUIREMENTS.md`, first-party installer logic, the npm lockfile,
+example themes and source/build instructions are intentional public inputs.
+The browser bundle includes licensed dependencies. Paper & Ink SVG adaptations
+retain Lucide/Feather notices; Forest photographs have Unsplash source/license
+records. These intentional assets are documented in `THIRD_PARTY.md`.
+
+The historical Python executable at commit `30b8cd5` is already an ancestor of
+`origin/main`. It is not introduced by the outgoing commits and is absent from
+the current source tree/package. History was not rewritten; the earlier
+`LICENSING_AUDIT.md` retains this separate historical follow-up.
+
+## Handoff
+
+Complete final testing and commit any fixes, then follow
+[the release command and packaging guide](RELEASING.md). The release notes are
+[prepared here](releases/alpha5.md). Package files remain generated and ignored.
