@@ -500,6 +500,11 @@ export default function App() {
           break;
         }
       }
+      // Detection/extraction replaced the saved chapter list. Do not reopen
+      // the editor with the draft retained from before this successful run.
+      if ((step === 'detecting_chapters' || step === 'extracting_chapters') && chapterDraftRef.current?.jobId === currentJob.id) {
+        chapterDraftRef.current = null;
+      }
     } catch (error) {
       console.error('Step failed:', error);
       setShowLogsDrawer(true);

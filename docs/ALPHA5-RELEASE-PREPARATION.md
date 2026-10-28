@@ -61,6 +61,17 @@ the current source tree/package. History was not rewritten; the earlier
 
 ## Handoff
 
+### Manual chapter-detection rerun follow-up
+
+The chapter editor retained its previous in-memory draft after a successful
+Detect chapters rerun, masking the replacement saved by the server. Successful
+detection/extraction now clears that retained draft before the project refresh;
+failed or cancelled runs do not reach that reset. The existing 13 focused
+rerun/editor/API tests, type-check and production build passed. In an isolated
+browser project, a manual rerun replaced an old draft with the new Prologue and
+Chapter 2, while ordinary screen navigation still retained unsaved manual edits.
+The app's normal confirmation was accepted manually during this check.
+
 Complete final testing and commit any fixes, then follow
 [the release command and packaging guide](RELEASING.md). The release notes are
 [prepared here](releases/alpha5.md). Package files remain generated and ignored.
