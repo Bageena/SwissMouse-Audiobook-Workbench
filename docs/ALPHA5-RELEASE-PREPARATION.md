@@ -74,6 +74,11 @@ The app's normal confirmation was accepted manually during this check.
 
 ### Player theme follow-up
 
+Dark's main workspace now separates steel-blue header strips from recessed navy
+panel interiors, with clearer borders and restrained champagne title edges.
+The player is unchanged. Synthetic browser preview, build/lint and 15 focused
+header/appearance tests passed.
+
 Dark combines a midnight-blue/pewter interface with champagne accents and an
 original moonlit-coast player background. Its separate charcoal-to-midnight-blue
 overlay leaves the headland and silver water reflections visible on the right.
