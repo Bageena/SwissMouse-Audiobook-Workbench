@@ -4,6 +4,20 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QuickPlaybackController, type ListeningCheckpoint, type QuickAudio, type QuickPlaybackDependencies } from '../src/playback/QuickPlaybackController';
 import { QuickPlayer, listeningTime } from '../src/components/QuickPlayer';
+import { MiniPlayerControls } from '../src/components/MiniPlayerControls';
+
+test('source checks block controls without dimming available stop and previous actions', () => {
+  const html = renderToStaticMarkup(React.createElement(MiniPlayerControls, {
+    playing: false, busy: true, onTogglePlay() {}, onStop() {}, onPrevious() {},
+  }));
+  const buttons = [...html.matchAll(/<button\b[^>]*>/g)].map(match => match[0]);
+  for (const label of ['Previous chapter', 'Stop audiobook playback']) {
+    const button = buttons.find(value => value.includes(`aria-label="${label}"`))!;
+    assert.match(button, /disabled=""/);
+    assert.doesNotMatch(button, /opacity-50/);
+  }
+  assert.match(buttons.find(value => value.includes('aria-label="Next chapter"'))!, /opacity-50/);
+});
 
 test('same-book playback revalidation retains timeline rows until the response arrives', async () => {
   const waiting = deferred<ReturnType<typeof response>>();

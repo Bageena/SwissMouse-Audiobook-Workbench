@@ -74,6 +74,10 @@ The app's normal confirmation was accepted manually during this check.
 
 ### Player theme follow-up
 
+Same-book source checks now block input separately from unavailable controls,
+preventing Stop/Previous from briefly dimming on Play. Unavailable actions retain
+their dimmed appearance. Lint, build and all 18 playback tests passed.
+
 Play revalidation now retains the same book's duration, position and playlist
 while fetching a fresh manifest, preventing temporary row removal and header
 collapse. The numeric elapsed label is retained too. All 17 playback tests,

@@ -52,19 +52,20 @@ export function QuickPlayer({ jobId, playRequest = 0, listLabel = 'Playlist', sh
     const chapter = { title: segment.title, startSeconds: elapsed }; elapsed += segment.durationSeconds; return chapter;
   });
   const currentChapter = chapters.reduce((found, chapter, index) => chapter.startSeconds <= state.positionSeconds ? index : found, -1);
-  const unavailable = !state.totalDurationSeconds || state.status === 'loading';
+  const unavailable = !state.totalDurationSeconds;
+  const revalidating = state.status === 'loading' && !unavailable;
 
   return <div className="quick-player text-xs" data-playing={state.status === 'playing'} aria-label="Quick audiobook player">
     {state.preview && <div className="mb-1 flex items-center gap-2"><span className="min-w-0 flex-1 truncate" title={state.preview.file}>Preview: {state.preview.file}</span><button type="button" onClick={() => void endPreview()} className="underline">Return to book</button></div>}
     <div className="quick-player-transport grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
       <MiniPlayerControls playing={active} onTogglePlay={() => void (active ? pause() : play())} onStop={() => void stop()}
-        disabled={unavailable} playDisabled={state.status === 'loading'} showSkipControls={showSkipControls}
+        disabled={unavailable} busy={revalidating} playDisabled={state.status === 'loading'} showSkipControls={showSkipControls}
         onSkip={seconds => void seek(Math.max(0, Math.min(state.totalDurationSeconds, state.positionSeconds + seconds)))}
         onPrevious={!unavailable && !state.preview ? () => void seek(chapters[Math.max(0, currentChapter - 1)]?.startSeconds || 0) : undefined}
         onNext={!unavailable && !state.preview && currentChapter + 1 < chapters.length ? () => void seek(chapters[currentChapter + 1]?.startSeconds || 0) : undefined} />
       <div className="col-span-2 row-start-1 min-w-0">
         <MiniPlayerSeek position={state.positionSeconds} duration={state.totalDurationSeconds} onSeek={seconds => void seek(seconds)}
-          formatTime={listeningTime} disabled={unavailable} loading={state.status === 'loading' && !state.totalDurationSeconds} chapters={state.preview ? [] : chapters} />
+          formatTime={listeningTime} disabled={unavailable || revalidating} loading={state.status === 'loading' && !state.totalDurationSeconds} chapters={state.preview ? [] : chapters} />
       </div>
       <div className="quick-player-volume flex shrink-0 items-center gap-1">
         <button type="button" className="quick-player-control inline-flex items-center justify-center rounded border border-stone-300 text-stone-800 hover:bg-stone-50"
