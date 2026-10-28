@@ -199,6 +199,13 @@ export class QuickPlaybackController {
   };
 
   selectBook = async (jobId: string, localBookmark?: PlaybackBookmark): Promise<void> => {
+    // A same-book revalidation must not collapse the player's timeline/playlist
+    // while its fresh manifest is in flight. Switching books still clears them.
+    const retainedDisplay = this.state.jobId === jobId && !this.state.preview ? {
+      chapters: this.state.chapters, queue: this.state.queue,
+      totalDurationSeconds: this.state.totalDurationSeconds,
+      positionSeconds: this.state.positionSeconds,
+    } : {};
     // Stop and snapshot synchronously; a slow save cannot keep the old audio alive.
     void this.stop();
     const generation = ++this.generation;
@@ -209,7 +216,7 @@ export class QuickPlaybackController {
     else if (this.resumeAfterLoadFailure?.bookId !== jobId) this.resumeAfterLoadFailure = undefined;
     this.manifest = undefined;
     this.sessionStarted = false;
-    this.update({ ...emptyQuickPlayback, volume: this.state.volume, muted: this.state.muted, chapters: undefined, queue: undefined, preview: undefined, jobId, status: 'loading', error: undefined, notice: undefined });
+    this.update({ ...emptyQuickPlayback, volume: this.state.volume, muted: this.state.muted, chapters: undefined, queue: undefined, ...retainedDisplay, preview: undefined, jobId, status: 'loading', error: undefined, notice: undefined });
     try {
       const response = await this.dependencies.request(`/api/jobs/${encodeURIComponent(jobId)}/playback`, { signal });
       const data = await response.json() as { manifest: PlaybackManifest; resume: ResolvedBookmark; error?: string };

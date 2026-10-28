@@ -5,6 +5,30 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QuickPlaybackController, type ListeningCheckpoint, type QuickAudio, type QuickPlaybackDependencies } from '../src/playback/QuickPlaybackController';
 import { QuickPlayer, listeningTime } from '../src/components/QuickPlayer';
 
+test('same-book playback revalidation retains timeline rows until the response arrives', async () => {
+  const waiting = deferred<ReturnType<typeof response>>();
+  let loads = 0;
+  const f = fixture({ request: async (_url, init) => {
+    if (init?.method === 'POST') return response({});
+    if (++loads > 1) return waiting.promise;
+    const media = manifest();
+    return response({ manifest: media, resume: locatePosition(media, 12) });
+  } });
+  await f.controller.selectBook('book-a');
+  const before = f.controller.getSnapshot();
+  const playing = f.controller.play();
+  const loading = f.controller.getSnapshot();
+  assert.equal(loading.status, 'loading');
+  assert.equal(loading.totalDurationSeconds, before.totalDurationSeconds);
+  assert.deepEqual(loading.queue, before.queue);
+  assert.equal(loading.positionSeconds, before.positionSeconds);
+  const media = manifest();
+  waiting.resolve(response({ manifest: media, resume: locatePosition(media, 12) }));
+  await playing;
+  assert.equal(f.controller.getSnapshot().status, 'playing');
+  f.controller.dispose();
+});
+
 test('mini player keeps five-second skipping optional and off by default', () => {
   const normal = renderToStaticMarkup(React.createElement(QuickPlayer, { jobId: 'fixture' }));
   assert.doesNotMatch(normal, /Rewind 5 seconds|Forward 5 seconds/);

@@ -74,6 +74,11 @@ The app's normal confirmation was accepted manually during this check.
 
 ### Player theme follow-up
 
+Play revalidation now retains the same book's duration, position and playlist
+while fetching a fresh manifest, preventing temporary row removal and header
+collapse. The numeric elapsed label is retained too. All 17 playback tests,
+including a delayed-response regression, lint and build passed.
+
 Removed the shared playback-only scaling glow from every theme to prevent screen
 movement when the top player runs. Browser playback confirmed the player has no
 animation or glow pseudo-elements while playing. Lint, build and 11 focused

@@ -64,7 +64,7 @@ export function QuickPlayer({ jobId, playRequest = 0, listLabel = 'Playlist', sh
         onNext={!unavailable && !state.preview && currentChapter + 1 < chapters.length ? () => void seek(chapters[currentChapter + 1]?.startSeconds || 0) : undefined} />
       <div className="col-span-2 row-start-1 min-w-0">
         <MiniPlayerSeek position={state.positionSeconds} duration={state.totalDurationSeconds} onSeek={seconds => void seek(seconds)}
-          formatTime={listeningTime} disabled={unavailable} loading={state.status === 'loading'} chapters={state.preview ? [] : chapters} />
+          formatTime={listeningTime} disabled={unavailable} loading={state.status === 'loading' && !state.totalDurationSeconds} chapters={state.preview ? [] : chapters} />
       </div>
       <div className="quick-player-volume flex shrink-0 items-center gap-1">
         <button type="button" className="quick-player-control inline-flex items-center justify-center rounded border border-stone-300 text-stone-800 hover:bg-stone-50"
