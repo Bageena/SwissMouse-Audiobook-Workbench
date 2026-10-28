@@ -79,6 +79,9 @@ Light uses an original generated sunlit library background with an ivory and
 pearl overlay; Forest retains its snowy pines and existing overlay. Other themes
 use their own palette and paper assets. No personal library data or external
 photograph was used for the new image; its prompt is recorded beside the asset.
+Blue's workspace adds a deeper sea-glass backdrop, pearl panel interiors, broad
+faint shadows and clearer aqua fields/selections. Player, header strip and workflow
+note colors are preserved. The isolated browser preview, lint and build passed.
 Blue now uses a soft ocean palette throughout: pale aqua surfaces, misty ivory
 highlights, sea-glass accents and slate text, with matching waveform/chapter
 highlights. Its original misty-ocean player artwork and floating details were

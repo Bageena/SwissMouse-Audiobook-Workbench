@@ -124,12 +124,12 @@
 }
 
 :root[data-theme="blue"] {
-  --sm-app-bg: #dce9e9;
-  --sm-app-bg-top: #eff4f1;
+  --sm-app-bg: #c6dddc;
+  --sm-app-bg-top: #dfede8;
   --sm-surface: #f1f7f5;
   --sm-surface-elevated: #fafbf7;
   --sm-surface-subtle: #e5efed;
-  --sm-input: #edf4f1;
+  --sm-input: #e2efec;
   --sm-hover: #d5e6e3;
   --sm-ink: #2c444b;
   --sm-text-secondary: #49636a;
@@ -592,7 +592,7 @@ textarea {
 
 .theme-swatch-light { --swatch-bg: #f4f2ed; --swatch-surface: #fffefc; }
 .theme-swatch-parchment { --swatch-bg: #eee5cf; --swatch-surface: #fbf5e7; }
-.theme-swatch-blue { --swatch-bg: #dfe9f0; --swatch-surface: #f5f9fb; }
+.theme-swatch-blue { --swatch-bg: #c6dddc; --swatch-surface: #f7fbf8; }
 .theme-swatch-slate { --swatch-bg: #cbd1d6; --swatch-surface: #e8ebed; }
 .theme-swatch-forest { --swatch-bg: #dbe2d4; --swatch-surface: #f5f4e9; }
 .theme-swatch-dark { --swatch-bg: #171a1d; --swatch-surface: #2b3035; }

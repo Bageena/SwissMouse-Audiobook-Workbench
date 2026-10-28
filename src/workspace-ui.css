@@ -174,6 +174,19 @@
 :root[data-theme="cheese"] .book-selector { background-image: linear-gradient(#fff9ed88, #fff9ed88), var(--sm-paper); background-size: auto, 700px; }
 :root[data-theme="cheese"] .workspace-columns > div > .workspace-panel { box-shadow: 0 2px 3px #302e2926, 2px 7px 12px -6px #302e294d; }
 
+/* Pearl sheets above sea glass; preserve the Blue header and preview palette. */
+:root[data-theme="blue"] main :is(.workspace-panel, .library-media-card) {
+  background-color: #f7fbf8;
+  border-color: #aac6c5;
+  box-shadow: inset 0 1px 0 #ffffffb3, 0 8px 24px -12px #416d7052;
+}
+:root[data-theme="blue"] main .desktop-window[data-desktop-window]:not(:has(.preview-panel)) {
+  --sm-child-panel-shadow: inset 0 1px 0 #ffffffb3, 0 8px 24px -12px #416d7052;
+}
+:root[data-theme="blue"] main :is(.chapter-explorer-table tr[aria-selected="true"], .directory-tree-row[aria-selected="true"]) {
+  background-color: #d2e7e2;
+  box-shadow: inset 3px 0 0 #39747c;
+}
 .library-column-header { position: relative; overflow: hidden; text-overflow: ellipsis; }
 .library-column-resizer { position: absolute; top: 0; right: 0; bottom: 0; width: 10px; cursor: col-resize; touch-action: none; user-select: none; }
 .library-column-resizer::after { content: ''; position: absolute; top: 20%; bottom: 20%; right: 4px; width: 1px; background: var(--sm-border); }
