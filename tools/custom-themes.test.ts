@@ -19,7 +19,7 @@ test('switching themes clears custom tokens and tolerates blocked browser storag
     Object.defineProperty(globalThis, 'document', { configurable: true, value: { documentElement: root } });
     Object.defineProperty(globalThis, 'window', { configurable: true, value: { dispatchEvent() {} } });
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('Storage blocked'); } });
-    assert.equal(getStoredTheme(), 'light');
+    assert.equal(getStoredTheme(), 'forest');
     applyTheme('custom', { id: 'custom', name: 'Custom', version: '1', extends: 'blue', tokens: { '--sm-accent': '#123456' } });
     assert.equal(root.dataset.theme, 'blue');
     assert.equal(tokens.get('--sm-accent'), '#123456');

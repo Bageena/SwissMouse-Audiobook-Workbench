@@ -2,7 +2,7 @@
 
 Cheese is an additional built-in theme. Light, Parchment, Blue, Slate, Forest,
 and Dark retain their existing palettes. Select Cheese in Settings → Appearance.
-Existing saved theme selections and the default Light theme are preserved.
+Existing saved theme selections are preserved. Forest is the default when no theme is saved.
 
 The visual direction is a warm, slightly darker fibrous sketchbook: yellow
 watercolor washes, cream paper surfaces, charcoal shadows, pencil-like body

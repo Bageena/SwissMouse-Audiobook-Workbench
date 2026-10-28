@@ -74,6 +74,9 @@ The app's normal confirmation was accepted manually during this check.
 
 ### Player theme follow-up
 
+Forest is the default for new/unset appearance preferences and invalid or missing
+theme fallbacks. Existing saved built-in/custom theme selections are preserved.
+
 Added a separate warm ivory/amber ambient-light layer around the player, enabled
 by default. Settings → Appearance / Theme → Player ambient glow saves an on/off
 preference. Only fixed decorative light layers drift; the player never scales.

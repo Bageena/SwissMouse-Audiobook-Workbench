@@ -31,7 +31,7 @@ import { LogsDrawer } from './components/LogsDrawer';
 import { QUICK_ADD_CATEGORIES, cleanQuickTags } from './utils/metadataQuickAdd';
 import { chapterReviewChanged } from './utils/chapterReviewDraft';
 import { stopQuickPlayback } from './playback/QuickPlaybackController';
-import { CustomTheme, ThemeDiscoveryResponse, getStoredTheme, isAppTheme, persistTheme } from './theme';
+import { CustomTheme, ThemeDiscoveryResponse, DEFAULT_THEME, getStoredTheme, isAppTheme, persistTheme } from './theme';
 import type { JobLog } from './types';
 
 const { BookFiles, LibraryManager, Step1MergeDetect, Step2ChapterReview, Step3Metadata, Step4Export, Step5Validate } = audiobookModule.screens;
@@ -213,15 +213,15 @@ export default function App() {
         setTheme(selected);
         persistTheme(selected, customTheme);
       } else {
-        setTheme('light');
-        persistTheme('light');
+        setTheme(DEFAULT_THEME);
+        persistTheme(DEFAULT_THEME);
       }
     } catch (error) {
       console.error('Failed to load custom themes:', error);
       setThemeWarnings([error instanceof Error ? error.message : 'Could not load custom themes.']);
       if (!isAppTheme(getStoredTheme())) {
-        setTheme('light');
-        persistTheme('light');
+        setTheme(DEFAULT_THEME);
+        persistTheme(DEFAULT_THEME);
       }
     } finally {
       setIsReloadingThemes(false);

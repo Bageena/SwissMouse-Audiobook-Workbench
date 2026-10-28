@@ -29,6 +29,7 @@ export const themeLabels: Record<AppTheme, string> = {
 };
 
 export const THEME_STORAGE_KEY = 'swissmouse_appearance_theme';
+export const DEFAULT_THEME: AppTheme = 'forest';
 let appliedCustomTokens = new Set<string>();
 
 export function isAppTheme(value: string | null): value is AppTheme {
@@ -38,15 +39,15 @@ export function isAppTheme(value: string | null): value is AppTheme {
 export function getStoredTheme(): string {
   try {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    return stored && /^[a-z][a-z0-9-]{1,63}$/.test(stored) ? stored : 'light';
-  } catch { return 'light'; }
+    return stored && /^[a-z][a-z0-9-]{1,63}$/.test(stored) ? stored : DEFAULT_THEME;
+  } catch { return DEFAULT_THEME; }
 }
 
 export function applyTheme(themeId: string, customTheme?: CustomTheme): void {
   for (const token of appliedCustomTokens) document.documentElement.style.removeProperty(token);
   appliedCustomTokens = new Set();
 
-  const baseTheme = customTheme?.extends ?? (isAppTheme(themeId) ? themeId : 'light');
+  const baseTheme = customTheme?.extends ?? (isAppTheme(themeId) ? themeId : DEFAULT_THEME);
   document.documentElement.dataset.theme = baseTheme;
   document.documentElement.dataset.themeId = customTheme?.id ?? baseTheme;
   document.documentElement.style.colorScheme = baseTheme === 'dark' ? 'dark' : 'light';
