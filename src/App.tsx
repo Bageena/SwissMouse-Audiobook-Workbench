@@ -1059,6 +1059,7 @@ export default function App() {
 
   const workspaceHeader = (
       <Header
+        ambientGlow={config?.player_ambient_glow !== false}
         currentJob={currentJob}
         libraryPlayerJob={libraryPlayerJob}
         playRequest={libraryPlayRequest}

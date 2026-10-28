@@ -57,6 +57,8 @@ export interface QuickPlaybackDependencies {
 
 /** One streaming player and save queue, independent of where its controls render. */
 export class QuickPlaybackController {
+  /** Read-only tap for optional visuals; never changes the audible output route. */
+  getAudioElement = (): QuickAudio | undefined => this.audio;
   private state: QuickPlaybackState = emptyQuickPlayback;
   private listeners = new Set<() => void>();
   private manifest?: PlaybackManifest;

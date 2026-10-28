@@ -1,5 +1,6 @@
 import type { BackendCapabilities, TranscriptionBackend, TranscriptionSettings } from './transcription';
 export interface WorkbenchConfig {
+  player_ambient_glow?: boolean;
   audiobookshelf_metadata?: boolean;
   save_cover_beside_audio?: boolean;
   quick_tags?: string[];

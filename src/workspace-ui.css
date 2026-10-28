@@ -815,6 +815,34 @@
 .header-side-dock .desktop-window[data-window-nested="true"] { max-width: 36vw; }
 .header-edge-dock { display: flex; gap: 4px; align-items: center; }
 .header-media-player { min-width: 0; }
+/* Only these decorative layers change. The player and its layout stay still. */
+.player-ambient-light {
+  position: absolute; inset: -22px -26px -28px; z-index: -1;
+  pointer-events: none; border-radius: 30px;
+  opacity: .16; transition: opacity 1.4s ease;
+  filter: blur(16px);
+}
+.player-ambient-light[data-playing="true"] { opacity: var(--player-light-level, .32); }
+.player-ambient-light::before, .player-ambient-light::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  background: radial-gradient(ellipse at 25% 65%, #ffe1a6 0%, #edb46599 30%, transparent 68%);
+  background-size: 130% 130%; background-position: 10% 45%;
+}
+.player-ambient-light::after {
+  background-image: radial-gradient(ellipse at 78% 70%, #fff0c4 0%, #e9a94e80 28%, transparent 65%);
+  opacity: .7;
+}
+.player-ambient-light[data-playing="true"]::before { animation: player-light-drift 23s ease-in-out infinite alternate; }
+.player-ambient-light[data-playing="true"]::after { animation: player-light-drift 31s ease-in-out -9s infinite alternate-reverse; }
+@keyframes player-light-drift {
+  from { background-position: 10% 45%; opacity: .65; }
+  to { background-position: 70% 70%; opacity: .95; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .player-ambient-light, .player-ambient-light[data-playing="true"] { opacity: .2; transition: none; }
+  .player-ambient-light[data-playing="true"]::before,
+  .player-ambient-light[data-playing="true"]::after { animation: none; }
+}
 :root .desktop-window[data-desktop-window="header-media-player"][data-selected="true"] { outline: none; }
 .desktop-window[data-desktop-window="header-media-player"] {
   --sm-player-shadow-ink: var(--sm-ink);

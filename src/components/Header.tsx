@@ -12,8 +12,10 @@ import { Activity, Plus, Settings, Trash2, Terminal, Wrench, Eye, EyeOff } from 
 import { BookSelector } from './BookSelector';
 import swissMouseLogo from '../assets/swissmouse-logo.svg';
 import appPackage from '../../package.json';
+import { PlayerAmbientGlow } from './PlayerAmbientGlow';
 
 interface HeaderProps {
+  ambientGlow?: boolean;
   busy?: boolean;
   onRecheckAudio?: () => Promise<string>;
   onShowLogs?: () => void;
@@ -34,6 +36,7 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({
+  ambientGlow = true,
   busy, onRecheckAudio, onShowLogs,
   libraryPlayerJob,
   playRequest,
@@ -103,6 +106,7 @@ export const Header: React.FC<HeaderProps> = ({
     } player={
       <DesktopWindow id="header-media-player" title="Media Player" role="child" homeWindow={HEADER_PANEL_ID} minimumWidth={240}>
         <div className="header-media-player">
+          <PlayerAmbientGlow enabled={ambientGlow} />
           <div data-container-heading className="media-player-heading"><span className="workspace-panel-title">Media Player</span></div>
           {playerJob ? (
             <BookSelector currentJob={playerJob} inShelf={!currentJob} playRequest={currentJob ? 0 : playRequest} onRatingChange={onRatingChange} />

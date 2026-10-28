@@ -74,6 +74,17 @@ The app's normal confirmation was accepted manually during this check.
 
 ### Player theme follow-up
 
+Added a separate warm ivory/amber ambient-light layer around the player, enabled
+by default. Settings → Appearance / Theme → Player ambient glow saves an on/off
+preference. Only fixed decorative light layers drift; the player never scales.
+Supported browsers can sample a captured copy of playing audio (256 samples at
+10 Hz) to drive a smoothed, capped brightness envelope without rerouting output.
+Unsupported capture falls back to subtle ambient drift. Sampling stops when
+paused, muted, hidden, disabled or reduced-motion is requested; reduced-motion
+also keeps the glow static. No canvas, dependencies or React updates per sample.
+The isolated browser verified audio response and saved off/on persistence.
+Lint/build, 33 focused unit/render tests and 11 playback/API tests passed.
+
 Same-book source checks now block input separately from unavailable controls,
 preventing Stop/Previous from briefly dimming on Play. Unavailable actions retain
 their dimmed appearance. Lint, build and all 18 playback tests passed.

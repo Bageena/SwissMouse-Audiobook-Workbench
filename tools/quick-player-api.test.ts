@@ -84,6 +84,15 @@ test('quick player API persists listening separately, streams associated media, 
   let current: PlaybackManifest;
   try {
     await start();
+    await t.test('ambient glow defaults on, persists off, and rejects non-boolean values', async () => {
+      assert.equal((await request('/api/config')).player_ambient_glow, true);
+      await request('/api/config', { player_ambient_glow: false });
+      assert.equal((await request('/api/config')).player_ambient_glow, false);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8')).player_ambient_glow, false);
+      await request('/api/config', { player_ambient_glow: 'false' }, 400);
+      assert.equal((await request('/api/config')).player_ambient_glow, false);
+      await request('/api/config', { player_ambient_glow: true });
+    });
     await t.test('only explicit ordered members are exposed, with a complete cumulative duration', async () => {
       const result = await request('/api/jobs/listen/playback');
       current = result.manifest;

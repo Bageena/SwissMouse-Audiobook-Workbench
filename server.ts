@@ -515,6 +515,7 @@ const defaultConfig: WorkbenchConfig = {
   save_cover_beside_audio: true,
   quick_tags: [...QUICK_ADD_CATEGORIES],
   pcm_retention: 'after_verified_export',
+  player_ambient_glow: true,
   inbox_folder: appPath('inbox'),
   library_folder: appPath('output'),
   library_template: DEFAULT_LIBRARY_TEMPLATE,
@@ -3441,6 +3442,7 @@ app.get('/api/config', (req, res) => {
 // Update configuration
 app.post('/api/config', asyncRoute(async (req, res) => {
   const updates = req.body;
+  if (updates.player_ambient_glow !== undefined && typeof updates.player_ambient_glow !== 'boolean') return res.status(400).json({ error: 'Player ambient glow must be on or off.' });
   if (updates.pcm_retention !== undefined && !['after_verified_export', 'until_finalized', 'keep'].includes(updates.pcm_retention)) return res.status(400).json({ error: 'Choose a supported PCM retention setting.' });
   if (updates.detect_musical_transitions !== undefined && typeof updates.detect_musical_transitions !== 'boolean') return res.status(400).json({ error: 'Music transition detection must be a boolean.' });
   if (updates.library_folder !== undefined && typeof updates.library_folder !== 'string') return res.status(400).json({ error: 'Library folder must be a path.' });
