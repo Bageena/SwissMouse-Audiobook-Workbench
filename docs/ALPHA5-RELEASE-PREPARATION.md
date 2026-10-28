@@ -72,6 +72,16 @@ browser project, a manual rerun replaced an old draft with the new Prologue and
 Chapter 2, while ordinary screen navigation still retained unsaved manual edits.
 The app's normal confirmation was accepted manually during this check.
 
+### Player theme follow-up
+
+Floating controls, cover art, text and stars now apply across all seven themes.
+Light uses an original generated sunlit library background with an ivory and
+pearl overlay; Forest retains its snowy pines and existing overlay. Other themes
+use their own palette and paper assets. No personal library data or external
+photograph was used for the new image; its prompt is recorded beside the asset.
+All seven themes were checked in an isolated synthetic browser project. Lint,
+the production build and 22 focused player/header/theme tests passed.
+
 Complete final testing and commit any fixes, then follow
 [the release command and packaging guide](RELEASING.md). The release notes are
 [prepared here](releases/alpha5.md). Package files remain generated and ignored.

@@ -13,7 +13,8 @@ test('header provides docking regions, a real toolbar, and media player containe
   for (const side of ['left', 'right']) assert.ok(html.includes(`data-header-dock="${side}"`));
   assert.match(html, /role="toolbar" aria-label="Header Toolbar" aria-orientation="horizontal"/);
   assert.match(html, /data-desktop-window="header-media-player"/);
-  assert.match(html, /Show controls for Media Player/);
+  assert.match(html, /data-panel-name="Media Player" data-panel-role="child"/);
+  assert.doesNotMatch(html, /Show controls for Media Player/); // Layout handles start hidden.
   assert.ok(html.includes('aria-label="Import Book"'));
 });
 

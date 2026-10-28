@@ -75,6 +75,11 @@ the files in `src/assets/textures/forest-snow-pines-source.md` and
 AGPL. The generated oak desktop has its creation record in
 `src/assets/textures/Cheese/old-oak-desk-v1.md`. No font binaries are shipped.
 
+Light's sunlit-library player background was generated with the built-in imagegen
+tool. Its creation details and final prompt are recorded in
+`src/assets/textures/light-sunlit-library-v1-source.md`; no external photograph or
+user library image was used.
+
 From the included source root with Node.js 22 and npm, run `npm ci --include=dev`, then `npm run build`. The Vite notice generator fails when a bundled package has no recognized license text; review new packages rather than bypassing the failure. `npx tsx scripts/build-release.ts` assembles the release and requires generated notices. Both the Windows build script and GitHub workflow use this assembler.
 
 Keep `LICENSE`, source/build scripts, `THIRD_PARTY.md`, and `dist/THIRD_PARTY_NOTICES.txt` with the distribution. Publish from a clean checkout; do not inject personal/custom themes into the example-theme directories. See [LICENSING_AUDIT.md](LICENSING_AUDIT.md) for the dated evidence, limitations, and historical follow-up.
