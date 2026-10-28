@@ -77,6 +77,9 @@ The app's normal confirmation was accepted manually during this check.
 Added a separate warm ivory/amber ambient-light layer around the player, enabled
 by default. Settings → Appearance / Theme → Player ambient glow saves an on/off
 preference. Only fixed decorative light layers drift; the player never scales.
+Visibility was increased with an outward warm edge halo, 34% paused brightness
+and a smoothed 46–66% playing range. Build/lint and 20 relevant tests passed;
+the isolated Slate browser preview verified the clearer light without transforms.
 Supported browsers can sample a captured copy of playing audio (256 samples at
 10 Hz) to drive a smoothed, capped brightness envelope without rerouting output.
 Unsupported capture falls back to subtle ambient drift. Sampling stops when

@@ -51,7 +51,7 @@ export function PlayerAmbientGlow({ enabled }: { enabled: boolean }) {
         timer = setInterval(() => {
           analyser.getByteTimeDomainData(samples);
           level = nextAmbientLightLevel(samples, level);
-          element.style.setProperty('--player-light-level', String(.24 + level * .18));
+          element.style.setProperty('--player-light-level', String(.46 + level * .2));
         }, 100);
       } catch { clean(); }
     };

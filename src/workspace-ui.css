@@ -817,12 +817,13 @@
 .header-media-player { min-width: 0; }
 /* Only these decorative layers change. The player and its layout stay still. */
 .player-ambient-light {
-  position: absolute; inset: -22px -26px -28px; z-index: -1;
+  position: absolute; inset: -8px -12px -14px; z-index: -1;
   pointer-events: none; border-radius: 30px;
-  opacity: .16; transition: opacity 1.4s ease;
-  filter: blur(16px);
+  opacity: .34; transition: opacity 1.4s ease;
+  box-shadow: -10px 8px 28px 5px #f4bd6b99, 12px 12px 32px 8px #ffe5a3a6;
+  filter: blur(12px);
 }
-.player-ambient-light[data-playing="true"] { opacity: var(--player-light-level, .32); }
+.player-ambient-light[data-playing="true"] { opacity: var(--player-light-level, .52); }
 .player-ambient-light::before, .player-ambient-light::after {
   content: ''; position: absolute; inset: 0; border-radius: inherit;
   background: radial-gradient(ellipse at 25% 65%, #ffe1a6 0%, #edb46599 30%, transparent 68%);
@@ -839,7 +840,7 @@
   to { background-position: 70% 70%; opacity: .95; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .player-ambient-light, .player-ambient-light[data-playing="true"] { opacity: .2; transition: none; }
+  .player-ambient-light, .player-ambient-light[data-playing="true"] { opacity: .4; transition: none; }
   .player-ambient-light[data-playing="true"]::before,
   .player-ambient-light[data-playing="true"]::after { animation: none; }
 }
