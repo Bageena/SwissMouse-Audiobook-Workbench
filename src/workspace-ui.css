@@ -859,6 +859,14 @@
   --sm-player-star-outline: #597b82;
   --sm-player-star-fill: #39747c;
 }
+:root[data-theme="slate"] .desktop-window[data-desktop-window="header-media-player"] {
+  --sm-player-shadow-ink: #263742;
+  --sm-player-highlight: #e8edf0;
+  --sm-player-control-bg: #dde5e9e6;
+  --sm-player-cover-border: #e4e9ec;
+  --sm-player-star-outline: #586c7b;
+  --sm-player-star-fill: #815333;
+}
 :root[data-theme="dark"] .desktop-window[data-desktop-window="header-media-player"] {
   --sm-player-shadow-ink: #050708;
   --sm-player-highlight: #515a63;
@@ -899,6 +907,11 @@
 }
 :root[data-theme="blue"] .desktop-window .header-media-player > .book-selector {
   background-image: linear-gradient(110deg, #f5faf4ed 0%, #dfefebbd 48%, #b1cecf52 100%), url('./assets/textures/blue-misty-ocean-v1.png');
+  background-size: cover;
+  background-position: center, center 55%;
+}
+:root[data-theme="slate"] .desktop-window .header-media-player > .book-selector {
+  background-image: linear-gradient(110deg, #e0e6eaf0 0%, #cbd6dfcc 48%, #a4b5c3b3 100%), url('./assets/textures/slate-misty-lake-v1.png');
   background-size: cover;
   background-position: center, center 55%;
 }

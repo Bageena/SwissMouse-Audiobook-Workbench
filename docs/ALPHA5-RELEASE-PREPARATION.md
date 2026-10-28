@@ -79,6 +79,10 @@ Light uses an original generated sunlit library background with an ivory and
 pearl overlay; Forest retains its snowy pines and existing overlay. Other themes
 use their own palette and paper assets. No personal library data or external
 photograph was used for the new image; its prompt is recorded beside the asset.
+Slate now uses a medium smoky blue-grey workspace, pewter panels, darker header
+strips and muted copper accents. Its original mountain-lake player artwork uses
+a silver/smoky-blue overlay. The isolated browser preview, lint, build and 22
+focused player/header/theme tests passed.
 Blue's workspace adds a deeper sea-glass backdrop, pearl panel interiors, broad
 faint shadows and clearer aqua fields/selections. Player, header strip and workflow
 note colors are preserved. The isolated browser preview, lint and build passed.
