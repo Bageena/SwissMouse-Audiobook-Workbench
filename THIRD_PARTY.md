@@ -75,6 +75,10 @@ the files in `src/assets/textures/forest-snow-pines-source.md` and
 AGPL. The generated oak desktop has its creation record in
 `src/assets/textures/Cheese/old-oak-desk-v1.md`. No font binaries are shipped.
 
+Blue's misty-ocean player background is original built-in imagegen artwork, with
+its final prompt in `src/assets/textures/blue-misty-ocean-v1-source.md`. No external
+photograph or personal library data was supplied.
+
 Parchment's writing-desk player background is original built-in imagegen artwork.
 Its final prompt is recorded in `src/assets/textures/parchment-writing-desk-v1-source.md`;
 no external photograph, real map or personal library data was supplied.
