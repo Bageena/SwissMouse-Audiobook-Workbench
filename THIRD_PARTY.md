@@ -75,6 +75,10 @@ the files in `src/assets/textures/forest-snow-pines-source.md` and
 AGPL. The generated oak desktop has its creation record in
 `src/assets/textures/Cheese/old-oak-desk-v1.md`. No font binaries are shipped.
 
+Parchment's writing-desk player background is original built-in imagegen artwork.
+Its final prompt is recorded in `src/assets/textures/parchment-writing-desk-v1-source.md`;
+no external photograph, real map or personal library data was supplied.
+
 Light's sunlit-library player background was generated with the built-in imagegen
 tool. Its creation details and final prompt are recorded in
 `src/assets/textures/light-sunlit-library-v1-source.md`; no external photograph or

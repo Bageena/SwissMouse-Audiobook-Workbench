@@ -827,6 +827,17 @@
   --sm-player-glow-right: #648e7040;
   border-color: #56735c80;
 }
+:root[data-theme="parchment"] .desktop-window[data-desktop-window="header-media-player"] {
+  --sm-player-shadow-ink: #593e25;
+  --sm-player-highlight: #fff9e9;
+  --sm-player-text: #493322;
+  --sm-player-control-bg: #fff7e6e6;
+  --sm-player-cover-border: #fff3d6;
+  --sm-player-star-outline: #806646;
+  --sm-player-star-fill: #9b702b;
+  --sm-player-glow-left: #dbb87940;
+  --sm-player-glow-right: #aa815540;
+}
 :root[data-theme="dark"] .desktop-window[data-desktop-window="header-media-player"] {
   --sm-player-shadow-ink: #050708;
   --sm-player-highlight: #515a63;
@@ -859,6 +870,11 @@
   background-image: linear-gradient(110deg, #fffcf5f2 0%, #f5f3edcc 48%, #e5e5e04d 100%), url('./assets/textures/light-sunlit-library-v1.png');
   background-size: cover;
   background-position: center, center 45%;
+}
+:root[data-theme="parchment"] .desktop-window .header-media-player > .book-selector {
+  background-image: linear-gradient(110deg, #fff9eaf2 0%, #eedbb6b8 48%, #b6986d66 100%), url('./assets/textures/parchment-writing-desk-v1.png');
+  background-size: cover;
+  background-position: center, center;
 }
 :root[data-theme="forest"] .desktop-window .header-media-player > .book-selector {
   background-image: linear-gradient(110deg, #fff9e8de 0%, #e6ede0b3 48%, #a7bba58c 100%), url('./assets/textures/forest-snow-pines.jpg');

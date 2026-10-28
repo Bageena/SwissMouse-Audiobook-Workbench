@@ -79,6 +79,9 @@ Light uses an original generated sunlit library background with an ivory and
 pearl overlay; Forest retains its snowy pines and existing overlay. Other themes
 use their own palette and paper assets. No personal library data or external
 photograph was used for the new image; its prompt is recorded beside the asset.
+Parchment additionally uses original writing-desk/map artwork, an ivory-to-honey
+and sepia overlay, warm brown shadows, cream highlights and antique-gold stars.
+Its final player appearance was checked with synthetic metadata in the browser.
 All seven themes were checked in an isolated synthetic browser project. Lint,
 the production build and 22 focused player/header/theme tests passed.
 
