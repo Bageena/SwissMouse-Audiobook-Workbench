@@ -205,28 +205,28 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --sm-app-bg: #171a1d;
-  --sm-app-bg-top: #202429;
-  --sm-surface: #23272b;
-  --sm-surface-elevated: #2b3035;
-  --sm-surface-subtle: #292e32;
-  --sm-input: #30363b;
-  --sm-hover: #383f44;
-  --sm-ink: #f0ede7;
-  --sm-text-secondary: #d1ccc4;
-  --sm-muted: #aaa49b;
-  --sm-border: #4b5258;
-  --sm-border-soft: #3b4247;
-  --sm-accent: #cf873b;
-  --sm-accent-hover: #e09a50;
-  --sm-accent-soft: #493825;
-  --sm-accent-text: #f2bc7e;
-  --sm-secondary-accent: #8fb16d;
-  --sm-strong: #383e43;
-  --sm-strong-hover: #454c52;
-  --sm-on-strong: #f4f1eb;
-  --sm-on-strong-muted: #d2cdc5;
-  --sm-on-accent: #201a14;
+  --sm-app-bg: #151d27;
+  --sm-app-bg-top: #1c2835;
+  --sm-surface: #222e3b;
+  --sm-surface-elevated: #2b3948;
+  --sm-surface-subtle: #2d3d4d;
+  --sm-input: #192430;
+  --sm-hover: #394d5f;
+  --sm-ink: #e4e8e9;
+  --sm-text-secondary: #bdc9d1;
+  --sm-muted: #a9b8c5;
+  --sm-border: #455668;
+  --sm-border-soft: #354656;
+  --sm-accent: #d1b582;
+  --sm-accent-hover: #e1c89c;
+  --sm-accent-soft: #413c33;
+  --sm-accent-text: #e6cfa4;
+  --sm-secondary-accent: #8fa8bd;
+  --sm-strong: #354b5d;
+  --sm-strong-hover: #425e73;
+  --sm-on-strong: #e4e8e9;
+  --sm-on-strong-muted: #bdc9d1;
+  --sm-on-accent: #211e18;
   --sm-success: #67d2a5;
   --sm-success-soft: #203d33;
   --sm-warning: #efb366;
@@ -235,7 +235,13 @@
   --sm-error-soft: #4b282b;
   --sm-info: #8dc5f4;
   --sm-info-soft: #24394c;
-  --sm-ring: rgba(224, 154, 80, 0.48);
+  --sm-ring: rgba(209, 181, 130, 0.48);
+  --sm-waveform: #8fa8bd;
+  --sm-waveform-playhead: #d1b582;
+  --sm-chapter-marker: #a9b8c5;
+  --sm-chapter-marker-selected: #d1b582;
+  --sm-transcript-highlight: #494332;
+  --sm-transcript-highlight-text: #f0e1c5;
   --sm-overlay: rgba(5, 7, 8, 0.72);
 }
 
@@ -602,7 +608,7 @@ textarea {
 .theme-swatch-blue { --swatch-bg: #c6dddc; --swatch-surface: #f7fbf8; }
 .theme-swatch-slate { --swatch-bg: #a5b0b9; --swatch-surface: #d1d8dd; }
 .theme-swatch-forest { --swatch-bg: #dbe2d4; --swatch-surface: #f5f4e9; }
-.theme-swatch-dark { --swatch-bg: #171a1d; --swatch-surface: #2b3035; }
+.theme-swatch-dark { --swatch-bg: #151d27; --swatch-surface: #222e3b; }
 .theme-swatch-custom { --swatch-bg: var(--sm-app-bg); --swatch-surface: var(--sm-accent); }
 
 .transcript-word-active,

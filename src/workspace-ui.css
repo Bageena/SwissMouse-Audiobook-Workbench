@@ -893,8 +893,14 @@
 }
 :root[data-theme="dark"] .desktop-window[data-desktop-window="header-media-player"] {
   --sm-player-shadow-ink: #050708;
-  --sm-player-highlight: #515a63;
-  --sm-player-cover-border: var(--sm-border);
+  --sm-player-highlight: #485b6c;
+  --sm-player-control-bg: #202c39ed;
+  --sm-player-cover-border: #617487;
+  --sm-player-star-outline: #9eafbf;
+  --sm-player-star-fill: #d1b582;
+}
+:root[data-theme="dark"] .desktop-window .header-media-player :is(.book-information > p, .mini-player-seek > div:first-child, .quick-player > p) {
+  text-shadow: 0 1px 2px #060d16, 0 0 4px #060d16;
 }
 :root[data-theme] .desktop-window .header-media-player > .book-selector {
   background-color: var(--sm-surface);
@@ -921,6 +927,11 @@
   background-image: linear-gradient(110deg, #e0e6eae6 0%, #cbd6df70 42%, #a4b5c30d 100%), url('./assets/textures/slate-crescent-water-v2.png');
   background-size: cover;
   background-position: center, center 45%;
+}
+:root[data-theme="dark"] .desktop-window .header-media-player > .book-selector {
+  background-image: linear-gradient(110deg, #111a25ed 0%, #14283a9e 46%, #35485933 100%), url('./assets/textures/dark-moonlit-coast-v1.png');
+  background-size: cover;
+  background-position: center, center 48%;
 }
 :root[data-theme="forest"] .desktop-window .header-media-player > .book-selector {
   background-image: linear-gradient(110deg, #fff9e8de 0%, #e6ede0b3 48%, #a7bba58c 100%), url('./assets/textures/forest-snow-pines.jpg');

@@ -75,6 +75,10 @@ the files in `src/assets/textures/forest-snow-pines-source.md` and
 AGPL. The generated oak desktop has its creation record in
 `src/assets/textures/Cheese/old-oak-desk-v1.md`. No font binaries are shipped.
 
+Dark's moonlit-coast player background is original built-in imagegen artwork;
+its prompt is recorded in `src/assets/textures/dark-moonlit-coast-v1-source.md`.
+No external photograph or personal library data was supplied.
+
 Slate's misty mountain-lake player background is original built-in imagegen
 artwork. Its prompt is recorded in `src/assets/textures/slate-misty-lake-v1-source.md`;
 no external photograph or personal library data was supplied. Its Lake Crescent

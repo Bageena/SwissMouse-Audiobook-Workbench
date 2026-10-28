@@ -74,6 +74,13 @@ The app's normal confirmation was accepted manually during this check.
 
 ### Player theme follow-up
 
+Dark combines a midnight-blue/pewter interface with champagne accents and an
+original moonlit-coast player background. Its separate charcoal-to-midnight-blue
+overlay leaves the headland and silver water reflections visible on the right.
+Pearl text uses dark shadows for contrast; controls have charcoal surfaces and
+silver edges. Forest remains the default. The synthetic browser preview,
+lint/build and 35 focused appearance/player tests passed.
+
 Forest is the default for new/unset appearance preferences and invalid or missing
 theme fallbacks. Existing saved built-in/custom theme selections are preserved.
 
