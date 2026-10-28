@@ -824,8 +824,6 @@
   --sm-player-cover-border: var(--sm-surface-elevated);
   --sm-player-star-outline: var(--sm-muted);
   --sm-player-star-fill: var(--sm-accent);
-  --sm-player-glow-left: color-mix(in srgb, var(--sm-accent) 25%, transparent);
-  --sm-player-glow-right: color-mix(in srgb, var(--sm-secondary-accent) 25%, transparent);
   isolation: isolate; border-color: var(--sm-border);
 }
 :root[data-theme="forest"] .desktop-window[data-desktop-window="header-media-player"] {
@@ -836,8 +834,6 @@
   --sm-player-cover-border: #fff8e6;
   --sm-player-star-outline: #61734c;
   --sm-player-star-fill: #a47122;
-  --sm-player-glow-left: #87bdd540;
-  --sm-player-glow-right: #648e7040;
   border-color: #56735c80;
 }
 :root[data-theme="parchment"] .desktop-window[data-desktop-window="header-media-player"] {
@@ -848,8 +844,6 @@
   --sm-player-cover-border: #fff3d6;
   --sm-player-star-outline: #806646;
   --sm-player-star-fill: #9b702b;
-  --sm-player-glow-left: #dbb87940;
-  --sm-player-glow-right: #aa815540;
 }
 :root[data-theme="blue"] .desktop-window[data-desktop-window="header-media-player"] {
   --sm-player-shadow-ink: #35565e;
@@ -871,23 +865,6 @@
   --sm-player-shadow-ink: #050708;
   --sm-player-highlight: #515a63;
   --sm-player-cover-border: var(--sm-border);
-}
-.desktop-window[data-desktop-window="header-media-player"]:has(.quick-player[data-playing="true"])::before,
-.desktop-window[data-desktop-window="header-media-player"]:has(.quick-player[data-playing="true"])::after {
-  content: ''; position: absolute; inset: 3px; border-radius: inherit;
-  pointer-events: none; z-index: -1;
-  box-shadow: -12px 0 24px 6px var(--sm-player-glow-left), 12px 0 24px 6px var(--sm-player-glow-right);
-  animation: player-ambient-ripple 7s ease-in-out infinite;
-}
-.desktop-window[data-desktop-window="header-media-player"]:has(.quick-player[data-playing="true"])::after { animation-delay: -3.5s; }
-@keyframes player-ambient-ripple {
-  0%, 100% { opacity: .35; transform: scale(1); }
-  50% { opacity: .75; transform: scale(1.025, 1.07); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .desktop-window[data-desktop-window="header-media-player"]:has(.quick-player[data-playing="true"])::before,
-  .desktop-window[data-desktop-window="header-media-player"]:has(.quick-player[data-playing="true"])::after { animation: none; opacity: .45; }
-  .desktop-window[data-desktop-window="header-media-player"]:has(.quick-player[data-playing="true"])::after { display: none; }
 }
 :root[data-theme] .desktop-window .header-media-player > .book-selector {
   background-color: var(--sm-surface);

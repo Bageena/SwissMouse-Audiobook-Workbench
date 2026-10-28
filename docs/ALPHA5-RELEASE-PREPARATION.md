@@ -74,6 +74,11 @@ The app's normal confirmation was accepted manually during this check.
 
 ### Player theme follow-up
 
+Removed the shared playback-only scaling glow from every theme to prevent screen
+movement when the top player runs. Browser playback confirmed the player has no
+animation or glow pseudo-elements while playing. Lint, build and 11 focused
+player/header tests passed.
+
 Floating controls, cover art, text and stars now apply across all seven themes.
 Light uses an original generated sunlit library background with an ivory and
 pearl overlay; Forest retains its snowy pines and existing overlay. Other themes
