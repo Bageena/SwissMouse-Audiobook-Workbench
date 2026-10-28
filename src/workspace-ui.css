@@ -819,7 +819,7 @@
 .player-ambient-light {
   position: absolute; inset: -8px -12px -14px; z-index: -1;
   pointer-events: none; border-radius: 30px;
-  opacity: .34; transition: opacity 1.4s ease;
+  opacity: 0; transition: opacity 1.4s ease;
   box-shadow: -10px 8px 28px 5px #f4bd6b99, 12px 12px 32px 8px #ffe5a3a6;
   filter: blur(12px);
 }
@@ -840,7 +840,8 @@
   to { background-position: 70% 70%; opacity: .95; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .player-ambient-light, .player-ambient-light[data-playing="true"] { opacity: .4; transition: none; }
+  .player-ambient-light { opacity: 0; transition: none; }
+  .player-ambient-light[data-playing="true"] { opacity: .4; }
   .player-ambient-light[data-playing="true"]::before,
   .player-ambient-light[data-playing="true"]::after { animation: none; }
 }

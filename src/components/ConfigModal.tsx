@@ -145,7 +145,7 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, theme, customT
             <legend className="px-1 text-xs font-semibold text-stone-900">Appearance / Theme</legend>
             <label className="flex items-start gap-2 text-xs text-stone-800">
               <input type="checkbox" checked={form.player_ambient_glow !== false} onChange={event => setForm({ ...form, player_ambient_glow: event.target.checked })} />
-              <span><span className="font-semibold">Player ambient glow</span><span className="block text-[11px] text-stone-600">Soft warm light around the player. Gently follows audio when supported; reduced-motion mode keeps the light steady. Applied when you save settings.</span></span>
+              <span><span className="font-semibold">Player ambient glow</span><span className="block text-[11px] text-stone-600">Soft warm light while audio plays. Gently follows audio when supported; reduced-motion mode keeps the light steady. Applied when you save settings.</span></span>
             </label>
             <p className="text-[11px] text-stone-500">Choose a comfortable palette. Your choice is saved automatically and shared across windows using this SwissMouse installation.</p>
             <p className="pt-1 text-[10px] font-bold uppercase tracking-wider text-stone-500">Built-in</p>
