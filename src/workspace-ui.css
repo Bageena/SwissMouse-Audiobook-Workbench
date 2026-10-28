@@ -913,7 +913,7 @@
 :root[data-theme="slate"] .desktop-window .header-media-player > .book-selector {
   background-image: linear-gradient(110deg, #e0e6eae6 0%, #cbd6df70 42%, #a4b5c30d 100%), url('./assets/textures/slate-crescent-water-v2.png');
   background-size: cover;
-  background-position: center, center 55%;
+  background-position: center, center 45%;
 }
 :root[data-theme="forest"] .desktop-window .header-media-player > .book-selector {
   background-image: linear-gradient(110deg, #fff9e8de 0%, #e6ede0b3 48%, #a7bba58c 100%), url('./assets/textures/forest-snow-pines.jpg');
