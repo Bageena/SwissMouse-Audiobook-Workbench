@@ -79,6 +79,11 @@ Light uses an original generated sunlit library background with an ivory and
 pearl overlay; Forest retains its snowy pines and existing overlay. Other themes
 use their own palette and paper assets. No personal library data or external
 photograph was used for the new image; its prompt is recorded beside the asset.
+Slate's lake revision preserves the mountain/cloud scene, changes the water to a
+Lake Crescent-inspired turquoise-to-deep-blue shift, and substantially reduces
+the right-side overlay. Pale shadowed timing labels remain readable over the
+deeper water. Original generated artwork and research sources are recorded
+beside the asset; no external photograph is redistributed.
 Slate now uses a medium smoky blue-grey workspace, pewter panels, darker header
 strips and muted copper accents. Its original mountain-lake player artwork uses
 a silver/smoky-blue overlay. The isolated browser preview, lint, build and 22

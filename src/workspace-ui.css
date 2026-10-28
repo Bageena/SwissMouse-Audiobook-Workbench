@@ -911,7 +911,7 @@
   background-position: center, center 55%;
 }
 :root[data-theme="slate"] .desktop-window .header-media-player > .book-selector {
-  background-image: linear-gradient(110deg, #e0e6eaf0 0%, #cbd6dfcc 48%, #a4b5c3b3 100%), url('./assets/textures/slate-misty-lake-v1.png');
+  background-image: linear-gradient(110deg, #e0e6eae6 0%, #cbd6df70 42%, #a4b5c30d 100%), url('./assets/textures/slate-crescent-water-v2.png');
   background-size: cover;
   background-position: center, center 55%;
 }
@@ -938,6 +938,10 @@
 }
 :root[data-theme] .header-media-player .mini-player-seek > div:first-child {
   font-size: 11px;
+}
+:root[data-theme="slate"] .header-media-player :is(.mini-player-seek > div:first-child > span:last-child, .quick-player > p) {
+  color: #f4f8fb;
+  text-shadow: 0 1px 2px #172d41, 0 0 4px #172d41;
 }
 :root[data-theme] .header-media-player .book-cover {
   transform: translateY(-2px);

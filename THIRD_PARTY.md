@@ -77,7 +77,8 @@ AGPL. The generated oak desktop has its creation record in
 
 Slate's misty mountain-lake player background is original built-in imagegen
 artwork. Its prompt is recorded in `src/assets/textures/slate-misty-lake-v1-source.md`;
-no external photograph or personal library data was supplied.
+no external photograph or personal library data was supplied. Its Lake Crescent
+water-color revision is documented in `src/assets/textures/slate-crescent-water-v2-source.md`.
 
 Blue's misty-ocean player background is original built-in imagegen artwork, with
 its final prompt in `src/assets/textures/blue-misty-ocean-v1-source.md`. No external
