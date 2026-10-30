@@ -10,7 +10,7 @@ Completely detach the Audiobook module from the core application, move it into i
 
 The extraction needs explicit ownership of shared services and audiobook-specific behavior, a host/module compatibility contract, and an installation/loading lifecycle. Preserve existing project identities, saved work, source media, and processing behavior through the transition. Core services should remain available independently of the Audiobook module.
 
-Repository location, package format, delivery mechanism, and update/removal behavior still need design. The existing [extension contracts](EXTENSION-CONTRACTS.md) describe the starting implementation and provisional boundaries; they are not yet a completed installer.
+The [Batch 11 checkpoint](BATCH11-SEPARATE-APPLICATION.md) records the implementation and review delivery: public Core in `Bageena/SwissMouse`, the module in the existing `Bageena/SwissMouse-Audiobook-Workbench`, and a verified application package using protocol 2 / SDK 0.0.2. Independent builds and disposable installation/removal/reinstall checks have passed. The changes are in draft pull requests, not merged or released. The broader plugin ecosystem and richer shared settings experience remain separate work.
 
 ## 2. Preferences and Quick Settings
 

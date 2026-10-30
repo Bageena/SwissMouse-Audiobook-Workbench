@@ -33,6 +33,8 @@ Install, enable and update activate after restart. Disable/remove drain the runn
 
 ## Commands and delivery checks
 
+The commands below describe the combined extraction checkout. In the separate Core repository use its README's normal `build`, `start` and `test` scripts; the portable assembled-installation verifier is included there. Build the module separately with its `module:build:full` script.
+
 - `npm run build:core`: build Core independently.
 - `npm run module:build:full`: build the full Audiobook package and development trust catalog.
 - `npm run test:separation`: Core-only, contributions, installed full application, and legacy API 1 lifecycle regressions.
@@ -50,6 +52,13 @@ The assembled independent-installation acceptance passed with data in the system
 
 Browser inspection verified full workspace loading, embedded module preference saving, disabling the module, and removal of its settings/dependency prompts while Core remained available. These are disposable-fixture checks, not evidence of real-model accuracy or large-library performance. The production CJS build reports esbuild's guarded `import.meta` warning in runtime resolution; the CJS branch uses its own filename and the isolated acceptance verified dependency resolution successfully.
 
-Repository/branch delivery remains the final publication step. Local candidate preparation alone is not remote repository delivery. The existing combined development checkout still launches the legacy app by default; the Core repository candidate uses its own normal build/start commands.
+## Repository delivery
+
+The new public Core repository is created. The code is published in two draft pull requests, preserving the existing Audiobook repository history:
+
+- [SwissMouse Core, PR 1](https://github.com/Bageena/SwissMouse/pull/1), branch `codex/alpha6-core`.
+- [Audiobook Workbench, PR 9](https://github.com/Bageena/SwissMouse-Audiobook-Workbench/pull/9), branch `codex/alpha6-audiobook-module`.
+
+The implementation and repository split are delivered for review. They have not been merged or released, and the running real-library installation has not been switched. The combined development checkout still launches the legacy app by default; the Core repository uses its own normal build/start commands. The portable `scripts/verify-separated-installation.mjs` is included in Core for repeating the assembled check against a separately built module archive.
 
 Remaining Alpha 6 work includes the broader Preferences/extension contribution experience, Notes, full resource browsing and taxonomy adoption, and richer file/audio tools including bulk actions and EQ. Batch 10's wider mixed-library and concurrent-workload performance acceptance also remains open.
