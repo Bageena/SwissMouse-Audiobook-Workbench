@@ -19,6 +19,18 @@ export class DurableProjectStore extends ProjectStore {
   private dirtyRecords = new Map<string, AudiobookJob>();
   private external = new Map<string, WeakRef<AudiobookJob>>();
   private restoring = false;
+  private selectionCommit?: { receipt: string; payload: string };
+  /** The source receipt and canonical save share the project transaction; no media payload field. */
+  withSelectionCommit(receipt: string, payload: string, save: () => void) {
+    if (this.selectionCommit) throw new Error('A selection save is already active.');
+    this.selectionCommit = { receipt, payload };
+    try { save(); } finally { this.selectionCommit = undefined; }
+  }
+  selectionOutbox() {
+    if (Number(this.db.prepare('PRAGMA user_version').get()!.user_version) < 2) return [];
+    return this.db.prepare('SELECT receipt,payload FROM project_selection_outbox ORDER BY rowid LIMIT 100').all();
+  }
+  acknowledgeSelection(receipt: string) { this.db.prepare('DELETE FROM project_selection_outbox WHERE receipt=?').run(receipt); }
   constructor(file: string, warning?: (message: string) => void) {
     super(file, warning);
     this.db = openProjectDatabase(file + '.sqlite', warning);
@@ -198,6 +210,11 @@ export class DurableProjectStore extends ProjectStore {
         write.run(id, payload, this.nextVersion(), Number(backup));
       }
       for (const id of this.removed) this.db.prepare('UPDATE project_state SET deleted=1,version=? WHERE id=?').run(this.nextVersion(), id);
+      if (this.selectionCommit) {
+        const previous = this.db.prepare('SELECT payload FROM project_selection_outbox WHERE receipt=?').get(this.selectionCommit.receipt);
+        if (previous && previous.payload !== this.selectionCommit.payload) throw new Error('Conflicting source selection receipt.');
+        this.db.prepare('INSERT OR IGNORE INTO project_selection_outbox VALUES(?,?)').run(this.selectionCommit.receipt,this.selectionCommit.payload);
+      }
     });
     for (const id of this.removed) { this.live.delete(id); this.recent.delete(id); this.external.delete(id); this.records.delete(id); this.resident.delete(id); }
     this.dirty.clear(); this.dirtyRecords.clear(); this.removed.clear();

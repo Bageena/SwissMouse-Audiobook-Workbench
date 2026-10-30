@@ -1,0 +1,11 @@
+{
+  "name": "@swissmouse/audiobooks",
+  "version": "0.0.3",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "peerDependencies": {
+    "@swissmouse/sdk": "0.0.2"
+  },
+  "description": "SwissMouse Audiobook Workbench module, including the full workspace candidate"
+}

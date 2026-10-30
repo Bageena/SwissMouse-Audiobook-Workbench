@@ -19,7 +19,7 @@ export function createModuleRegistry() {
       if (new Set(ids).size !== ids.length || ids.some(id => !id.startsWith(manifest.id + '.'))) throw new Error('Workspace IDs must be unique and namespaced by module.');
       const definition = Object.freeze({ manifest, screens });
       modules.set(manifest.id, definition);
-      return definition;
+      return Object.freeze({ ...definition, unregister: () => { if (modules.get(manifest.id) === definition) modules.delete(manifest.id); } });
     },
     list: () => [...modules.values()].map(module => module.manifest),
   };

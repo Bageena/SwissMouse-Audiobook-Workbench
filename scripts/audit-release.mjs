@@ -23,12 +23,12 @@ if (packageRoot) {
 } else {
   files = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8', cwd: root }).split('\0').filter(Boolean);
 }
-const roots = new Set(['src', 'tools', 'scripts', 'themes', 'docs', '.github', ...(packageRoot ? ['dist'] : [])]);
+const roots = new Set(['src', 'packages', 'tools', 'scripts', 'themes', 'docs', '.github', ...(packageRoot ? ['dist'] : [])]);
 const rootFiles = new Set(['.env.example', '.gitignore', 'LICENSE', 'package.json', 'package-lock.json', 'server.ts', 'index.html', 'tsconfig.json', 'vite.config.ts', 'Start Audiobook Workbench.bat']);
 for (const file of files) {
   const parts = file.split('/');
   assert.ok(parts.length > 1 ? roots.has(parts[0]) : rootFiles.has(file) || /^[A-Z][A-Z0-9_-]*\.md$/.test(file), `Unexpected public path: ${file}`);
-  assert.ok(!/(^|\/)(node_modules|runtime|models|inputs|inbox|output|listening|logs|\.cache|\.tmp|local)(\/|$)|^tools\/yt-dlp(?:\/|$)/i.test(file), `Private or installed component: ${file}`);
+  assert.ok(!/(^|\/)(node_modules|runtime|models|inputs|inbox|output|listening|logs|\.cache|\.tmp|local|\.installed-modules)(\/|$)|^tools\/yt-dlp(?:\/|$)|(^|\/)module-trust\.json$|\.smmodule$/i.test(file), `Private or installed component: ${file}`);
   assert.ok(!/\.(exe|dll|so|dylib|msi|zip|7z|rar|whl|nupkg|pt|onnx|safetensors|sqlite(?:-shm|-wal)?|bak|mp3|m4b|m4a|flac|ogg|opus|wav|mp4)$/i.test(file), `Binary, media, model, archive or local state: ${file}`);
   assert.ok(!/(^|\/)(jobs|config|ui-preferences)\.json$|^\.gitleaks-report/i.test(file), `Local data: ${file}`);
 }

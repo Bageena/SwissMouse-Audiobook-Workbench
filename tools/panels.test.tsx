@@ -1,10 +1,13 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Workspace, WorkspaceContainer, getPanelDefinition, listPanelDefinitions, registerPanel, canDockPanel } from '../src/workspace';
 import { filterPanelGroups } from '../src/workspace/panels';
+import { activateBuiltInAudiobooks } from '../src/modules/builtins';
+
+after(activateBuiltInAudiobooks());
 
 test('every built-in workspace panel has a unique catalog identity and friendly name', () => {
   const definitions = listPanelDefinitions();

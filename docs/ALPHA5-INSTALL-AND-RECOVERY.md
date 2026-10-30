@@ -1,5 +1,7 @@
 # Alpha 5 installation, backup and recovery
 
+This guide applies to the released Alpha 5 build. Alpha 6 is in development; its upgrade and recovery behavior must be verified before release rather than inferred from this guide.
+
 Alpha 5 is verified on Windows. Linux remains a future compatibility goal; support and release testing are deferred until Beta.
 
 ## Recommended: a fresh installation

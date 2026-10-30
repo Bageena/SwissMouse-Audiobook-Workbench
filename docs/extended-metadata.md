@@ -1,4 +1,6 @@
-# Extended metadata (Alpha 5)
+# Extended metadata
+
+Current implementation guide for Alpha 6 development, based on the released Alpha 5 sidecar format.
 
 `exmetadata.json` is SwissMouse's portable sidecar. Its versioned JSON envelope contains:
 
@@ -19,7 +21,7 @@ Sidecar writes retain shared-folder ownership checks and atomic replacement. Mer
 
 Collections and Additional Series have independent autocomplete and Quick Add sections in Series & Taxonomy. Typed lookup searches all indexed names, not just the Quick Add subset. Quick Add combines five recent names with the author's existing memberships; series suggestions include primary and additional series. Existing Library collection operations synchronize saved project memberships without discarding drafts.
 
-Markdown descriptions are deferred to Alpha 6.
+Markdown descriptions remain an Alpha 6 follow-up; they are not implemented by this documentation update.
 
 Organize Library folder moves selected book audio and confidently associated sidecars into the configured Library pattern, creating the destination folders. It verifies the destination before removing originals; files shared with another project and ambiguous companions remain in place. Extended metadata is written inside the destination book folder, with optional Audiobookshelf compatibility metadata.
 

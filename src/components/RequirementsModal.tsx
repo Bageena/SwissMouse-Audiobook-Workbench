@@ -1,3 +1,4 @@
+import { requirementDetails } from '../preferences/requirements';
 import { capabilityLabel } from '../transcription';
 import { useDialogFocus } from '../utils/useDialogFocus';
 import { expandRequirementSelection, requirementDependencies } from '../../tools/requirements';
@@ -11,10 +12,11 @@ import { CheckCircle2, AlertTriangle, XCircle, RefreshCw, Cpu, Wrench, ShieldChe
 
 interface RequirementsModalProps {
   onClose: () => void;
+  embedded?: boolean;
 }
 
-export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose }) => {
-  const dialogRef = useDialogFocus(onClose);
+export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose, embedded = false }) => {
+  const dialogRef = useDialogFocus(onClose, !embedded);
   const [report, setReport] = useState<RequirementsReport | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -179,8 +181,8 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
   };
 
   return (
-    <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="System setup and tools" className="bg-white rounded-xl max-w-4xl w-full shadow-2xl border border-stone-200 flex flex-col max-h-[90vh] overflow-hidden">
+    <div className={embedded ? "" : "fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50"}>
+      <div ref={dialogRef} tabIndex={-1} role={embedded ? "region" : "dialog"} aria-modal={embedded ? undefined : true} aria-label="System setup and tools" className={`bg-white rounded-xl max-w-4xl w-full border border-stone-200 flex flex-col ${embedded ? "" : "shadow-2xl max-h-[90vh] overflow-hidden"}`}>
         {/* Header */}
         <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-stone-50">
           <div className="flex items-center space-x-2.5">
@@ -194,13 +196,13 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
               </p>
             </div>
           </div>
-          <button
+          {!embedded&&<button
             onClick={onClose}
             className="p-1.5 text-stone-400 hover:text-stone-700 rounded-lg hover:bg-stone-200/60 transition-colors cursor-pointer"
             title="Close dialog"
           >
             <X className="w-5 h-5" />
-          </button>
+          </button>}
         </div>
 
         {/* Scrollable Content Body */}
@@ -355,14 +357,14 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
                           <input type="checkbox" aria-label={`Include ${comp.name}`} checked={comp.classification === 'required' || selected.has(comp.id)}
                             disabled={comp.classification === 'required' || !comp.isAppManaged || busy || Object.entries(requirementDependencies).some(([parent, children]) => selected.has(parent) && children.includes(comp.id))}
                             onChange={event => setSelectedIds(ids => event.target.checked ? [...ids, comp.id] : ids.filter(id => id !== comp.id && !(requirementDependencies[comp.id] || []).includes(id)))} />
-                          <span className="font-semibold text-stone-900 text-xs">{comp.name}{comp.classification === 'required' ? ' (Required)' : ' (Optional)'}</span>
+                          <span className="font-semibold text-stone-900 text-xs">{comp.name}{comp.classification === 'required' ? ' (Required for audio workflows)' : comp.group === 'active_transcription' ? ' (Recommended)' : ' (Optional)'}</span>
                           <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${
                             comp.isAppManaged ? 'bg-stone-100 text-stone-600 border border-stone-200' : 'bg-stone-100 text-stone-500'
                           }`}>
                             {comp.source === 'system' ? 'System · in use' : comp.status === 'ready' ? 'App-managed · in use' : 'App-managed'}
                           </span>
                         </div>
-                        <p className="text-[11px] text-stone-500 leading-snug">{comp.purpose}</p>
+                        <p className="text-[11px] text-stone-500 leading-snug">{requirementDetails[comp.id]?.description || comp.purpose}</p>
                       </div>
 
                       <div className="shrink-0 ml-3 text-right">
@@ -375,6 +377,10 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
                       </div>
                     </div>
 
+                    {requirementDetails[comp.id] && <div className="space-y-1 text-xs text-stone-600">
+                      <p>Used by: {requirementDetails[comp.id].usedBy}</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1"><a className="font-semibold underline" href={requirementDetails[comp.id].website} target="_blank" rel="noopener noreferrer">Official website / source <ExternalLink className="inline h-3 w-3" /></a><a className="underline" href={requirementDetails[comp.id].licenseUrl} target="_blank" rel="noopener noreferrer">License: {requirementDetails[comp.id].license} <ExternalLink className="inline h-3 w-3" /></a></div>
+                    </div>}
                     {/* Diagnostic or error message */}
                     {comp.error ? (
                       <div className="p-2 rounded bg-amber-50/80 border border-amber-200 text-amber-900 text-[11px] flex items-start space-x-1.5">
@@ -537,12 +543,12 @@ export const RequirementsModal: React.FC<RequirementsModalProps> = ({ onClose })
           </div>
 
           <div className="flex items-center space-x-2">
-            <button
+            {!embedded&&<button
               onClick={onClose}
               className="px-3.5 py-1.5 rounded-lg border border-stone-300 text-stone-700 hover:bg-stone-100 font-medium text-xs transition-colors cursor-pointer"
             >
               Close
-            </button>
+            </button>}
             <button
               id="btn-requirements-install-repair"
               onClick={handleInstallRepair}

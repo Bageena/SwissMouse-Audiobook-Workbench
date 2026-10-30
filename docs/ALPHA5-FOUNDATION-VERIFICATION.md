@@ -1,5 +1,7 @@
 # Alpha 5 foundation verification
 
+Historical Alpha 5 verification guide and evidence. Alpha 5 has launched; active development is Alpha 6. The checks and package paths below retain their original scope and do not establish Alpha 6 validation. See the [current documentation index](README.md).
+
 Windows verification on 2026-10-21. Linux testing and support are deferred until Beta. This records the current acceptance evidence; it is not a promise of full Alpha 4 migration or a general plugin platform.
 
 | Foundation | Implemented and checked | Remaining limits |

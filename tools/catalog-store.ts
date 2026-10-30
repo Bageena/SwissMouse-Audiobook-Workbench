@@ -7,7 +7,12 @@ import type { ResourceSummary, ResourcePage } from '../src/core/resources';
 import type { LibraryBook } from '../src/types';
 import type { CatalogProject } from './catalog-projection';
 import { observeCatalogProject } from './catalog-availability';
-import { findBookMatches, matchCandidateKeys, pairKey } from './library-matches';
+import { findBookMatches, matchCandidateKeys } from './library-matches';
+import { inspectInformationUserFile } from './information-schema';
+import { InformationStore } from './information-store';
+import { InformationDirectory } from './information-directory';
+import type { SuggestionRequest, SelectionCommit } from '../packages/sdk/suggestions';
+import { InformationCapture, inspectInformationCapture } from './information-capture';
 
 export function resourceId(namespace: string, key: string) {
   return `res_${createHash('sha256').update(JSON.stringify([namespace, key])).digest('hex').slice(0, 32)}`;
@@ -23,9 +28,20 @@ export class CatalogStore {
   readonly db: DatabaseSync;
   private statements = new Map<string, ReturnType<DatabaseSync['prepare']>>();
   private counts = new Map<string, number>();
+  private information?: InformationStore;
+  private capture?: InformationCapture;
+  private directory?: InformationDirectory;
   constructor(readonly file: string) {
+    // Check authoritative/feature schemas before any catalog pragma or writes.
+    inspectInformationUserFile(file === ':memory:' ? ':memory:' : file + '.user.sqlite');
+    inspectInformationCapture(file);
+    if (process.env.SWISSMOUSE_INFORMATION_DURABLE === '1') {
+      if (file === ':memory:') throw new Error('Durable catalog capture requires a file-backed catalog.');
+      this.information = new InformationStore(file + '.user.sqlite', undefined, [file, path.join(path.dirname(file), 'jobs.json.sqlite')]);
+    }
     if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
     this.db = new DatabaseSync(file);
+    try {
     this.db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;');
     const version = Number(this.db.prepare('PRAGMA user_version').get()!.user_version);
     if (version > 1) { this.db.close(); throw new Error('This catalog was created by a newer SwissMouse version.'); }
@@ -91,6 +107,12 @@ export class CatalogStore {
         INSERT OR IGNORE INTO durable.collection_members SELECT * FROM main.collection_members;
         INSERT INTO durable.migration VALUES(1);`);
     });
+    if (this.information) this.capture = new InformationCapture(this.db, this.information);
+    if (process.env.SWISSMOUSE_INFORMATION_DIRECTORY === '1') {
+      if (!this.information) throw new Error('Shared directory requires durable information.');
+      this.directory = new InformationDirectory(this.db,this.information,[{providerId:'audiobooks.suggest-series',contextFieldIds:['audiobooks.authors']}]);
+    }
+    } catch (error) { this.db.close(); this.information?.close(); throw error; }
   }
   private statement(sql: string) {
     let statement = this.statements.get(sql);
@@ -104,7 +126,21 @@ export class CatalogStore {
   }
   revision(): number { return Number(this.statement("SELECT value FROM state WHERE key='revision'").get()!.value); }
   private changed() { this.statement("UPDATE state SET value=value+1 WHERE key='revision'").run(); }
-  close() { this.db.close(); }
+  close() { this.information?.close(); this.db.close(); }
+  informationAdvance() {
+    const status = this.capture?.advance() || {enabled:false};
+    if (this.directory) try { return {...status,pendingDirectory:this.directory.advance().pending}; }
+    catch (error) { return {...status,error:error instanceof Error ? error.message : String(error)}; }
+    return status;
+  }
+  informationSuggestions(input: SuggestionRequest) { if (!this.directory) throw new Error('Shared directory is not enabled.'); return this.directory.query(input); }
+  informationSelection(input: SelectionCommit) { if (!this.directory) throw new Error('Shared directory is not enabled.'); return this.directory.history.record(input); }
+  informationClearHistory() { if (!this.directory) throw new Error('Shared directory is not enabled.'); this.directory.history.clear(); return {cleared:true}; }
+  informationStatus() { return this.capture?.status() || { enabled: false }; }
+  informationPage(input: { limit?: number; cursor?: string; includeRetired?: boolean } = {}) {
+    if (!this.capture || !this.information) throw new Error('Durable information is not enabled.');
+    return { ...this.capture.projection.page(input), definitions: this.information.definitions(), status: this.capture.status(), readOnly: true };
+  }
 
   private resource(namespace: string, key: string, kind: string, title: string, date: string): string {
     const existing = this.statement('SELECT resource_id FROM durable.aliases WHERE namespace=? AND source_key=?').get(namespace, key);

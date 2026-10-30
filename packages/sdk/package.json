@@ -1,0 +1,24 @@
+{
+  "name": "@swissmouse/sdk",
+  "version": "0.0.2",
+  "private": true,
+  "type": "module",
+  "types": "index.ts",
+  "license": "AGPL-3.0-or-later",
+  "peerDependencies": {
+    "react": "^18.3.1"
+  },
+  "exports": {
+    ".": "./index.ts",
+    "./applications": "./applications.ts",
+    "./preferences": "./preferences.ts",
+    "./dependencies": "./dependencies.ts",
+    "./appearance": "./appearance.ts",
+    "./information": "./information.ts",
+    "./information-publication": "./information-publication.ts",
+    "./information-registry": "./information-registry.ts",
+    "./information-builtins": "./information-builtins.ts",
+    "./suggestions": "./suggestions.ts",
+    "./storage/*": "./storage/*.ts"
+  }
+}

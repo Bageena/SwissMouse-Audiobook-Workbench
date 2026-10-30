@@ -1,5 +1,7 @@
 # Alpha 5 adaptive workspace
 
+Historical implementation and verification record for the released Alpha 5 foundation. Alpha 6 is the active development cycle. Original plans, limitations, and verification results below retain their recorded scope; use the [current panel guides](PANELS.md) for ongoing development conventions.
+
 ## Initial audit and implementation plan
 
 The checkout already contained `DesktopWorkspace` / `DesktopWindow`, a panel

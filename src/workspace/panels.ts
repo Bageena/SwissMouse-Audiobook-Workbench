@@ -49,26 +49,13 @@ export function filterPanelGroups(groups: Record<string, string>, roleFor: (id: 
   })));
 }
 
-// Retain legacy instance IDs: saved page layouts must survive this catalog.
-const parents = [
-  ['application-header', 'Application Header'], ['library-navigation', 'Library navigation'], ['library-books', 'Library books'],
-  ['project-navigation', 'Project navigation'], ['project-overview', 'Project Overview'],
-  ['add-files', 'Add Files'], ['panel-File Manager', 'File Manager'],
-  ['panel-Processing Order', 'Processing Order'], ['processing-progress', 'Audio processing'],
-  ['processing-output', 'Output'], ['processing-options', 'Audio and Chapters'],
-  ['transcription-settings', 'Transcription and model settings'], ['processing-readiness', 'Workflow'],
-  ['chapter-review-workflow', 'Chapter review workflow'], ['chapter-player', 'Interactive Audio Player'], ['transcript', 'Transcript'], ['chapter-editor', 'Chapter Editor'],
-  ['final-check-workflow', 'Final check workflow'], ['conversion-workflow', 'Conversion workflow'], ['metadata', 'Metadata'], ['export', 'Convert'], ['final-check', 'Final check'],
-] as const;
-for (const [id, name] of parents) registerPanel({ id, name, role: 'parent', ...(id === 'project-navigation' ? { constraints: { minimumWidth: 56, minimumHeight: 48 } } : {}) });
-const children = [
-  ['chapter-creation', 'Chapter Creation'], ['audio-preparation', 'Audio Preparation'],
-  ['header-media-player', 'Media Player'], ['header-toolbar', 'Header Toolbar'], ['file-manager-toolbar', 'File Toolbar'],
-  ['metadata-cover', 'Cover art'], ['metadata-identity', 'Book title and contributors'],
-  ['metadata-taxonomy', 'Series & Taxonomy'], ['metadata-description', 'Description'],
-  ['metadata-publication', 'Publication'], ['metadata-identifiers', 'Identifiers'], ['metadata-rights', 'Rights'],
-] as const;
-for (const [id, name] of children) registerPanel({ id, name, role: 'child', defaultParent: id === 'chapter-creation' || id === 'audio-preparation' ? 'processing-options' : id === 'header-media-player' || id === 'header-toolbar' ? 'application-header' : id === 'file-manager-toolbar' ? 'panel-File Manager' : 'metadata' });
-registerPanel({ id: 'file-manager-folders', name: 'File Manager Folders', role: 'child', defaultParent: 'panel-File Manager' });
-registerPanel({ id: 'chapter-waveform', name: 'Waveform', role: 'child', defaultParent: 'chapter-player' });
-registerPanel({ id: 'interactive-transcription', name: 'Interactive Transcription Window', role: 'child', defaultParent: 'chapter-player' });
+// Standard shell and physical file-browser controls. Domain panels register on activation.
+for (const [id, name] of [
+  ['application-header', 'Application Header'], ['panel-File Manager', 'File Manager'],
+] as const) registerPanel({ id, name, role: 'parent' });
+for (const [id, name, defaultParent] of [
+  ['header-media-player', 'Media Player', 'application-header'],
+  ['header-toolbar', 'Header Toolbar', 'application-header'],
+  ['file-manager-toolbar', 'File Toolbar', 'panel-File Manager'],
+  ['file-manager-folders', 'File Manager Folders', 'panel-File Manager'],
+] as const) registerPanel({ id, name, role: 'child', defaultParent });

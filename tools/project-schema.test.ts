@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { DurableProjectStore } from './durable-project-store';
-import { PROJECT_SCHEMA_VERSION } from './project-schema';
+import { PROJECT_SCHEMA_VERSION, PROJECT_MAX_SCHEMA } from './project-schema';
 
 function fixture(t: any) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'swissmouse-schema-'));
@@ -47,7 +47,7 @@ test('unversioned database migration snapshots WAL data and preserves previous p
 
 test('future schema is refused without changing database bytes or creating replacement data', t => {
   const { file, root } = fixture(t), db = new DatabaseSync(file + '.sqlite');
-  db.exec(`PRAGMA user_version=${PROJECT_SCHEMA_VERSION + 1}; CREATE TABLE future(data TEXT); INSERT INTO future VALUES('keep');`); db.close();
+  db.exec(`PRAGMA user_version=${PROJECT_MAX_SCHEMA + 1}; CREATE TABLE future(data TEXT); INSERT INTO future VALUES('keep');`); db.close();
   const bytes = fs.readFileSync(file + '.sqlite'), names = fs.readdirSync(root);
   assert.throws(() => new DurableProjectStore(file), /newer compatible SwissMouse/);
   assert.deepEqual(fs.readFileSync(file + '.sqlite'), bytes); assert.deepEqual(fs.readdirSync(root), names);

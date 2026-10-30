@@ -1,5 +1,7 @@
 {
   "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@swissmouse/sdk": ["packages/sdk/index.ts"] },
     "target": "ES2022",
     "useDefineForClassFields": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
@@ -16,5 +18,5 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "server.ts", "tools/audio-engine.ts", "scripts/*.ts"]
+  "include": ["packages", "src", "server.ts", "tools/audio-engine.ts", "scripts/*.ts"]
 }

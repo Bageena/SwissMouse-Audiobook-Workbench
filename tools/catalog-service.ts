@@ -22,6 +22,30 @@ export class CatalogService {
   private syncing?: Promise<void>;
   private failure?: Error;
   private timer?: ReturnType<typeof setTimeout>;
+  private informationRetry?: ReturnType<typeof setTimeout>;
+  private informationRetryDelay = 1000;
+  private informationState?: any;
+  private closing = false;
+  private async publishInformation() {
+    if (process.env.SWISSMOUSE_INFORMATION_DURABLE !== '1' || this.failure || this.closing) return;
+    while (!this.closing) {
+      const status = await this.call<any>('informationAdvance');
+      if (this.closing) return;
+      const previousError = this.informationState?.error; this.informationState = status;
+      if (status.error) {
+        if (status.error !== previousError) this.warning(`Information publication pending: ${status.error}`);
+        if (!this.informationRetry) {
+          this.informationRetry = setTimeout(() => { this.informationRetry = undefined; void this.publishInformation().catch(error => this.warning(`Information retry failed: ${error.message}`)); }, this.informationRetryDelay);
+          this.informationRetryDelay = Math.min(30000, this.informationRetryDelay * 2);
+        }
+        return;
+      }
+      if (!status.enabled || (!status.dirty && !status.outbox && !status.pendingProjection && !status.pendingDirectory)) {
+        if (this.informationRetry) clearTimeout(this.informationRetry); this.informationRetry = undefined; this.informationRetryDelay = 1000; return;
+      }
+      await setImmediate();
+    }
+  }
   constructor(file: string, private source: () => AudiobookJob[], private project: (job: AudiobookJob) => CatalogProject = projectCatalogRecord, private warning: (message: string) => void = console.warn, workerFile?: string, private feed?: ProjectFeed) {
     const entry = path.resolve(process.argv[1]);
     this.worker = new Worker(workerFile || path.join(path.dirname(entry),entry.endsWith('.ts') ? 'dist/catalog-worker.cjs' : 'catalog-worker.cjs'), { workerData: { file } });
@@ -67,10 +91,12 @@ export class CatalogService {
             checkpoint = changes.at(-1)!.version;
             const observed = await this.call('observe', records);
             await this.call('applyChanges', observed, changes.filter(item => item.deleted).map(item => item.id), checkpoint);
+            await this.publishInformation();
             await this.call('maintainMatches');
             await setImmediate();
           }
           while (true) { const work = await this.call('maintainMatches'); if (!work.pending || work.full) break; await setImmediate(); }
+          await this.publishInformation();
           this.completed = revision;
           continue;
         }
@@ -81,6 +107,7 @@ export class CatalogService {
           await setImmediate();
         }
         await this.call('endSync',generation); this.completed = revision;
+        await this.publishInformation();
       }
     })();
     try { await this.syncing; } finally { this.syncing = undefined; }
@@ -96,7 +123,8 @@ export class CatalogService {
       await this.call('applyChanges',observed,[],0);
     }
     await this.call('maintainMatches');
+    await this.publishInformation();
   }
-  status() { return { indexing: this.completed < this.requested, error: this.failure?.message }; }
-  async close() { if (this.timer) clearTimeout(this.timer); await Promise.all([this.worker.terminate(), this.observer.terminate()]); }
+  status() { return { indexing: this.completed < this.requested, error: this.failure?.message, ...(this.informationState ? { information: this.informationState } : {}) }; }
+  async close() { this.closing = true; if (this.timer) clearTimeout(this.timer); if (this.informationRetry) clearTimeout(this.informationRetry); await Promise.all([this.worker.terminate(), this.observer.terminate()]); }
 }

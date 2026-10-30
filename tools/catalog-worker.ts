@@ -3,7 +3,7 @@ import { CatalogStore } from './catalog-store';
 import { observeCatalogProject } from './catalog-availability';
 
 const store = workerData.observe ? undefined : new CatalogStore(workerData.file);
-const methods = new Set(['beginSync','upsertProjects','endSync','query','resources','getResource','relations','selection','selectionPage','selectionMembers','collections','saveCollection','collectionAffectedProjects','collectionMembershipRows','suggestions','membershipSuggestions','revision','checkpoint','applyChanges','maintainMatches','matches']);
+const methods = new Set(['beginSync','upsertProjects','endSync','query','resources','getResource','relations','selection','selectionPage','selectionMembers','collections','saveCollection','collectionAffectedProjects','collectionMembershipRows','suggestions','membershipSuggestions','revision','checkpoint','applyChanges','maintainMatches','matches','informationAdvance','informationStatus','informationPage','informationSuggestions','informationSelection','informationClearHistory']);
 parentPort!.on('message', ({ id, method, args }) => {
   try {
     if (workerData.observe) {

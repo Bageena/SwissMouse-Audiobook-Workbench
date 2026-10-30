@@ -1,7 +1,12 @@
+import { ModulesPreferences } from './ModulesPreferences';
+import { preferenceCategories, matchesPreference } from '../preferences/registry';
+import { preferencesRegistry } from '../preferences/legacy';
+import { RequirementsModal } from './RequirementsModal';
+import { PreferenceFields } from '../preferences/PreferenceFields';
 import { X } from 'lucide-react';
 import { useDialogFocus } from '../utils/useDialogFocus';
 import { LibraryMaintenance } from './LibraryMaintenance';
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { WorkbenchConfig } from '../types';
 import { AlertTriangle, FolderOpen, RefreshCw, Save, Settings, Sliders, Sparkles } from 'lucide-react';
 import { CustomTheme, themeLabels, themes } from '../theme';
@@ -9,6 +14,12 @@ import { DEFAULT_LIBRARY_TEMPLATE, LIBRARY_FIELDS, libraryRelativePath } from '.
 import { QUICK_ADD_CATEGORIES, cleanQuickTags, normalizeQuickTag, quickTagKey } from '../utils/metadataQuickAdd';
 
 interface ConfigModalProps {
+  embedded?:boolean;
+  onDirtyChange?:(dirty:boolean)=>void;
+  owner?:string;
+  resourceId?: string;
+  presentation?: 'quick' | 'preferences';
+  initialSection?: string;
   config: WorkbenchConfig;
   onRebuilt: () => Promise<void>;
   theme: string;
@@ -19,19 +30,34 @@ interface ConfigModalProps {
   onReloadThemes: () => Promise<void>;
   onOpenThemesFolder: () => Promise<void>;
   onClose: () => void;
-  onSaveConfig: (newConfig: WorkbenchConfig) => Promise<void>;
+  onSaveConfig: (newConfig: WorkbenchConfig) => Promise<void | WorkbenchConfig>;
 }
 
-export const ConfigModal: React.FC<ConfigModalProps> = ({ config, theme, customThemes, themeWarnings, isReloadingThemes, onThemeChange, onReloadThemes, onOpenThemesFolder, onClose, onSaveConfig, onRebuilt }) => {
+export const ConfigModal: React.FC<ConfigModalProps> = ({ embedded=false,onDirtyChange,owner,resourceId, presentation = 'quick', initialSection = 'appearance', config, theme, customThemes, themeWarnings, isReloadingThemes, onThemeChange, onReloadThemes, onOpenThemesFolder, onClose, onSaveConfig, onRebuilt }) => {
+  const fullPage = presentation === 'preferences';
+  const [category, setCategory] = useState(initialSection);
+  const [search, setSearch] = useState('');
+  const sections = preferencesRegistry.list().filter(section=>!owner||section.owner===owner);
+  const categories = [...preferenceCategories.filter(category=>!owner||sections.some(section=>section.category===category.id)), ...[...new Set(sections.map(section => section.category))].filter(id => !preferenceCategories.some(category => category.id === id)).map(id => ({ id, title: id.charAt(0).toUpperCase()+id.slice(1) }))];
+  const visible = (id: string) => {
+    if (!fullPage) return true;
+    const section = sections.find(section => section.id === id);
+    return !!section && (search.trim() ? matchesPreference(section, search) : section.category === category);
+  };
   const [form, setForm] = useState<WorkbenchConfig>({ ...config });
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [saveMessage, setSaveMessage] = useState('');
+  const isDirty = JSON.stringify(form) !== JSON.stringify(config);
+  useEffect(()=>{onDirtyChange?.(isDirty||isSaving);},[isDirty,isSaving,onDirtyChange]);
+  useEffect(()=>()=>onDirtyChange?.(false),[onDirtyChange]);
   const dismiss = () => {
     if (isSaving) return;
     if (JSON.stringify(form) !== JSON.stringify(config) && !window.confirm('Discard your unsaved settings changes?')) return;
+    if(embedded)setForm({...config});
     onClose();
   };
-  const dialogRef = useDialogFocus(dismiss);
+  const dialogRef = useDialogFocus(dismiss,!embedded);
   const [themeActionError, setThemeActionError] = useState('');
   const [quickTagSearch, setQuickTagSearch] = useState('');
   const [quickTagInput, setQuickTagInput] = useState('');
@@ -65,10 +91,13 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, theme, customT
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaveError('');
+    setSaveMessage('');
     setIsSaving(true);
     try {
-      await onSaveConfig(form);
-      onClose();
+      const savedConfig = await onSaveConfig(form);
+      if (savedConfig) setForm(savedConfig);
+      setSaveMessage('Preferences saved.');
+      if (!fullPage) onClose();
     } catch (err: any) {
       setSaveError(err.message || 'Could not save settings. Your changes are still here; try again.');
     } finally {
@@ -77,24 +106,36 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, theme, customT
   };
 
   return (
-    <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-xl border border-stone-200 bg-white p-6 shadow-xl space-y-5">
-        <div className="flex items-center justify-between">
+    <div className={embedded ? "preferences-page bg-stone-50 text-stone-900" : fullPage ? "preferences-page fixed inset-0 z-50 bg-stone-50 text-stone-900" : "fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50"}>
+      <div ref={dialogRef} role={embedded?'region':'dialog'} aria-modal={embedded?undefined:true} aria-label={fullPage ? "Preferences" : "Quick Settings"} tabIndex={-1} className={fullPage ? "preferences-shell flex h-full flex-col" : "max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-xl border border-stone-200 bg-white p-6 shadow-xl space-y-5"}>
+        <div className={fullPage ? "preferences-heading flex items-center justify-between gap-4 border-b border-stone-200 bg-white px-6 py-4" : "flex items-center justify-between"}>
           <div className="flex items-center space-x-2 text-stone-900 font-bold text-base">
             <Settings className="w-5 h-5 text-amber-600" />
-            <span>Settings</span>
+            <span>{fullPage ? "Preferences" : "Quick Settings"}</span>
           </div>
-          <button
+          {!embedded&&<button
             onClick={dismiss}
             disabled={isSaving}
-            aria-label="Close settings"
+            aria-label={fullPage ? "Back to workspace" : "Close quick settings"}
             className="text-stone-400 hover:text-stone-600 text-lg cursor-pointer"
-          ><X className="h-4 w-4" aria-hidden="true" /></button>
+          ><X className="h-4 w-4" aria-hidden="true" /></button>}
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+        <div className={fullPage ? "flex min-h-0 flex-1 flex-col md:flex-row" : ""}>
+          {fullPage && <nav aria-label="Preferences categories" className="preferences-sidebar shrink-0 space-y-2 border-b border-stone-200 bg-white p-4 md:w-60 md:overflow-y-auto md:border-b-0 md:border-r">
+            <label className="block text-xs font-semibold" htmlFor="preferences-search">Search preferences</label>
+            <input id="preferences-search" type="search" value={search} onChange={event => setSearch(event.target.value)} className="w-full rounded-lg border border-stone-300 bg-white p-2 text-sm" placeholder="Find a setting…" />
+            <div className="flex gap-1 overflow-x-auto md:flex-col">{categories.map(item => <button type="button" key={item.id} aria-current={!search && category === item.id ? 'page' : undefined} onClick={() => { setCategory(item.id); setSearch(''); }} className={`whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm ${!search && category === item.id ? 'bg-amber-100 font-semibold text-amber-900' : 'hover:bg-stone-100'}`}>{item.title}</button>)}</div>
+            <p className="hidden text-xs text-stone-500 md:block">Application defaults and settings from your installed tools.</p>
+          </nav>}
+          <div className={fullPage ? "preferences-content min-h-0 min-w-0 flex-1 overflow-y-auto p-4 md:p-8" : ""}>
+          {fullPage && <div className="mx-auto mb-5 max-w-4xl"><h1 className="text-xl font-bold">{search.trim() ? 'Search results' : categories.find(item => item.id === category)?.title}</h1><p className="mt-1 text-sm text-stone-500">Defaults apply to new work unless a project overrides them. Theme selections save immediately; other preferences use Save preferences.</p></div>}
+          {fullPage && !sections.some(section => visible(section.id)) && <p className="text-sm">No preferences match “{search}”.</p>}
+        <form onSubmit={handleSubmit} className={fullPage ? "mx-auto max-w-4xl space-y-5 text-sm" : "space-y-4 text-xs"}>
           {saveError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{saveError}</p>}
-          <fieldset className="space-y-3 rounded-lg border border-stone-200 bg-stone-50 p-3.5">
+          {saveMessage && !isDirty && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-900">{saveMessage}</p>}
+          <fieldset disabled={isSaving} className="min-w-0 space-y-4 border-0 p-0">
+          <div hidden={!visible("audiobooks.library")}><fieldset className="space-y-3 rounded-lg border border-stone-200 bg-stone-50 p-3.5">
             <legend className="px-1 text-xs font-semibold text-stone-900">Audiobook library</legend>
             <p className="text-[11px] text-stone-600">Inbox holds books in progress. Library holds organized books. New standalone projects use Library as their output folder.</p>
             <label className="block font-semibold text-stone-800" htmlFor="inbox-folder">Inbox folder</label>
@@ -117,8 +158,8 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, theme, customT
             <button type="button" onClick={() => setForm({ ...form, library_template: DEFAULT_LIBRARY_TEMPLATE })} className="font-semibold text-amber-800 underline">Reset folder structure</button>
             <p className="break-words rounded bg-white p-2 text-[11px] text-stone-600">Example: {folderPreview}</p>
             <p className="text-[11px] text-stone-500">Use / between folders. Subtitle is available as an optional tag and is left out by default. Missing series and narrator fields are skipped.</p>
-          </fieldset>
-          <fieldset className="space-y-2 rounded-lg border border-stone-200 bg-stone-50 p-3.5">
+          </fieldset></div>
+          <div hidden={!visible("audiobooks.tags")}><fieldset className="space-y-2 rounded-lg border border-stone-200 bg-stone-50 p-3.5">
             <legend className="px-1 text-xs font-semibold text-stone-900">Manage Quick Tags</legend>
             <p className="text-[11px] text-stone-600">These suggestions appear in Quick Add and Add Tag. Editing or deleting a suggestion does not change existing books.</p>
             <input type="search" value={quickTagSearch} onChange={event => setQuickTagSearch(event.target.value)} placeholder="Search Quick Tags" aria-label="Search Quick Tags" className="w-full rounded border border-stone-300 bg-white px-2.5 py-2" />
@@ -130,8 +171,8 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, theme, customT
                 <button type="button" onClick={() => { setForm({ ...form, quick_tags: quickTags.filter(item => item !== tag) }); setEditingQuickTag(null); }} aria-label={`Delete ${tag}`} className="font-semibold text-rose-700">Delete</button>
               </div>)}
             </div>
-          </fieldset>
-          <fieldset className="space-y-2 rounded-lg border border-stone-200 bg-stone-50 p-3.5">
+          </fieldset></div>
+          <div hidden={!visible("audiobooks.storage")}><fieldset className="space-y-2 rounded-lg border border-stone-200 bg-stone-50 p-3.5">
             <legend className="px-1 text-xs font-semibold text-stone-900">Processing storage</legend>
             <label htmlFor="pcm-retention" className="block font-semibold text-stone-800">PCM cache retention</label>
             <select id="pcm-retention" value={form.pcm_retention || 'after_verified_export'} onChange={event => setForm({ ...form, pcm_retention: event.target.value as WorkbenchConfig['pcm_retention'] })} className="w-full rounded border border-stone-300 bg-white px-2.5 py-2 text-xs text-stone-900">
@@ -140,8 +181,8 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, theme, customT
               <option value="keep">Keep PCM indefinitely</option>
             </select>
             <p className="text-[11px] text-stone-600">Only SwissMouse PCM in this book’s processing workspace is removed. Transcripts, chapter work, source audio, and final exports remain.</p>
-          </fieldset>
-          <fieldset className="theme-picker space-y-2 rounded-lg border border-stone-200 bg-stone-50 p-3.5">
+          </fieldset></div>
+          <div hidden={!visible("core.appearance")}><fieldset className="theme-picker space-y-2 rounded-lg border border-stone-200 bg-stone-50 p-3.5">
             <legend className="px-1 text-xs font-semibold text-stone-900">Appearance / Theme</legend>
             <label className="flex items-start gap-2 text-xs text-stone-800">
               <input type="checkbox" checked={form.player_ambient_glow !== false} onChange={event => setForm({ ...form, player_ambient_glow: event.target.checked })} />
@@ -207,8 +248,8 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, theme, customT
                 <div><p className="font-semibold">Appearance needs attention.</p>{themeActionError && <p>{themeActionError}</p>}{themeWarnings.map(warning => <p key={warning}>{warning}</p>)}</div>
               </div>
             )}
-          </fieldset>
-          <div className="p-3.5 bg-emerald-50 rounded-lg border border-emerald-200 space-y-1.5">
+          </fieldset></div>
+          <div hidden={!visible("audiobooks.processing")}><div className="p-3.5 bg-emerald-50 rounded-lg border border-emerald-200 space-y-1.5">
             <label className="flex items-center justify-between gap-4 cursor-pointer">
               <span>
                 <span className="block font-semibold text-stone-900">Faster Transcription</span>
@@ -315,8 +356,10 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, theme, customT
             </div>
           </div>
 
-          <LibraryMaintenance pathsChanged={form.inbox_folder !== config.inbox_folder || form.library_folder !== config.library_folder} onRebuilt={onRebuilt} />
-          <div className="flex justify-end space-x-2 pt-2">
+          </div>
+          <div hidden={!visible("audiobooks.maintenance")}><LibraryMaintenance pathsChanged={form.inbox_folder !== config.inbox_folder || form.library_folder !== config.library_folder} onRebuilt={onRebuilt} /></div>
+          {fullPage && sections.filter(section => (section.render || section.fields) && visible(section.id)).map(section => <section key={section.id} className="space-y-3 rounded-xl border border-stone-200 bg-white p-4"><h2 className="font-semibold">{section.title}</h2><p className="text-xs text-stone-500">Provided by {section.owner} · {section.description}</p>{section.fields && <PreferenceFields fields={section.fields({ config: form, updateConfig: setForm })} />}{section.render?.({ config: form, updateConfig: setForm })}</section>)}
+          <div hidden={fullPage && !isDirty} className="flex justify-end space-x-2 pt-2">
             <button
               type="button"
               onClick={dismiss}
@@ -331,10 +374,15 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ config, theme, customT
               className="flex items-center space-x-1.5 px-4 py-1.5 rounded text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white cursor-pointer"
             >
               <Save className="w-3.5 h-3.5" />
-              <span>{isSaving ? 'Saving...' : 'Save Settings'}</span>
+              <span>{isSaving ? 'Saving...' : fullPage ? 'Save preferences' : 'Save quick settings'}</span>
             </button>
           </div>
+          </fieldset>
         </form>
+        {fullPage && visible('core.modules') && <div className="mx-auto mt-5 max-w-4xl"><ModulesPreferences resourceId={resourceId} /></div>}
+        {fullPage && visible('core.requirements') && <div className="mx-auto mt-5 max-w-4xl"><RequirementsModal embedded onClose={dismiss} /></div>}
+          </div>
+        </div>
       </div>
     </div>
   );
