@@ -46,7 +46,8 @@
     "test:identity": "node --import tsx --test --test-concurrency=1 tools/relink-identity.test.ts tools/identity-upgrade.test.ts tools/library-safety.test.ts tools/library-transfer.test.ts tools/catalog-store.test.ts tools/durable-project-store.test.ts tools/project-transfer.test.ts",
     "test:foundations": "node --import tsx --test --test-concurrency=1 tools/project-schema.test.ts tools/durable-project-store.test.ts tools/module-registry.test.ts tools/workflow-navigation.test.tsx tools/container-components.test.tsx tools/panels.test.tsx tools/panel-motion.test.ts tools/container-layout.test.ts tools/window-connections.test.ts tools/identity-upgrade.test.ts tools/library-transfer.test.ts tools/runtime-repair.test.mjs tools/runtime-api.test.mjs tools/backend-state.test.mjs tools/feature-dependencies.test.ts tools/requirements.test.ts",
     "pretest:catalog": "npm run build",
-    "module:build:full": "node scripts/build-full-audiobook-module.mjs"
+    "module:build:full": "node scripts/build-full-audiobook-module.mjs",
+    "test:module-lifecycle": "node --import tsx --test tools/module-lifecycle.test.ts"
   },
   "dependencies": {
     "adm-zip": "^0.6.1",

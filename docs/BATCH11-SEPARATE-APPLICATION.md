@@ -62,3 +62,7 @@ The new public Core repository is created. The code is published in two draft pu
 The implementation and repository split are delivered for review. They have not been merged or released, and the running real-library installation has not been switched. The combined development checkout still launches the legacy app by default; the Core repository uses its own normal build/start commands. The portable `scripts/verify-separated-installation.mjs` is included in Core for repeating the assembled check against a separately built module archive.
 
 Remaining Alpha 6 work includes the broader Preferences/extension contribution experience, Notes, full resource browsing and taxonomy adoption, and richer file/audio tools including bulk actions and EQ. Batch 10's wider mixed-library and concurrent-workload performance acceptance also remains open.
+
+### Lifecycle correction in Audiobook 0.0.3
+
+The local migration check exposed a removal request queuing behind an active library scan. The module now handles lifecycle requests before the mutation queue, reports busy work promptly, and ignores disconnected queued requests before acquiring mutation ownership. Core refuses deactivation while retained publications/history remain pending and keeps the module available after that refusal. Fourteen focused lifecycle/registry tests and the separate assembled installation lifecycle passed. The Core build also exports dist/core-host.cjs for the local managed launcher. SDK compatibility remains 0.0.2.

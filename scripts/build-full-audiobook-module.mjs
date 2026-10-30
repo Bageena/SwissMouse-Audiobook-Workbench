@@ -30,7 +30,7 @@ function sources(){
   zip.addFile('README-MODULE.md',Buffer.from('SwissMouse Audiobook Workbench preferred source. AGPL-3.0-or-later.\nRepository target: https://github.com/Bageena/SwissMouse-Audiobook-Workbench\nCore target: https://github.com/Bageena/SwissMouse\nBuild against the included matching SDK source with npm ci, then npm run module:build:full. This archive contains first-party source/assets and dependency manifests, not dependency installations, media, libraries, local settings, runtimes or models. Core-only experimental source may remain in the development snapshot; it is not imported by this module build.\n'));
   return zip.toBuffer();
 }
-export async function buildFullAudiobookModule({output=path.join(root,'.cache','full-module-packages'),version='0.0.2'}={}){
+export async function buildFullAudiobookModule({output=path.join(root,'.cache','full-module-packages'),version='0.0.3'}={}){
   if(!/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/.test(version))throw new Error('Invalid module version.');
   fs.mkdirSync(output,{recursive:true});const work=fs.mkdtempSync(path.join(output,'build-')),web=path.join(work,'web'),files=new Map();
   try{

@@ -2,7 +2,7 @@
 
 This repository owns the full Audiobook workspace, processing coordination and project interpretation. SwissMouse Core lives separately at [Bageena/SwissMouse](https://github.com/Bageena/SwissMouse). Development targets Alpha 6.
 
-Run `npm ci`, `npm run lint`, then `npm run module:build:full`. The output is .cache/full-module-packages/audiobooks-full-0.0.2.smmodule, with preferred source, license/notices, exact digest and a development trust catalog. Install the verified package through Core Modules and restart; Core does not need rebuilding.
+Run `npm ci`, `npm run lint`, then `npm run module:build:full`. The output is .cache/full-module-packages/audiobooks-full-0.0.3.smmodule, with preferred source, license/notices, exact digest and a development trust catalog. Install the verified package through Core Modules and restart; Core does not need rebuilding.
 
 The root src/ and tools/ trees are module-owned application source and compatibility adapters. References from packages/audiobooks to these trees are local to this repository, not imports into the Core checkout. Public neutral SDK 0.0.2 source is pinned at packages/sdk; protocol 2 uses the host React 18 instance and Node runtime.
 

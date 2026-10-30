@@ -57,6 +57,7 @@ import { LibraryMediaReader } from './tools/library-media';
 import { recoverRelocatedOutput } from './tools/library-output-recovery';
 import { mountLibriVox } from './tools/librivox-import';
 import { ListeningStore } from './tools/listening-store';
+import {registerModuleLifecycleRoute} from './tools/module-lifecycle';
 import { MediaCache } from './tools/media-cache';
 import { detectMusicTransitions,MUSIC_DETECTOR_VERSION } from './tools/music-transitions';
 import { pickAudioFile,pickAudioFiles,pickAudioFolder } from './tools/native-file-picker';
@@ -413,6 +414,11 @@ const libraryMutationRequests = new Map<express.Response, string>();
 
 const libraryRecoveryWarnings: string[] = [];
 
+registerModuleLifecycleRoute(app,{
+  busy:()=>bookFilesBusyReason(false)||(runtimeDiscoveryRunning?'runtime discovery':undefined),
+  settle:async()=>{await catalog!.ready();const historyPending=await flushInformationSelections();const publication=await catalog!.call('informationStatus');return {historyPending,publicationPending:!publication.enabled||!!publication.error||!!publication.dirty||!!publication.outbox||!!publication.pendingProjection};},
+});
+
 app.use('/api', asyncRoute(async (req, res, next) => {
   if (isReadOnlyCatalogRequest(req.method, req.path)) return next();
   // Personal checkpoints are independent of library and audio mutations.
@@ -422,6 +428,7 @@ app.use('/api', asyncRoute(async (req, res, next) => {
     try { await audiobookFileState.scan; }
     catch { /* A failed scan rolls back before a waiting action runs. */ }
   }
+  if(res.destroyed||res.writableEnded)return;
   if (req.method !== 'GET' && (audiobookFileState.moving || libraryConfigSaving || audiobookCompletionState.validating) && !scanRequest)
     return res.status(409).json({ error: 'Library reconciliation or a verified move is in progress. Please retry when it finishes.' });
   if (req.method !== 'GET' && !scanRequest) {
@@ -2645,11 +2652,6 @@ registerCatalogRoutes(app, catalog, async ids => {
 });
 if (process.env.SWISSMOUSE_INFORMATION_PREVIEW === '1') registerInformationPreviewRoutes(app, catalog);
 const flushInformationSelections = registerInformationDirectoryRoutes(app,catalog,projectStore);
-app.post('/api/module-lifecycle/prepare-removal',async(_req,res)=>{
-  const busy=bookFilesBusyReason(true);if(busy){res.status(409).json({error:busy});return;}
-  try{await catalog!.ready();const historyPending=await flushInformationSelections();const publication=await catalog!.call('informationStatus');res.json({historyPending,publicationPending:!publication.enabled||!!publication.error||!!publication.dirty||!!publication.outbox||!!publication.pendingProjection});}
-  catch(error){res.status(409).json({error:String(error)});}
-});
 // Compatibility endpoint for older clients. The current UI uses bounded catalog queries.
 app.get('/api/library', asyncRoute(async (req, res) => {
   res.json((await catalog!.call('query', { limit: req.query.limit === undefined ? 100 : Number(req.query.limit) })).items);
