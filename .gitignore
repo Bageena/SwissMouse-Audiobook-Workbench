@@ -1,48 +1,15 @@
-# JavaScript build and installed dependencies
 node_modules/
 dist/
-release/
-
-# Application-generated data and downloaded runtime components
 .cache/
-.tmp/
-.swissmouse-transfer-*/
-logs/
-inputs/
-inbox/
-output/
+.installed-modules/
 runtime/
 models/
-jobs.json
-jobs.json.bak
-jobs.json.assets/
-listening/
+inbox/
+output/
 config.json
-
-# Local-only configuration and publishing-audit output
-.env
-.env.*
-!.env.example
-.gitleaks-report*.json
-
-# Generated test projects and manually downloaded tools
-audio-test-*/
-/catalog-api-test-*/
-/identity-upgrade-*/
-/import-workflow-test-*/
-/inbox-test-*/
-/library-test-*/
-/transfer-test-*/
-/library-safety-*/
-/repair-test-*/
-tools/yt-dlp
-
-# Personal convenience scripts. Keep public automation outside this directory.
-scripts/local/
+jobs.json*
+*.sqlite*
 ui-preferences.json
-catalog.sqlite*
-jobs.json.sqlite*
-directories.sqlite*
-
-# Local UI review captures; public screenshots live in docs/screenshots/.
-/*.png
+core-preferences.json
+module-trust.json
+*.smmodule

@@ -1,4 +1,6 @@
-# Alpha 5 Book Files
+# Book Files
+
+Current implementation guide for Alpha 6 development, carrying forward the released Alpha 5 foundation. Verification sections record their original scope; extension points below are proposals, not completed Alpha 6 features.
 
 Book Files is the canonical import and file-review workspace. Library Manager's
 Open action lands here. The project overview's Book Files button opens the same

@@ -1,3 +1,4 @@
+import { buildChapterCandidates } from '../packages/audiobooks/src/processing-detection';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildTranscriptWords, findClosestTranscriptWordIndex, findTranscriptWordIndex, formatTimestamp, getTranscriptWordsNear, refineChapterStartIndex, transcriptPageOffset } from '../src/utils/wordAlignment';
@@ -110,12 +111,7 @@ test('wordless legacy segments retain their real segment bounds', () => {
   assert.equal(heading.end, 20);
 });
 
-test('server candidates preserve exact player word timestamps and wordless segment bounds', () => {
-  const source = fs.readFileSync('server.ts', 'utf8');
-  const start = source.indexOf('function buildChapterCandidates(');
-  const end = source.indexOf('\nasync function transcribeExistingPreview', start);
-  assert.ok(start >= 0 && end > start);
-  const exercise = `${source.slice(start, end)}\ngeneratedCandidates = buildChapterCandidates(transcriptSegments, transcriptWords, normalized.engine);`;
+test('module candidates preserve exact player word timestamps and wordless segment bounds', () => {
   for (const closeNarration of [false, true]) {
     const transcriptSegments = [spokenHeading('Chapter Twelve', true)];
     if (closeNarration) {
@@ -128,13 +124,13 @@ test('server candidates preserve exact player word timestamps and wordless segme
       detectChapterHeadings, findTranscriptWordIndex, formatTimestamp,
       normalized: { engine: 'faster-whisper' }, currentConfig: { lead_in_seconds: 1.5 },
     };
-    vm.runInNewContext(transformSync(exercise, { loader: 'ts' }).code, context);
+    context.generatedCandidates = buildChapterCandidates(context.transcriptSegments, context.transcriptWords, context.normalized.engine);
     assert.equal(context.generatedCandidates[0].candidate_start, '00:00:15.375');
     assert.equal(context.generatedCandidates[0].transcriptWordIndex, 2);
     // Old persisted timelines can omit words before the heading. Resolve by
     // its actual timestamp instead of trusting the segment-derived index.
     context.transcriptWords = transcriptWords.slice(1);
-    vm.runInNewContext(transformSync(exercise, { loader: 'ts' }).code, context);
+    context.generatedCandidates = buildChapterCandidates(context.transcriptSegments, context.transcriptWords, context.normalized.engine);
     assert.equal(context.generatedCandidates[0].candidate_start, '00:00:15.375');
     assert.equal(context.generatedCandidates[0].transcriptWordIndex, 1);
   }
@@ -147,7 +143,7 @@ test('server candidates preserve exact player word timestamps and wordless segme
     normalized: { engine: 'faster-whisper' }, currentConfig: { lead_in_seconds: 1.5 },
   };
   legacy.transcriptWords = buildTranscriptWords(legacy.transcriptSegments);
-  vm.runInNewContext(transformSync(exercise, { loader: 'ts' }).code, legacy);
+  legacy.generatedCandidates = buildChapterCandidates(legacy.transcriptSegments, legacy.transcriptWords, legacy.normalized.engine);
   assert.equal(legacy.generatedCandidates[0].candidate_start, '00:00:10.000');
   assert.equal(legacy.generatedCandidates[0].transcriptWordIndex, undefined);
 });

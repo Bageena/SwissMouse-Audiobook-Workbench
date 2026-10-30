@@ -1,5 +1,7 @@
 # Alpha 5 identity preservation
 
+Historical Alpha 5 verification guide and evidence. Alpha 5 has launched; active development is Alpha 6. Preserve these identity guarantees in new work, and record Alpha 6 validation separately. Versioned package examples below target Alpha 5.
+
 Verification performed on Windows, 2026-10-21, using generated audio and isolated data folders. No user media was changed. No notebook implementation is involved.
 
 ## Identity rule

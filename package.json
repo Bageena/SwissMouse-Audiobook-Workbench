@@ -4,7 +4,29 @@
   "license": "AGPL-3.0-or-later",
   "description": "Web workbench to merge multi-part MP3 audiobooks, detect chapters with AI, review timestamps, and build chaptered M4B audiobooks.",
   "type": "module",
+  "workspaces": [
+    "packages/sdk",
+    "packages/audiobooks"
+  ],
   "scripts": {
+    "module:build": "node scripts/build-audiobook-module.mjs",
+    "pretest:information": "npm run build",
+    "pretest:information-durable": "npm run build",
+    "pretest:information-directory": "npm run build",
+    "test:information-directory": "node --import tsx --test --test-concurrency=1 tools/information-directory.test.ts tools/information-directory-api.test.ts tools/information-store.test.ts tools/information-capture.test.ts tools/information-durable-api.test.ts tools/information-registry.test.ts tools/information-preview-api.test.ts tools/catalog-api.test.ts tools/catalog-store.test.ts tools/catalog-incremental.test.ts tools/durable-project-store.test.ts tools/identity-upgrade.test.ts tools/project-schema.test.ts tools/module-host.test.tsx tools/test-fixtures.test.mjs tools/import-workflow.test.ts tools/audiobook-project-service.test.ts tools/audiobook-project-api.test.ts tools/audiobook-client.test.ts tools/audiobook-edit-controller.test.ts tools/audiobook-activation.test.ts tools/metadata-quick-add.test.ts",
+    "benchmark:information-directory": "node --expose-gc --import tsx tools/information-directory-benchmark.ts",
+    "test:information-durable": "node --import tsx --test --test-concurrency=1 tools/information-store.test.ts tools/information-capture.test.ts tools/information-durable-api.test.ts tools/information-registry.test.ts tools/information-preview-api.test.ts tools/catalog-api.test.ts tools/catalog-store.test.ts tools/catalog-incremental.test.ts tools/durable-project-store.test.ts tools/identity-upgrade.test.ts tools/project-schema.test.ts tools/module-host.test.tsx tools/test-fixtures.test.mjs tools/import-workflow.test.ts",
+    "test:information": "node --import tsx --test --test-concurrency=1 tools/information-registry.test.ts tools/information-preview-api.test.ts tools/catalog-api.test.ts tools/catalog-store.test.ts tools/catalog-incremental.test.ts tools/durable-project-store.test.ts tools/identity-upgrade.test.ts tools/module-registry.test.ts",
+    "test:modules": "node --import tsx --test tools/module-host.test.tsx tools/module-install-api.test.mjs",
+    "test:audiobook-client": "node --import tsx --test --test-concurrency=1 tools/audiobook-client.test.ts tools/audiobook-edit-controller.test.ts tools/audiobook-activation.test.ts tools/panels.test.tsx",
+    "pretest:audiobook-backend": "npm run build",
+    "test:audiobook-backend": "node --import tsx --test --test-concurrency=1 tools/audiobook-project-service.test.ts tools/audiobook-project-api.test.ts",
+    "pretest:audiobook-files": "npm run build",
+    "test:audiobook-files": "node --import tsx --test --test-concurrency=1 tools/audiobook-file-backend.test.ts tools/audiobook-project-service.test.ts tools/import-workflow.test.ts tools/book-source-browser.test.ts tools/library-inbox.test.ts tools/library-refresh.test.ts tools/library-transfer.test.ts tools/project-transfer.test.ts tools/library-output-recovery.test.ts tools/library-regrouping.test.ts tools/relink-identity.test.ts",
+    "pretest:audiobook-processing": "npm run build",
+    "pretest:audiobook-completion": "npm run build",
+    "test:audiobook-completion": "node --import tsx --test --test-concurrency=1 tools/audiobook-completion.test.ts tools/audiobook-project-service.test.ts tools/final-check.test.ts tools/finalization-workflow.test.ts tools/finish-actions.test.ts tools/originals-archive.test.ts tools/project-transfer.test.ts tools/cleanup.test.mjs tools/import-workflow.test.ts",
+    "test:audiobook-processing": "node --import tsx --test --test-concurrency=1 tools/audiobook-processing.test.ts tools/audiobook-project-service.test.ts tools/transcription-api.test.mjs tools/import-workflow.test.ts tools/transcription-performance.test.ts tools/transcription-engine.test.ts tools/chapter-cache.test.ts tools/pipeline-rerun.test.ts tools/word-alignment.test.ts tools/improved-chapter-detection.test.ts tools/music-transitions.test.ts tools/title-boundaries.test.ts",
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && npm run build:catalog",
     "start": "node dist/server.cjs",
@@ -23,7 +45,8 @@
     "test:catalog": "node --import tsx --test --test-concurrency=1 tools/catalog-store.test.ts tools/catalog-api.test.ts tools/catalog-incremental.test.ts tools/durable-project-store.test.ts tools/directory-index.test.ts",
     "test:identity": "node --import tsx --test --test-concurrency=1 tools/relink-identity.test.ts tools/identity-upgrade.test.ts tools/library-safety.test.ts tools/library-transfer.test.ts tools/catalog-store.test.ts tools/durable-project-store.test.ts tools/project-transfer.test.ts",
     "test:foundations": "node --import tsx --test --test-concurrency=1 tools/project-schema.test.ts tools/durable-project-store.test.ts tools/module-registry.test.ts tools/workflow-navigation.test.tsx tools/container-components.test.tsx tools/panels.test.tsx tools/panel-motion.test.ts tools/container-layout.test.ts tools/window-connections.test.ts tools/identity-upgrade.test.ts tools/library-transfer.test.ts tools/runtime-repair.test.mjs tools/runtime-api.test.mjs tools/backend-state.test.mjs tools/feature-dependencies.test.ts tools/requirements.test.ts",
-    "pretest:catalog": "npm run build"
+    "pretest:catalog": "npm run build",
+    "module:build:full": "node scripts/build-full-audiobook-module.mjs"
   },
   "dependencies": {
     "adm-zip": "^0.6.1",

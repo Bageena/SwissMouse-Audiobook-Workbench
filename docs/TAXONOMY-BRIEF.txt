@@ -1,0 +1,103 @@
+SWISSMOUSE: CURRENT TAXONOMY AND ORGANIZATION
+Code snapshot: October 28, 2026. Alpha 6 development.
+
+OVERVIEW
+
+SwissMouse does not currently have one universal taxonomy that categorizes
+everything. It has several related classification systems. Content identity,
+book categories, interface structure, and settings categories are separate.
+
+1. RESOURCES: WHAT SOMETHING IS
+
+The shared catalog currently recognizes three main resource kinds:
+- Work: the underlying book or creative work.
+- Recording / edition: a particular representation, such as an audiobook.
+- File: a physical file belonging to a representation.
+
+Each resource has a stable ID, kind, owning module, title, version, timestamps,
+and archived state. File records can include location and file details.
+Names and paths are not the identity. Supported moves/relinks preserve IDs.
+
+Relationships connect records: a recording is an edition of a work and contains
+ordered files. Explicit grouping can also link works. This is a network of
+typed relationships, rather than one parent field used for every object.
+The resource foundation is shared, but today's populated catalog is primarily
+an adaptation of audiobook projects.
+
+2. BOOK ORGANIZATION: WHAT SOMETHING IS ABOUT
+
+Audiobook metadata holds genres, tags, a primary series and sequence number,
+additional series memberships with their own sequence values, and collections.
+It also tracks descriptive fields such as contributors, language, publisher,
+dates, identifiers, abridged/explicit flags, and artwork. Personal ratings and
+listening progress are separate from exported book metadata.
+
+Genres and tags are flat text lists. Collections and additional-series
+memberships have IDs and names; a book can belong to multiple groups.
+Series provide ordering. These memberships do not define a nested category tree.
+
+Quick Tags are editable suggestions, initially seeded with 50 choices such as
+Fantasy, History, and Science Fiction. They are not a controlled hierarchy:
+Fantasy is not formally stored as Science Fiction's parent or vice versa.
+Quick Add can target genres or tags and avoids duplicating a selected label
+across those lists. Library search, filters, sorting, and collection views use
+indexed metadata to decide which records to display.
+
+3. INTERFACE ORGANIZATION: HOW TOOLS ARE DISPLAYED
+
+The UI distinguishes several independent properties:
+- Container kind: Panel, Bar, Group, or Preview.
+- Content kind: Widget, Gallery, or Menu.
+- Panel role: Parent or Child.
+- Layout mode: Original, Grid, or Canvas.
+
+Panel definitions track a stable ID, unique friendly name, role, optional
+default parent, optional module ownership, size constraints, and default config.
+A definition identifies a reusable tool; an instance identifies its placement.
+
+Parent panels can receive other panels. Child panels can have a default parent
+and can also float. Current nesting validation allows parent panels inside
+other parents and rejects cycles. Role and visual container kind are separate.
+For example, Metadata is a Parent, while Cover art and Series & Taxonomy are
+Children whose default parent is Metadata.
+
+Saved workspace state tracks placements, grouping/parent relationships, sizes,
+layout modes, connections, magnet links, locks, and generated parent groups.
+Moving a panel changes presentation; it does not reclassify the underlying book.
+
+4. MODULES AND PREFERENCES
+
+Module manifests identify their module, contract version, resource kinds, and
+workspaces/screens. Stable namespaced IDs keep ownership explicit.
+
+Preferences has its own categories: Appearance, Files & storage, Audiobooks,
+and Requirements. Registered sections have an owner, namespaced ID, category,
+title, description, search keywords, and optional fields or custom panels.
+These categories organize settings, not media. Dependency classifications
+(required/recommended/optional) are another separate feature-oriented grouping.
+
+WHAT IS MISSING
+
+There is no shared editable category tree with category IDs, parent categories,
+inherited metadata, aliases, or rules covering every resource and module.
+Genres/tags are not yet taxonomy entities connected to that kind of tree.
+UI Parent/Child relationships should not be confused with content categories.
+
+The main brainstorming question is whether we want a shared content taxonomy
+across modules, and how it should relate to today's flat labels, collections,
+ordered series, and independent interface registries.
+
+CODE REFERENCES
+src/core/resources.ts; tools/catalog-store.ts; tools/catalog-projection.ts;
+src/types.ts; src/utils/metadataQuickAdd.ts; src/utils/extendedMetadata.ts;
+src/utils/containerLayout.ts; src/workspace/panels.ts;
+src/workspace/workspaceState.ts; src/core/modules.ts; src/preferences/registry.ts.
+
+
+
+Current technology	Its role	My assessment
+TypeScript + React	Screens, panels, forms, navigation, and interaction	Keep. Fits the web requirement and our reusable interface.
+Node.js + Express	APIs, coordination, file access, and launching tools	Keep. Move expensive or blocking work away from request handling.
+SQLite	Local durable storage and searchable indexes	Keep. Improve schemas, relationships, and queries as the shared core develops.
+Python	Speech engines and their dependencies	Keep for those specialist tasks.
+FFmpeg and other external programs	Media processing	Continue invoking them as separate tools.

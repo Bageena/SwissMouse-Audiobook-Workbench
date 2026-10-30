@@ -1,5 +1,7 @@
 # Alpha 5 release preparation — 2026-10-27
 
+**Historical record:** Alpha 5 has since launched, as confirmed by the maintainer on October 28, 2026. Alpha 6 is the active development cycle. The evidence and limitations below describe preparation at the time; they are not pending publication instructions or new acceptance claims.
+
 Prepared version: `0.1.0-alpha.5`; intended tag: `v0.1.0-alpha.5`.
 This is preparation evidence on Windows, not final maintainer acceptance.
 Nothing was pushed, tagged, dispatched or published during preparation.
@@ -145,6 +147,4 @@ Its final player appearance was checked with synthetic metadata in the browser.
 All seven themes were checked in an isolated synthetic browser project. Lint,
 the production build and 22 focused player/header/theme tests passed.
 
-Complete final testing and commit any fixes, then follow
-[the release command and packaging guide](RELEASING.md). The release notes are
-[prepared here](releases/alpha5.md). Package files remain generated and ignored.
+The original handoff called for final testing before publication. Alpha 5 has since launched; see its [release notes](releases/alpha5.md). For subsequent releases, use the [current release guide](RELEASING.md). Package files remain generated and ignored.

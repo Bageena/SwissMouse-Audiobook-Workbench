@@ -25,6 +25,7 @@ interface HeaderProps {
   onCloseProject: () => void;
   onOpenNewJob: () => void;
   onOpenSettings: () => void;
+  onOpenQuickSettings?: () => void;
   onResetPageLayout?: () => void;
   onOpenPurge: () => void;
   onOpenRequirements: () => void;
@@ -44,6 +45,7 @@ export const Header: React.FC<HeaderProps> = ({
   onCloseProject,
   onOpenNewJob,
   onOpenSettings,
+  onOpenQuickSettings,
   onResetPageLayout,
   onOpenPurge,
   onOpenRequirements,
@@ -138,18 +140,6 @@ export const Header: React.FC<HeaderProps> = ({
       </ToolbarPanel>
     } fixedTools={
         <ToolbarPopover label="Tools and settings" icon={<Settings className="h-5 w-5" />}>
-            <p className="px-2 pb-1.5 pt-1 text-[10px] font-bold uppercase tracking-[0.14em] text-stone-400">Tools & settings</p>
-          <button
-            id="btn-open-requirements"
-            onClick={onOpenRequirements}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-stone-700 transition hover:bg-stone-100"
-            title="Check or repair the local tools needed to process audio"
-          >
-            <Wrench className="h-4 w-4 text-stone-500" />
-            <span className="flex-1"><span className="block font-semibold">System check</span><span className="block text-[11px] text-stone-500">Audio tools and models</span></span>
-            <span className={`h-2.5 w-2.5 rounded-full ${statusColor === 'red' ? 'bg-red-500' : statusColor === 'yellow' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-          </button>
-
           <button
             id="btn-open-purge"
             onClick={onOpenPurge}
@@ -157,17 +147,38 @@ export const Header: React.FC<HeaderProps> = ({
             title="Clear cache and remove SwissMouse working files"
           >
             <Trash2 className="h-4 w-4" />
-            <span><span className="block font-semibold">Free up space</span><span className="block text-[11px] text-stone-500">Cache and file cleanup</span></span>
+            <span><span className="block font-semibold">Free Up Space</span><span className="block text-[11px] text-stone-500">Cache and file cleanup</span></span>
+          </button>
+
+          <button
+            id="btn-open-preferences"
+            onClick={onOpenSettings}
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-stone-700 transition hover:bg-stone-100"
+            title="Open all preferences"
+          >
+            <Settings className="h-4 w-4" />
+            <span><span className="block font-semibold">Preferences</span><span className="block text-[11px] text-stone-500">All settings and requirements</span></span>
           </button>
 
           <button
             id="btn-open-settings"
-            onClick={onOpenSettings}
+            onClick={onOpenQuickSettings || onOpenSettings}
             className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-stone-700 transition hover:bg-stone-100"
             title="Change advanced default settings"
           >
             <Settings className="h-4 w-4" />
-            <span><span className="block font-semibold">Settings</span><span className="block text-[11px] text-stone-500">Processing defaults</span></span>
+            <span><span className="block font-semibold">Quick Settings</span><span className="block text-[11px] text-stone-500">Common defaults and appearance</span></span>
+          </button>
+
+          <button
+            id="btn-open-requirements"
+            onClick={onOpenRequirements}
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-stone-700 transition hover:bg-stone-100"
+            title="Check or repair the local tools needed to process audio"
+          >
+            <Wrench className="h-4 w-4 text-stone-500" />
+            <span className="flex-1"><span className="block font-semibold">System Check</span><span className="block text-[11px] text-stone-500">Audio tools and models</span></span>
+            <span className={`h-2.5 w-2.5 rounded-full ${statusColor === 'red' ? 'bg-red-500' : statusColor === 'yellow' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
           </button>
 
           <button
@@ -177,7 +188,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="Show or hide technical activity logs"
           >
             <Terminal className="h-4 w-4" />
-            <span><span className="block font-semibold">Technical logs</span><span className={`block text-[11px] ${showLogs ? 'text-stone-300' : 'text-stone-500'}`}>{showLogs ? 'Currently visible' : 'Troubleshooting details'}</span></span>
+            <span><span className="block font-semibold">Technical Logs</span><span className={`block text-[11px] ${showLogs ? 'text-stone-300' : 'text-stone-500'}`}>{showLogs ? 'Currently visible' : 'Troubleshooting details'}</span></span>
           </button>
         </ToolbarPopover>
     } />

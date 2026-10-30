@@ -1,8 +1,9 @@
+import type { FinalCheckConfig } from '../packages/audiobooks/src/completion-ports';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import type { AudiobookJob, ChapterEntry, FinalCheckItem, FinalCheckReport, WorkbenchConfig } from '../src/types';
+import type { AudiobookJob, ChapterEntry, FinalCheckItem, FinalCheckReport } from '../src/types';
 import { outputFormats, type ExportFormat } from '../src/audioFormats';
 import { planChapterExport } from '../src/utils/chapterExport';
 import { parseChapterTimestamp } from '../src/utils/chapters';
@@ -16,7 +17,7 @@ import { checkSourceAudio } from './audio-integrity';
 import { inspectAsync } from './audio-engine';
 
 const stat = (file: string) => { try { const s=fs.statSync(file); return [file,s.size,s.mtimeMs,s.ctimeMs]; } catch { return [file,'missing']; } };
-export function finalCheckSignature(job: AudiobookJob, config: WorkbenchConfig, files: string[], originals: string[], artifacts: string[]) {
+export function finalCheckSignature(job: AudiobookJob, config: FinalCheckConfig, files: string[], originals: string[], artifacts: string[]) {
   const folders=[...new Set(files.map(file=>path.dirname(file)))];
   const companions=folders.flatMap(folder=>['exmetadata.json','metadata.json','cover.jpg','cover.png'].map(name=>path.join(folder,name)));
   let metadata = job.metadata;
@@ -50,7 +51,7 @@ export function metadataTagMismatches(metadata: AudiobookJob['metadata'], tags: 
 }
 
 export async function runFinalCheck(options: {
-  job:AudiobookJob; config:WorkbenchConfig; files:string[]; originals:string[]; artifacts:{waveform?:string;transcript?:string};
+  job:AudiobookJob; config:FinalCheckConfig; files:string[]; originals:string[]; artifacts:{waveform?:string;transcript?:string};
   ffmpeg:string;ffprobe:string;signal:AbortSignal;progress:(message:string,items:FinalCheckItem[])=>void;
 }) {
   const {job,config,files,originals,signal}=options;

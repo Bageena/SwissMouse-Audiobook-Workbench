@@ -1,5 +1,7 @@
 # SwissMouse 0.1.0-alpha.5
 
+Released. Alpha 6 is now in development; these notes describe Alpha 5.
+
 Alpha 5 expands the audiobook workbench with an Inbox and Library, a shared
 resource catalog, Book Files, listening progress, and a movable workspace.
 

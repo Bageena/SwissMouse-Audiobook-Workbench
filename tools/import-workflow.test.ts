@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { inspect } from './audio-engine';
+import { waitForTestServer } from './test-fixtures.mjs';
 
 test('a tagged M4B can finish in the library or continue to processing without reimport', async () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), 'import-workflow-test-'));
@@ -40,8 +41,16 @@ test('a tagged M4B can finish in the library or continue to processing without r
       }
       return original.call(this, prefix, ...args);
     };`);
-  const serverOptions = { env: { ...process.env, SWISSMOUSE_RUNTIME_MODE: 'managed', APP_ROOT: root, PORT: String(port), NODE_ENV: 'production' }, windowsHide: true, stdio: 'ignore' as const };
-  let server = spawn(process.execPath, ['--require', preload, path.resolve('dist/server.cjs')], serverOptions);
+  const serverOptions = { env: { ...process.env, SWISSMOUSE_RUNTIME_MODE: 'managed', APP_ROOT: root, PORT: String(port), NODE_ENV: 'production' }, windowsHide: true, stdio: 'pipe' as const };
+  let serverOutput = '';
+  const startServer = (args: string[]) => {
+    serverOutput = '';
+    const child = spawn(process.execPath, args, serverOptions);
+    child.stdout.on('data', bytes => { serverOutput += bytes; });
+    child.stderr.on('data', bytes => { serverOutput += bytes; });
+    return child;
+  };
+  let server = startServer(['--require', preload, path.resolve('dist/server.cjs')]);
   const request = async (route: string, body?: unknown, method = 'GET') => {
     const response = await fetch(base + route, { method: body === undefined ? method : 'POST', headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const data: any = await response.json();
@@ -49,12 +58,8 @@ test('a tagged M4B can finish in the library or continue to processing without r
     return data;
   };
   try {
-    let ready = false;
-    for (let attempt = 0; attempt < 100; attempt++) {
-      try { const response = await fetch(base + '/api/library'); if (response.ok) { ready = true; break; } } catch { /* startup */ }
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    assert.ok(ready, 'server started');
+    try { await waitForTestServer(server,base+'/api/library'); }
+    catch(error) { assert.fail(`Server started: ${error}\n${serverOutput}`); }
     const newImport = () => request('/api/jobs', { name: 'New book', importPending: true, parts: [] });
     const attach = async (id: string) => {
       await request(`/api/jobs/${id}/step1-settings`, { sourceFolderPath: sourceDir, inputMethod: 'folder', parts: [{ name: path.basename(source), sizeBytes: initialBytes.length, durationSeconds: 2 }] });
@@ -157,6 +162,11 @@ test('a tagged M4B can finish in the library or continue to processing without r
     assert.equal(progress.exports[0].status, 'success');
     assert.equal(progress.transcriptWords, undefined);
     assert.equal(progress.metadata, undefined);
+    const candidateCsv = await fetch(base + `/api/jobs/${processing.id}/export/candidates-csv`);
+    assert.equal(candidateCsv.status, 200);
+    assert.match(candidateCsv.headers.get('content-type') || '', /^text\/csv/);
+    assert.match(candidateCsv.headers.get('content-disposition') || '', /candidates\.csv/);
+    assert.match(await candidateCsv.text(), /^candidate_id,candidate_start,/);
     const originalOutput = fs.readFileSync(output);
     fs.writeFileSync(exportFault, 'fail once');
     const failedSetup = await fetch(base + `/api/jobs/${processing.id}/build-m4b`, {
@@ -169,7 +179,7 @@ test('a tagged M4B can finish in the library or continue to processing without r
     assert.equal(stopped.running, false);
     assert.ok(stopped.exports.every((item: any) => !['queued', 'running'].includes(item.status)));
     assert.deepEqual(fs.readFileSync(output), originalOutput, 'setup failure preserves the last successful audio');
-    await request(`/api/jobs/${processing.id}/build-m4b`, { outputFormats: ['m4b'], overwriteExisting: true, confirmedOverwritePaths: [output] });
+    await request(`/api/jobs/${processing.id}/build-audio`, { outputFormats: ['m4b'], overwriteExisting: true, confirmedOverwritePaths: [output] });
     assert.equal((await request(`/api/jobs/${processing.id}/export-progress`)).running, false, 'retry completes without a restart');
 
     const folder = path.join(root, 'chapter files');
@@ -547,13 +557,9 @@ test('a tagged M4B can finish in the library or continue to processing without r
     delete orphan.libraryScan;
     persisted.push(orphan);
     writeProjectState(root,persisted);
-    server = spawn(process.execPath, [path.resolve('dist/server.cjs')], serverOptions);
-    let restarted = false;
-    for (let attempt = 0; attempt < 100; attempt++) {
-      try { if ((await fetch(base + '/api/library')).ok) { restarted = true; break; } } catch { /* startup */ }
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    assert.equal(restarted, true, 'server restarted with persisted books');
+    server = startServer([path.resolve('dist/server.cjs')]);
+    try { await waitForTestServer(server,base+'/api/library'); }
+    catch(error) { assert.fail(`Server restarted with persisted books: ${error}\n${serverOutput}`); }
     for (let attempt = 0; attempt < 100; attempt++) {
       if (!(await request('/api/library/scan-status')).scanning) break;
       await new Promise(resolve => setTimeout(resolve, 100));

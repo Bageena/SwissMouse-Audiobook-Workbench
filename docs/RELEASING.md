@@ -1,12 +1,22 @@
-# Preparing Alpha 5
+# Release process — Alpha 6 development
 
-Version: `0.1.0-alpha.5` · release tag: `v0.1.0-alpha.5`.
+Alpha 5 (`0.1.0-alpha.5`, tag `v0.1.0-alpha.5`) has launched. Alpha 6 is now the active development cycle. The Alpha 5 preparation commands below are retained as a historical reference, not instructions to publish Alpha 6.
 
-The source is prepared for release; final maintainer testing is still required.
-The checked-in release notes describe the prerelease, not a completed acceptance
-run. Do not publish until that testing is complete.
+## Before preparing Alpha 6
 
-## After final testing
+Work on short-lived branches and merge validated changes into `main`. Do not move or reuse the published Alpha 5 tag for new commits.
+
+Before an Alpha 6 release:
+
+1. Choose the release version and update `package.json`, both root version entries in `package-lock.json`, and the displayed application version together.
+2. Add Alpha 6 release notes under `docs/releases/`, describing implemented changes and remaining limits.
+3. Update `.github/workflows/release.yml`: its input example and `--notes-file` currently target Alpha 5. Point them at the selected Alpha 6 version and notes before dispatching.
+4. Run the relevant validation, package rehearsal, and source/package audits below against the selected version. Record new evidence separately from the historical Alpha 5 results.
+5. Review the selected commit, matching tag, release notes, and ZIP before publishing.
+
+Package metadata currently remains `0.1.0-alpha.5`; the documentation transition does not itself bump the application version or publish a release.
+
+## Historical Alpha 5 publication procedure
 
 From the repository on `main`, review and commit any testing fixes, then:
 
@@ -32,7 +42,9 @@ An existing tag pointing to another commit is rejected.
 GitHub CLI is not required to run the workflow through the website. No tag,
 push, workflow dispatch, or public release is performed during preparation.
 
-## Local package rehearsal
+## Local package rehearsal (Alpha 5 paths shown)
+
+For Alpha 6, replace the versioned paths below with the chosen package version.
 
 ```powershell
 npm.cmd ci --include=dev

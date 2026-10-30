@@ -37,6 +37,7 @@ const releaseFiles = [
   'README.md',
   'PERFORMANCE.md',
   'ROADMAP.md',
+  'ARCHITECTURE.md',
   'docs',
   'Start Audiobook Workbench.bat',
   'themes/_template',
@@ -44,11 +45,13 @@ const releaseFiles = [
   // Preferred source form and build/installation scripts travel with the app.
   'server.ts',
   'src',
+  'packages',
   'tools',
   'index.html',
   'tsconfig.json',
   'vite.config.ts',
   'scripts/build-release.ts',
+  'scripts/build-audiobook-module.mjs',
   'scripts/audit-release.mjs',
   'scripts/build-release.bat',
   'scripts/third-party-notices.ts',
@@ -70,7 +73,7 @@ for (const source of releaseFiles) {
       const info = await lstat(file);
       const name = relative(projectRoot, file).split(sep).join('/');
       if (info.isSymbolicLink()) throw new Error(`Release input must not be a symlink: ${name}`);
-      if (/(^|\/)(runtime|models|node_modules|\.cache|\.git|local)(\/|$)/i.test(name) || name === 'tools/yt-dlp') return false;
+      if (/(^|\/)(runtime|models|node_modules|\.cache|\.git|local|\.installed-modules)(\/|$)/i.test(name) || /(^|\/)module-trust\.json$/.test(name) || name === 'tools/yt-dlp') return false;
       if (info.isDirectory()) return true;
       // New asset types need review; never copy executables, archives or models.
       const allowed = ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.json', '.css', '.html', '.md', '.txt', '.map', '.png', '.jpg', '.jpeg', '.svg', '.bat', '.ps1', '.yml'];

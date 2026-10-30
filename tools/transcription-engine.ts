@@ -1,67 +1,24 @@
+import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { selectTranscriptionAttempt, transcriptionSettings, type BackendCapabilities, type TranscriptionSettings, type TranscriptionAttempt } from '../src/transcription';
+import type { NormalizedTranscription,TranscriptionEngine,TranscriptionEngineId,TranscriptionRequest } from '../packages/audiobooks/src/transcription-contracts';
+import { selectTranscriptionAttempt,transcriptionSettings,type BackendCapabilities,type TranscriptionAttempt,type TranscriptionSettings } from '../src/transcription';
+export type { NormalizedSegment,NormalizedTranscription,NormalizedWord,TranscriptionEngine,TranscriptionEngineId,TranscriptionRequest } from '../packages/audiobooks/src/transcription-contracts';
 
 const execFileAsync = promisify(execFile);
 
-export type TranscriptionEngineId = 'faster-whisper' | 'openai-whisper';
 
-export interface NormalizedWord {
-  word: string;
-  start: number;
-  end: number;
-  probability?: number;
-}
 
-export interface NormalizedSegment {
-  id: number;
-  start: number;
-  end: number;
-  text: string;
-  words: NormalizedWord[];
-  averageLogProbability?: number;
-  noSpeechProbability?: number;
-}
 
-export interface NormalizedTranscription {
-  engine: TranscriptionEngineId;
-  model: string;
-  language?: string;
-  languageProbability?: number;
-  duration?: number;
-  device: 'cpu' | 'cuda';
-  computeType: string;
-  segments: NormalizedSegment[];
-  batchSize?: number | null;
-  beamSize?: number;
-}
 
-export interface TranscriptionRequest {
-  localFilesOnly?: boolean;
-  localModelFile?: string;
-  pythonPath: string;
-  audioPath: string;
-  outputPath: string;
-  modelId: string;
-  fasterModelRepository?: string;
-  engine: TranscriptionEngineId;
-  device: 'cpu' | 'cuda';
-  computeType: string;
-  fasterCacheDir: string;
-  openAiCacheDir: string;
-  language?: string;
-  signal?: AbortSignal;
-  env?: NodeJS.ProcessEnv;
-  batchSize?: number | null;
-  beamSize?: number;
-}
 
-export interface TranscriptionEngine {
-  readonly id: TranscriptionEngineId;
-  transcribe(request: TranscriptionRequest): Promise<NormalizedTranscription>;
-}
+
+
+
+
+
+
 
 // Keep DLL directory handles alive for the lifetime of Python inference.
 export const PYTHON_DLL_SETUP = String.raw`

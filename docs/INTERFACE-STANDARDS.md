@@ -1,4 +1,6 @@
-# Alpha 5 interface conventions
+# Interface conventions
+
+These conventions carry forward from released Alpha 5 into active Alpha 6 development.
 
 Use established containers and semantic `--sm-*` theme tokens. Keep audiobook screens familiar; introduce new patterns only when existing controls cannot express the task.
 
@@ -16,6 +18,6 @@ Use established containers and semantic `--sm-*` theme tokens. Keep audiobook sc
 | Container editing | Shared sticker headings and toolbar controls; a visible page reset; preserve drafts when moving/resizing. Provide keyboard controls for layout choices and a usable narrow-screen fallback. |
 | Destructive actions | Name the affected scope and preserve source media by default. Require confirmation for explicit moves/deletions where the workflow calls for it; do not make ordinary navigation destructive. |
 
-Apply these rules to current main workflows as they are touched. This is not a claim that every legacy dialog or control has completed an accessibility audit. Alpha 5 verification should cover startup, Library, Book Files, the five processing screens, settings/requirements and container reset. Browser-local layout persistence is expected; portable workspace export is deferred.
+Apply these rules to current main workflows as they are touched. This is not a claim that every legacy dialog or control has completed an accessibility audit. Alpha 6 regression verification should cover startup, Library, Book Files, the five processing screens, settings/requirements and container reset. Browser-local layout persistence is expected; portable workspace export is deferred.
 
 Settings and System Setup use `useDialogFocus` for initial focus, Tab containment, Escape and focus restoration. Settings keeps failed-save drafts visible and asks before discarding changed settings; it cannot close while saving. Closing System Setup does not cancel its background task.

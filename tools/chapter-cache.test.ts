@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import ts from 'typescript';
 import { transformSync } from 'esbuild';
 import { processingKey } from './transcription-cache';
 import { CHAPTER_DETECTOR_VERSION } from './chapter-detection';
@@ -11,13 +12,18 @@ import { IMPROVED_DETECTOR_VERSION } from './improved-chapter-detection';
 import { buildTranscriptWords } from '../src/utils/wordAlignment';
 import type { AudiobookJob } from '../src/types';
 
-// Exercise the actual server cache policy without starting HTTP, transcription,
+// Exercise the actual module cache policy without starting HTTP, transcription,
 // or audio preparation. Only preview-file metadata is controlled by the fixture.
 function cachePolicy() {
-  const source = fs.readFileSync('server.ts', 'utf8');
-  const start = source.indexOf('function chapterDetectionCacheKey(');
-  const end = source.indexOf('\nfunction ', start + 1);
-  assert.ok(start >= 0 && end > start, 'server chapter cache policy must be present');
+  const source = fs.readFileSync('packages/audiobooks/src/processing-detection.ts', 'utf8');
+  const parsed = ts.createSourceFile('processing-detection.ts', source, ts.ScriptTarget.Latest, true);
+  let policy: ts.FunctionDeclaration | undefined;
+  const visit = (node: ts.Node) => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === 'chapterDetectionCacheKey') policy = node;
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+  assert.ok(policy, 'module chapter cache policy must be present');
   const preview = { exists: true, size: 320044, mtimeMs: 1000, ctimeMs: 2000, reads: 0 };
   const context = vm.createContext({
     CHAPTER_DETECTOR_VERSION, MUSIC_DETECTOR_VERSION, TITLE_DETECTOR_VERSION, IMPROVED_DETECTOR_VERSION, processingKey,
@@ -27,7 +33,12 @@ function cachePolicy() {
       statSync() { preview.reads++; return { size: preview.size, mtimeMs: preview.mtimeMs, ctimeMs: preview.ctimeMs }; },
     },
   });
-  vm.runInContext(transformSync(source.slice(start, end), { loader: 'ts' }).code, context);
+  context.host = { detection: { versions: {
+    get improved() { return context.IMPROVED_DETECTOR_VERSION; },
+    get music() { return context.MUSIC_DETECTOR_VERSION; },
+    get title() { return context.TITLE_DETECTOR_VERSION; },
+  } } };
+  vm.runInContext(transformSync(policy.getText(parsed), { loader: 'ts' }).code, context);
   const key = vm.runInContext('chapterDetectionCacheKey', context) as (job: Partial<AudiobookJob>, enabled: boolean) => string;
   return { key, preview, context };
 }

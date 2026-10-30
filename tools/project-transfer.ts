@@ -3,14 +3,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { assertUnlinked, contentHash, fileSignature, inventory, pathKey, stamp, verifiedCopy, rollbackCopiedFiles, within, type MoveEntry, type CopiedFile } from './library-filesystem';
 
-export type TransferJournal = {
-  version: 2; id: string; source: string; target: string; mode: 'copy' | 'move';
-  entries: MoveEntry[]; pending?: { source: string; quarantine: string };
-  operation?: 'project' | 'exports' | 'import';
-  destinationRoot?: string;
-  copied?: CopiedFile[];
-  reusedTarget?: boolean;
-};
+export type { TransferJournal } from '../packages/sdk/file-transfers';
+import type { TransferJournal } from '../packages/sdk/file-transfers';
 
 export async function writeTransferJournal(file: string, value: TransferJournal) {
   const temporary = file + '.tmp';

@@ -1,0 +1,159 @@
+{
+  "seed": "directory-v1-sequential-20261029",
+  "node": "v24.21.0",
+  "sqlite": "3.53.4",
+  "os": "Windows_NT 10.0.26300 x64",
+  "cpu": "11th Gen Intel(R) Core(TM) i7-11700KF @ 3.60GHz",
+  "logicalCpus": 16,
+  "ramGiB": 31.866680145263672,
+  "storage": "Workspace drive; storage medium not independently verified",
+  "scope": "Direct worker-engine query costs over synthetic projection rows. OS cache is not flushed; not full library import, taxonomy traversal or playback acceptance.",
+  "profiles": [
+    {
+      "syntheticLogicalEntries": 40000,
+      "syntheticFileRows": 40000,
+      "authoritativeWorkResources": 1,
+      "authoritativeRecordingResources": 0,
+      "directoryEntries": 40002,
+      "associationRows": 1,
+      "seedAndSamplingMs": 10914.169699999999,
+      "firstAfterReopenMs": 16.062700000000405,
+      "timings": {
+        "latePrefix": {
+          "p50": 12.637199999999211,
+          "p95": 16.162599999999657,
+          "p99": 16.78780000000006
+        },
+        "shortCommonPrefix": {
+          "p50": 0.24459999999999127,
+          "p95": 0.5783000000010361,
+          "p99": 6.91399999999885
+        },
+        "contains": {
+          "p50": 17.71360000000095,
+          "p95": 20.52180000000044,
+          "p99": 20.96849999999904
+        },
+        "commonContains": {
+          "p50": 3.2245999999995547,
+          "p95": 4.255999999999403,
+          "p99": 4.600399999999354
+        },
+        "unicode": {
+          "p50": 6.544299999999566,
+          "p95": 8.224200000000565,
+          "p99": 11.754000000000815
+        },
+        "related": {
+          "p50": 0.05910000000039872,
+          "p95": 0.13409999999930733,
+          "p99": 0.43510000000060245
+        }
+      },
+      "editToVisible": {
+        "p50": 27.964599999999336,
+        "p95": 33.8078000000005,
+        "p99": 56.973799999999756
+      },
+      "retainedHeapBytes": [
+        8780592,
+        8752408,
+        8752152,
+        8750440
+      ],
+      "databaseBytes": 33968128,
+      "rssBytes": 98119680,
+      "plans": {
+        "prefix": [
+          {
+            "id": 4,
+            "parent": 0,
+            "notused": 105,
+            "detail": "SEARCH directory_entries USING COVERING INDEX directory_prefix (provider=? AND field=? AND search>? AND search<?)"
+          }
+        ],
+        "contains": [
+          {
+            "id": 4,
+            "parent": 0,
+            "notused": 152,
+            "detail": "SCAN directory_search VIRTUAL TABLE INDEX 64:M2>"
+          }
+        ]
+      }
+    },
+    {
+      "syntheticLogicalEntries": 500000,
+      "syntheticFileRows": 500000,
+      "authoritativeWorkResources": 1,
+      "authoritativeRecordingResources": 0,
+      "directoryEntries": 500002,
+      "associationRows": 5000001,
+      "seedAndSamplingMs": 237244.095,
+      "firstAfterReopenMs": 45.969499999977415,
+      "timings": {
+        "latePrefix": {
+          "p50": 31.55449999999837,
+          "p95": 41.032299999991665,
+          "p99": 42.61119999998482
+        },
+        "shortCommonPrefix": {
+          "p50": 0.3207999999867752,
+          "p95": 0.6497000000090338,
+          "p99": 0.8998000000137836
+        },
+        "contains": {
+          "p50": 97.14480000000913,
+          "p95": 158.11129999998957,
+          "p99": 168.79189999998198
+        },
+        "commonContains": {
+          "p50": 19.796200000011595,
+          "p95": 24.54199999998673,
+          "p99": 30.938099999999395
+        },
+        "unicode": {
+          "p50": 0.5319999999774154,
+          "p95": 2.549200000008568,
+          "p99": 2.78259999997681
+        },
+        "related": {
+          "p50": 1.7848999999987427,
+          "p95": 9.26459999999497,
+          "p99": 20.496799999993527
+        }
+      },
+      "editToVisible": {
+        "p50": 75.70050000000629,
+        "p95": 112.54810000001453,
+        "p99": 140.1598000000231
+      },
+      "retainedHeapBytes": [
+        8783184,
+        8772968,
+        8773376,
+        8773456
+      ],
+      "databaseBytes": 1670717440,
+      "rssBytes": 134729728,
+      "plans": {
+        "prefix": [
+          {
+            "id": 4,
+            "parent": 0,
+            "notused": 132,
+            "detail": "SEARCH directory_entries USING COVERING INDEX directory_prefix (provider=? AND field=? AND search>? AND search<?)"
+          }
+        ],
+        "contains": [
+          {
+            "id": 4,
+            "parent": 0,
+            "notused": 152,
+            "detail": "SCAN directory_search VIRTUAL TABLE INDEX 64:M2>"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -350,11 +350,11 @@ import { transcriptionEngines } from './transcription-engine';
 import { initialDetectedChapters } from '../src/utils/chapterSuggestions';
 
 test('draft chapter finalization retains spoken candidates and excludes unaccepted experimental suggestions', () => {
-  // Exercise the server's actual finalization block without starting transcription
+  // Exercise the module's actual finalization block without starting transcription
   // or a server; existing source chapters remain available for manual selection.
-  const server = fs.readFileSync(path.resolve('server.ts'), 'utf8');
-  const start = server.indexOf('  job.candidates = generatedCandidates;');
-  const end = server.indexOf("  job.status = 'transcribed';", start);
+  const server = fs.readFileSync(path.resolve('packages/audiobooks/src/processing-backend.ts'), 'utf8');
+  const start = server.indexOf('job.candidates = generatedCandidates;');
+  const end = server.indexOf("job.status = 'transcribed';", start);
   assert.ok(start >= 0 && end > start);
   const generatedCandidates = [
     { candidate_start: '00:00:10.000', proposed_title: 'Chapter Twelve', confidence: '0', status: 'review' },
@@ -363,7 +363,7 @@ test('draft chapter finalization retains spoken candidates and excludes unaccept
   ];
   const existingChapters = [{ start: '00:00:00.000', title: 'Source chapter' }];
   const job = { candidates: [], chapters: [], existingChapters };
-  vm.runInNewContext(server.slice(start, end), { job, generatedCandidates, initialDetectedChapters, cloneProject, setStep1Stage() {} });
+  vm.runInNewContext(server.slice(start, end), { job, generatedCandidates, initialDetectedChapters, host: { store: { snapshot: cloneProject } }, setStep1Stage() {} });
   assert.equal(job.candidates, generatedCandidates);
   assert.equal(job.chapters.length, 3);
   assert.equal(job.chapters[0].title, 'Prologue');

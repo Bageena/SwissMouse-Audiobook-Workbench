@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { isReadOnlyCatalogRequest } from './catalog-routes';
+import { waitForTestServer } from './test-fixtures.mjs';
 
 test('only read-only catalog POSTs bypass project mutation locks', () => {
   for (const route of ['library/query', 'matches', 'suggestions', 'membership-suggestions', 'selections/page', 'selections/members']) {
@@ -36,8 +37,8 @@ test('live catalog worker migrates legacy books, pages queries, and retains dura
   child.stdout.on('data',chunk=>output+=chunk);child.stderr.on('data',chunk=>output+=chunk);
   const request=async(route:string,body?:unknown)=>{const response=await fetch(base+route,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json','X-SwissMouse-Catalog':'1'},body:body===undefined?undefined:JSON.stringify(body)});const data=await response.json();assert.ok(response.ok,`${route}: ${JSON.stringify(data)}`);return data;};
   try {
-    let ready=false,lastResponse=''; for(let i=0;i<150;i++){try{const response=await fetch(base+'/api/catalog/status');if(response.ok && !(await response.json()).indexing){ready=true;break;}lastResponse=`${response.status}: ${await response.text()}`;}catch(error){lastResponse=String(error);}await new Promise(resolve=>setTimeout(resolve,100));}
-    assert.ok(ready,`${lastResponse}\n${output}`);
+    try { await waitForTestServer(child,base+'/api/catalog/status',(status:any)=>!status.indexing); }
+    catch(error) { assert.fail(`${error}\n${output}`); }
     const pendingQuery = request('/api/catalog/library/query', {query:'__held_read_only_query__'});
     for (let i=0; i<100 && !output.includes('HELD_CATALOG_QUERY'); i++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.match(output, /HELD_CATALOG_QUERY/);

@@ -6,7 +6,9 @@ import App from './App';
 import { DependencyStatusProvider } from './dependency-status';
 import { applyTheme, getStoredTheme } from './theme';
 import './index.css';
+import { activateBuiltInAudiobooks } from './modules/audiobooks';
 
+activateBuiltInAudiobooks();
 applyTheme(getStoredTheme());
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

@@ -12,8 +12,8 @@ import { assertUnlinked, contentHash, fileSignature, pathKey, stamp, type FileSt
 // The package's ESM default export has CommonJS-only TypeScript declarations.
 const crc32 = (crc32Module as unknown as { default: { unsigned(data: Buffer, previous?: number): number } }).default;
 
-export type ArchivedOriginal = { source: string; name: string; stamp: FileStamp; sha256: string };
-export type OriginalsArchive = { path: string; sourceKey: string; verifiedAt: string; stamp: FileStamp; files: ArchivedOriginal[] };
+export type { ArchivedOriginal, OriginalsArchive } from '../packages/audiobooks/src/legacy-domain';
+import type { ArchivedOriginal, OriginalsArchive } from '../packages/audiobooks/src/legacy-domain';
 type ArchiveJournal = { version: 1; archive: string; files: { source: string; quarantine: string; stamp: FileStamp }[] };
 
 const sameStamp = (a: FileStamp, b: FileStamp) => a.identity === b.identity && fileSignature([a]) === fileSignature([b]);

@@ -1,3 +1,5 @@
+export type { FileStamp, MoveEntry, CopiedFile } from '../packages/sdk/file-transfers';
+import type { FileStamp, MoveEntry, CopiedFile } from '../packages/sdk/file-transfers';
 import { readExtendedMetadata, cleanMemberships } from '../src/utils/extendedMetadata';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -21,7 +23,6 @@ export async function assertUnlinked(file: string) {
     current = parent;
   }
 }
-export type FileStamp = { name: string; size: number; mtime: number; identity: string };
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export const fileSignature = (files: FileStamp[]) => digest(files.map(({ name, size, mtime }) => [name, size, mtime]));
 export async function stamp(file: string, name = path.basename(file)): Promise<FileStamp> {
@@ -214,8 +215,6 @@ export async function identifyBook(book: DiskBook, probe: (file: string) => Prom
   return { metadata, warning: warning || undefined };
 }
 
-export type MoveEntry = { source: string; name: string; stamp: FileStamp };
-export type CopiedFile = { name: string; stamp: FileStamp; hash: string };
 // Copy into a private staging directory. The caller commits paths to its existing
 // project store before removing any originals. Failure leaves source untouched.
 export async function verifiedCopy(root: string, target: string, entries: MoveEntry[], log: (message: string) => void, onReserved?: (owned: CopiedFile[]) => void, canLinkSource?: (entry: MoveEntry) => boolean) {

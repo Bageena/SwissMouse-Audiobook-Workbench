@@ -1,5 +1,7 @@
 import { createPortal } from 'react-dom';
 import { MetadataMemberships } from './MetadataMemberships';
+import { SharedSuggestionInput } from './SharedSuggestionInput';
+import type { PickerSelection } from '../../packages/sdk/suggestions';
 import { extendedMetadata } from '../utils/extendedMetadata';
 import { ResizableRegion } from './ResizableRegion';
 import { DesktopWindow } from './DesktopWorkspace';
@@ -25,7 +27,7 @@ interface Step3MetadataProps {
   onFinishFileReview?: (metadata: AudiobookMetadata) => Promise<void>;
   onOrganizeLibrary?: (metadata: AudiobookMetadata) => Promise<string>;
   job: AudiobookJob;
-  onSaveMetadata: (metadata: AudiobookMetadata) => Promise<void>;
+  onSaveMetadata: (metadata: AudiobookMetadata, selection?: PickerSelection) => Promise<void|{historyPending:boolean}>;
   onWriteAudioMetadata?: (metadata: AudiobookMetadata) => Promise<string>;
   onUpdateJson: (metadata: AudiobookMetadata) => Promise<string[]>;
   onMoveExportFolder: (metadata: AudiobookMetadata) => Promise<string>;
@@ -111,6 +113,8 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
   const [quickAddTarget, setQuickAddTarget] = useState<QuickAddTarget>('genres');
   const [tagFilter, setTagFilter] = useState<string>('');
   const [authorInput, setAuthorInput] = useState<string>('');
+  const [seriesSelection,setSeriesSelection] = useState<PickerSelection>();
+  const [historyPending,setHistoryPending] = useState(false);
   const [narratorInput, setNarratorInput] = useState<string>('');
   const lastSavedDraft = useRef(JSON.stringify(job.metadataDraft || job.metadata || (draftMetadata ? null : formData)));
   const latestFormData = useRef(formData);
@@ -413,7 +417,9 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
     try {
       window.clearTimeout(draftTimer.current);
       await draftWrite.current.catch(() => {});
-      await onSaveMetadata(formData);
+      const result=await onSaveMetadata(formData,seriesSelection?.value === formData.series ? seriesSelection : undefined);
+      setHistoryPending(!!(result && result.historyPending));
+      setSeriesSelection(undefined);
       lastSavedDraft.current = JSON.stringify(formData);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 4000);
@@ -535,6 +541,7 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
 
 
           </div>}<button type="button" aria-label={metadataExpanded ? 'Collapse metadata' : 'Expand metadata'} aria-expanded={metadataExpanded} aria-controls="metadata-fields" onClick={() => setMetadataExpanded(value => !value)} className={`workspace-header-toggle inline-flex h-8 w-8 shrink-0 items-center justify-center ${metadataExpanded ? '' : 'ml-auto'}`}>{metadataExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button></header>}
+      {saveSuccess && historyPending && <p role="status" className="px-4 py-2 text-xs text-amber-800">Book details saved. Suggestion history is pending and will retry automatically.</p>}
       {unifiedLayout && <div className="px-4">{saveSuccess && <p role="status" className="py-2 text-xs text-emerald-800">Book details saved.</p>}{jsonMessage && <p role="status" className="py-2 text-xs">{jsonMessage}</p>}{folderMessage && <p role="status" className="py-2 text-xs">{folderMessage}</p>}</div>}
       {!unifiedLayout && <>
       <div className="relative pb-12">
@@ -1137,13 +1144,13 @@ export const Step3Metadata: React.FC<Step3MetadataProps> = ({
                   >
                     Series Name
                   </label>
-                  <input form="metadata-fields"
+                  <SharedSuggestionInput jobId={job.id} providerId="audiobooks.suggest-series" fieldId="audiobooks.series"
                     id="meta-series"
-                    type="text"
                     value={formData.series || ''}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, series: e.target.value }))
+                    onChange={(value) =>
+                      setFormData((prev) => ({ ...prev, series: value }))
                     }
+                    onSelection={setSeriesSelection}
                     placeholder="e.g. Series name"
                     className="w-full bg-stone-50/50 border border-stone-300 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
                   />
